@@ -131,7 +131,7 @@ export class Syloh {
         }
     }
 
-    async delDoc(silo: string, collection: string, id: string, delCache?: (prefix: string) => Promise<void>) {
+    async delDoc(silo: string, collection: string, id: string, delCache?: (prefix: string) => Promise<void>, pubDoc?: (collection: string, id: string) => Promise<void>) {
 
         try {
 
@@ -146,6 +146,8 @@ export class Syloh {
             if(delCache) promises.push(delCache(`${collection}/${id}`))
 
             await Promise.all(promises)
+
+            if(pubDoc) await pubDoc(collection, id)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Syloh.delDoc -> ${e.message}`)
