@@ -13,7 +13,7 @@ export class Blob {
             await blobClient.uploadData(value)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`Blob.putData -> ${e.message}`)
         }
     }
 
@@ -50,7 +50,7 @@ export class Blob {
             value = (await this.streamToBuffer(res.readableStreamBody!)).toString()
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`Blob.getData -> ${e.message}`)
         }
 
         return value
@@ -71,7 +71,7 @@ export class Blob {
             }))
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`Blob.getDoc -> ${e.message}`)
         }
 
         return docs
@@ -86,7 +86,7 @@ export class Blob {
             await containerClient.deleteBlob(key)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`Blob.delData -> ${e.message}`)
         }
     }
 
@@ -101,7 +101,7 @@ export class Blob {
             await Promise.all(keys.map((key) => this.delData(client, container, key)))
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`Blob.delDoc -> ${e.message}`)
         }
     }
 
@@ -120,7 +120,7 @@ export class Blob {
             }
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`Blob.listKeys -> ${e.message}`)
         }
 
         return keys

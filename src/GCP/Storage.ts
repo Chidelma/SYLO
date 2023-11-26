@@ -9,7 +9,7 @@ export class Store {
             await client.bucket(bucket).file(key).save(value)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`Store.putData -> ${e.message}`)
         }
     }
 
@@ -24,7 +24,7 @@ export class Store {
             value = res.toString()
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`Store.getData -> ${e.message}`)
         }
 
         return value
@@ -45,7 +45,7 @@ export class Store {
             }))
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`Store.getDoc -> ${e.message}`)
         }
 
         return docs
@@ -58,7 +58,7 @@ export class Store {
             await client.bucket(bucket).file(key).delete()
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`Store.delData -> ${e.message}`)
         }
     }
 
@@ -73,7 +73,7 @@ export class Store {
             await Promise.all(keys.map((key) => this.delData(client, bucket, key)))
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`Store.delDoc -> ${e.message}`)
         }
     }
 
@@ -88,7 +88,7 @@ export class Store {
             keys = files.map((file) => file.name)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`Store.listKeys -> ${e.message}`)
         }
 
         return keys
