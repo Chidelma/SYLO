@@ -78,7 +78,7 @@ export class Syloh {
         return doc as T
     }
 
-    async putDoc<T>(silo: string, collection: string, doc: T, idKey: string, checkCache?: (key: string, value: any) => Promise<boolean>, cacheData?: (key: string, value: any) => Promise<void>) {
+    async putDoc<T>(silo: string, collection: string, doc: T, idKey: string, checkCache?: (key: string, value: any) => Promise<boolean>, cacheData?: (key: string, value: any) => Promise<void>, pubDoc?: (collection: string, doc:T, idKey: string) => Promise<void>) {
 
         try {
 
@@ -123,6 +123,8 @@ export class Syloh {
             }
 
             await Promise.all(promises)
+
+            if(pubDoc) await pubDoc(collection, doc, idKey)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Syloh.putDoc -> ${e.message}`)
