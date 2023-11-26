@@ -20,6 +20,34 @@ export class Syloh {
         if(storageClient) this.store = storageClient
     }
 
+    async getData(silo: string, path: string, hitCache?: (path: string) => Promise<string | null>) {
+
+        let data: any;
+
+        try {
+
+            if(hitCache) data = await hitCache(path)
+
+            const promises: Promise<string>[] = []
+
+            if(data === null || hitCache === undefined) {
+
+                if(this.s3) promises.push(S3.getData(this.s3, silo, path))
+
+                if(this.blob) promises.push(Blob.getData(this.blob, silo, path))
+
+                if(this.store) promises.push(Store.getData(this.store, silo, path))
+
+                data = Syloh.parseValue(await Promise.race(promises))
+            }
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(e.message)
+        }
+
+        return data
+    }
+
     async getDoc<T extends object>(silo: string, collection: string, id: string, idKey: string, hitCache?: (prefix: string) => Promise<T>) {
 
         let doc: T = {} as T
@@ -118,6 +146,29 @@ export class Syloh {
         } catch(e) {
             if(e instanceof Error) throw new Error(e.message)
         }
+    }
+
+    async listKeys(silo: string, prefix: string, max?: number) {
+
+        let keys: string[] = []
+
+        try {
+
+            const promises: Promise<string[]>[] = []
+
+            if(this.s3) promises.push(S3.listKeys(this.s3, silo, prefix, max))
+
+            if(this.blob) promises.push(Blob.listKeys(this.blob, silo, prefix))
+
+            if(this.store) promises.push(Store.listKeys(this.store, silo, prefix, max))
+
+            keys = await Promise.race(promises)
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(e.message)
+        }
+
+        return keys
     }
 
     private static unwrangleDoc<T>(doc: T, idKey: string, parentKey?: string) {
