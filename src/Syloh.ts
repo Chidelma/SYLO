@@ -13,6 +13,12 @@ export class Syloh {
 
     private static readonly DELIMITER = '\t\b\n'
 
+    private static readonly PLATFORM = process.env['PLATFORM']
+
+    private static readonly AWS = 'AWS'
+    private static readonly AZURE = 'AZURE'
+    private static readonly GCP = 'GCP'
+
     constructor({ S3Client, blobClient, storageClient }: { S3Client?: S3Client, blobClient?: BlobServiceClient, storageClient?: Storage }) {
 
         if(S3Client) this.s3 = S3Client
@@ -60,11 +66,31 @@ export class Syloh {
 
             if(Object.keys(doc).length === 0 || hitCache === undefined) {
 
-                if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id))
+                if(Syloh.PLATFORM) {
 
-                if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id))
+                    switch(Syloh.PLATFORM) {
+                        case Syloh.AWS:
+                            promises.push(S3.getDoc(this.s3, silo, collection, id))
+                            break
+                        case Syloh.AZURE:
+                            promises.push(Blob.getDoc(this.blob, silo, collection, id))
+                            break
+                        case Syloh.GCP:
+                            promises.push(Store.getDoc(this.store, silo, collection, id))
+                            break
+                        default:
+                            if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id))
+                            if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id))
+                            if(this.store) promises.push(Store.getDoc(this.store, silo, collection, id))
+                            break
+                    }
 
-                if(this.store) promises.push(Store.getDoc(this.store, silo, collection, id))
+                } else {
+
+                    if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id))
+                    if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id))
+                    if(this.store) promises.push(Store.getDoc(this.store, silo, collection, id))
+                }
 
                 const record = await Promise.race(promises)
 
@@ -162,11 +188,31 @@ export class Syloh {
 
             const promises: Promise<string[]>[] = []
 
-            if(this.s3) promises.push(S3.listKeys(this.s3, silo, prefix, max))
+            if(Syloh.PLATFORM) {
 
-            if(this.blob) promises.push(Blob.listKeys(this.blob, silo, prefix))
+                switch(Syloh.PLATFORM) {
+                    case Syloh.AWS:
+                        promises.push(S3.listKeys(this.s3, silo, prefix, max))
+                        break
+                    case Syloh.AZURE:
+                        promises.push(Blob.listKeys(this.blob, silo, prefix))
+                        break
+                    case Syloh.GCP:
+                        promises.push(Store.listKeys(this.store, silo, prefix, max))
+                        break
+                    default:
+                        if(this.s3) promises.push(S3.listKeys(this.s3, silo, prefix, max))
+                        if(this.blob) promises.push(Blob.listKeys(this.blob, silo, prefix))
+                        if(this.store) promises.push(Store.listKeys(this.store, silo, prefix, max))
+                        break
+                }
 
-            if(this.store) promises.push(Store.listKeys(this.store, silo, prefix, max))
+            } else {
+
+                if(this.s3) promises.push(S3.listKeys(this.s3, silo, prefix, max))
+                if(this.blob) promises.push(Blob.listKeys(this.blob, silo, prefix))
+                if(this.store) promises.push(Store.listKeys(this.store, silo, prefix, max))
+            }
 
             keys = await Promise.race(promises)
 
