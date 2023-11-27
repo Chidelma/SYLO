@@ -9,7 +9,7 @@ export class S3 {
             await client.send(new PutObjectCommand({ Bucket: bucket, Key: key, Body: value }))
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`S3.putData -> ${e.message}`)
         }
     }
 
@@ -24,7 +24,7 @@ export class S3 {
             value = await res.Body!.transformToString()
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`S3.getData -> ${e.message}`)
         }
 
         return value
@@ -45,7 +45,7 @@ export class S3 {
             }))
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`S3.getDoc -> ${e.message}`)
         }
 
         return docs
@@ -58,7 +58,7 @@ export class S3 {
             await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }))
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`S3.delData -> ${e.message}`)
         }
     }
 
@@ -73,7 +73,7 @@ export class S3 {
             await Promise.all(keys.map((key) => this.delData(client, bucket, key)))
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`S3.delDoc -> ${e.message}`)
         }
     }
 
@@ -96,7 +96,7 @@ export class S3 {
             } while(token !== undefined)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(e.message)
+            if(e instanceof Error) throw new Error(`S3.listKeys -> ${e.message}`)
         }
 
         return keys

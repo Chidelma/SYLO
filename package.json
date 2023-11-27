@@ -1,13 +1,11 @@
 {
     "name": "syloh",
     "devDependencies": {
-      "@types/node": "^16",
-      "bun-types": "^1.0.1"
+      "@types/node": "^16"
     },
     "dependencies": {
       "@aws-sdk/client-s3": "^3.456.0",
       "@google-cloud/storage": "^7.6.0",
-      "@azure/storage-blob": "^12.17.0",
-      "@redis/client": "^4.6.11"
+      "@azure/storage-blob": "^12.17.0"
     }
   }
