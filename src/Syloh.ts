@@ -38,11 +38,30 @@ export class Syloh {
 
             if(data === null || hitCache === undefined) {
 
-                if(this.s3) promises.push(S3.getData(this.s3, silo, path))
+                if(Syloh.PLATFORM) {
 
-                if(this.blob) promises.push(Blob.getData(this.blob, silo, path))
+                    switch(Syloh.PLATFORM) {
+                        case Syloh.AWS:
+                            promises.push(S3.getData(this.s3, silo, path))
+                            break
+                        case Syloh.AZURE:
+                            promises.push(Blob.getData(this.blob, silo, path))
+                            break
+                        case Syloh.GCP:
+                            promises.push(Store.getData(this.store, silo, path))
+                            break
+                        default:
+                            if(this.s3) promises.push(S3.getData(this.s3, silo, path))
+                            if(this.blob) promises.push(Blob.getData(this.blob, silo, path))
+                            if(this.store) promises.push(Store.getData(this.store, silo, path))
+                            break
+                    }
+                } else {
 
-                if(this.store) promises.push(Store.getData(this.store, silo, path))
+                    if(this.s3) promises.push(S3.getData(this.s3, silo, path))
+                    if(this.blob) promises.push(Blob.getData(this.blob, silo, path))
+                    if(this.store) promises.push(Store.getData(this.store, silo, path))
+                }
 
                 data = Syloh.parseValue(await Promise.race(promises))
             }
