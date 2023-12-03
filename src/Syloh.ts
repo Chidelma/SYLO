@@ -125,6 +125,8 @@ export class Syloh {
 
     async putDoc<T>(silo: string, collection: string, doc: T, idKey: string, checkCache?: (key: string, value: any) => Promise<boolean>, cacheData?: (key: string, value: any) => Promise<void>, pubDoc?: (collection: string, doc:T, idKey: string) => Promise<void>) {
 
+        let records: Record<string, any> = {}
+        
         try {
 
             const promises: Promise<void>[] = []
@@ -142,6 +144,9 @@ export class Syloh {
                     const modified = await checkCache(path, value)
                     if(modified) paths.set(path, [search, value])
                 } else paths.set(path, [search, value])
+
+                records[path] = value
+                records[search] = ''
             }
 
             for(const [path, [search, value]] of paths) {
@@ -174,6 +179,8 @@ export class Syloh {
         } catch(e) {
             if(e instanceof Error) throw new Error(`Syloh.putDoc -> ${e.message}`)
         }
+
+        return records
     }
 
     async delDoc(silo: string, collection: string, id: string, delCache?: (prefix: string) => Promise<void>, pubDoc?: (collection: string, id: string) => Promise<void>) {
