@@ -26,45 +26,41 @@ export class Syloh {
         if(storageClient) this.store = storageClient
     }
 
-    async getData(silo: string, path: string, hitCache?: (path: string) => Promise<string | null>) {
+    async getData(silo: string, path: string) {
 
         let data: any;
 
         try {
 
-            if(hitCache) data = await hitCache(path)
-
             const promises: Promise<string>[] = []
 
-            if(data === null || hitCache === undefined) {
+            if(Syloh.PLATFORM) {
 
-                if(Syloh.PLATFORM) {
-
-                    switch(Syloh.PLATFORM) {
-                        case Syloh.AWS:
-                            promises.push(S3.getData(this.s3, silo, path))
-                            break
-                        case Syloh.AZURE:
-                            promises.push(Blob.getData(this.blob, silo, path))
-                            break
-                        case Syloh.GCP:
-                            promises.push(Store.getData(this.store, silo, path))
-                            break
-                        default:
-                            if(this.s3) promises.push(S3.getData(this.s3, silo, path))
-                            if(this.blob) promises.push(Blob.getData(this.blob, silo, path))
-                            if(this.store) promises.push(Store.getData(this.store, silo, path))
-                            break
-                    }
-                } else {
-
-                    if(this.s3) promises.push(S3.getData(this.s3, silo, path))
-                    if(this.blob) promises.push(Blob.getData(this.blob, silo, path))
-                    if(this.store) promises.push(Store.getData(this.store, silo, path))
+                switch(Syloh.PLATFORM) {
+                    case Syloh.AWS:
+                        promises.push(S3.getData(this.s3, silo, path))
+                        break
+                    case Syloh.AZURE:
+                        promises.push(Blob.getData(this.blob, silo, path))
+                        break
+                    case Syloh.GCP:
+                        promises.push(Store.getData(this.store, silo, path))
+                        break
+                    default:
+                        if(this.s3) promises.push(S3.getData(this.s3, silo, path))
+                        if(this.blob) promises.push(Blob.getData(this.blob, silo, path))
+                        if(this.store) promises.push(Store.getData(this.store, silo, path))
+                        break
                 }
+                
+            } else {
 
-                data = Syloh.parseValue(await Promise.race(promises))
+                if(this.s3) promises.push(S3.getData(this.s3, silo, path))
+                if(this.blob) promises.push(Blob.getData(this.blob, silo, path))
+                if(this.store) promises.push(Store.getData(this.store, silo, path))
             }
+
+            data = Syloh.parseValue(await Promise.race(promises))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Syloh.getData-> ${e.message}`)
@@ -73,117 +69,100 @@ export class Syloh {
         return data
     }
 
-    async getDoc<T extends object>(silo: string, collection: string, id: string, idKey: string, hitCache?: (prefix: string) => Promise<T>) {
+    async getDoc<T extends object>(silo: string, collection: string, id: string, idKey: string, constructObject: boolean = false) {
 
-        let doc: T = {} as T
+        let doc: T | Record<string, any> = {}
 
         try {
 
-            if(hitCache) doc = await hitCache(`${collection}/${id}`)
-
             const promises: Promise<Record<string, any>>[] = []
 
-            if(Object.keys(doc).length === 0 || hitCache === undefined) {
+            if(Syloh.PLATFORM) {
 
-                if(Syloh.PLATFORM) {
-
-                    switch(Syloh.PLATFORM) {
-                        case Syloh.AWS:
-                            promises.push(S3.getDoc(this.s3, silo, collection, id))
-                            break
-                        case Syloh.AZURE:
-                            promises.push(Blob.getDoc(this.blob, silo, collection, id))
-                            break
-                        case Syloh.GCP:
-                            promises.push(Store.getDoc(this.store, silo, collection, id))
-                            break
-                        default:
-                            if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id))
-                            if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id))
-                            if(this.store) promises.push(Store.getDoc(this.store, silo, collection, id))
-                            break
-                    }
-
-                } else {
-
-                    if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id))
-                    if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id))
-                    if(this.store) promises.push(Store.getDoc(this.store, silo, collection, id))
+                switch(Syloh.PLATFORM) {
+                    case Syloh.AWS:
+                        promises.push(S3.getDoc(this.s3, silo, collection, id))
+                        break
+                    case Syloh.AZURE:
+                        promises.push(Blob.getDoc(this.blob, silo, collection, id))
+                        break
+                    case Syloh.GCP:
+                        promises.push(Store.getDoc(this.store, silo, collection, id))
+                        break
+                    default:
+                        if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id))
+                        if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id))
+                        if(this.store) promises.push(Store.getDoc(this.store, silo, collection, id))
+                        break
                 }
 
-                const record = await Promise.race(promises)
+            } else {
 
-                doc = Syloh.wrangleRecord<T>(record, idKey)
+                if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id))
+                if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id))
+                if(this.store) promises.push(Store.getDoc(this.store, silo, collection, id))
             }
+
+            doc = await Promise.race(promises)
+
+            if(constructObject) doc = Syloh.wrangleRecord<T>(doc, idKey)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Syloh.getDoc -> ${e.message}`)
         }
 
-        return doc as T
+        return doc
     }
 
-    async putDoc<T>(silo: string, collection: string, doc: T, idKey: string, checkCache?: (key: string, value: any) => Promise<boolean>, cacheData?: (key: string, value: any) => Promise<void>, pubDoc?: (collection: string, doc:T, idKey: string) => Promise<void>) {
+    async putDoc<T extends object>(silo: string, collection: string, doc: T | Record<string, any>, idKey: string, deconstructObject: boolean = false) {
 
-        let records: Record<string, any> = {}
+        let paths = {...doc}
         
         try {
 
             const promises: Promise<void>[] = []
 
-            const record = Syloh.unwrangleDoc<T>(doc, idKey)
+            if(deconstructObject) {
 
-            const paths = new Map<string, any[]>()
+                paths = {}
 
-            for(const [key, value] of record) {
+                const record = Syloh.unwrangleDoc<T>(doc as T, idKey)
 
-                const path = `${collection}/${doc[idKey]}/${key}`
-                const search = `${collection}/${key}/${doc[idKey]}`
+                for(const [key, value] of record) {
 
-                if(checkCache) {
-                    const modified = await checkCache(path, value)
-                    if(modified) paths.set(path, [search, value])
-                } else paths.set(path, [search, value])
+                    const path = `${collection}/${doc[idKey]}/${key}`
+                    const search = `${collection}/${key}/${doc[idKey]}`
 
-                records[path] = value
-                records[search] = ''
+                    paths[path] = value
+                    paths[search] = ''
+                }
             }
 
-            for(const [path, [search, value]] of paths) {
+            for(const key in paths) {
 
                 if(this.s3) {
-                    promises.push(S3.putData(this.s3, silo, path, value))
-                    promises.push(S3.putData(this.s3, silo, search, ''))
+                    promises.push(S3.putData(this.s3, silo, key, paths[key]))
                 }
 
                 if(this.blob) {
-                    promises.push(Blob.putData(this.blob, silo, path, value))
-                    promises.push(Blob.putData(this.blob, silo, search, ''))
+                    promises.push(Blob.putData(this.blob, silo, key, paths[key]))
                 }
 
                 if(this.store) {
-                    promises.push(Store.putData(this.store, silo, path, value))
-                    promises.push(Store.putData(this.store, silo, search, ''))
-                }
-
-                if(cacheData) {
-                    promises.push(cacheData(path, value))
-                    promises.push(cacheData(search, null))
+                    promises.push(Store.putData(this.store, silo, key, paths[key]))
                 }
             }
 
             await Promise.all(promises)
 
-            if(pubDoc) await pubDoc(collection, doc, idKey)
-
         } catch(e) {
             if(e instanceof Error) throw new Error(`Syloh.putDoc -> ${e.message}`)
         }
 
-        return records
+        return paths
     }
 
-    async delDoc(silo: string, collection: string, id: string, delCache?: (prefix: string) => Promise<void>, pubDoc?: (collection: string, id: string) => Promise<void>) {
+    async delDoc(silo: string, collection: string, id: string) {
 
         try {
 
@@ -195,11 +174,7 @@ export class Syloh {
 
             if(this.store) promises.push(Store.delDoc(this.store, silo, collection, id))
 
-            if(delCache) promises.push(delCache(`${collection}/${id}`))
-
             await Promise.all(promises)
-
-            if(pubDoc) await pubDoc(collection, id)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Syloh.delDoc -> ${e.message}`)
