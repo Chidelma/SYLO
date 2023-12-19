@@ -1,4 +1,5 @@
 import { S3Client, PutObjectCommand, ListObjectsV2Command, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
+import { executeInParallel } from '../utils/parallelum'
 
 export class S3 {
 
@@ -40,7 +41,7 @@ export class S3 {
 
             const keys = await this.listKeys(client, bucket, prefix)
 
-            await Promise.all(keys.map(async (key) => {
+            await executeInParallel(keys.map(async (key) => {
                 docs[key] = await this.getData(client, bucket, key)
             }))
 
@@ -70,7 +71,7 @@ export class S3 {
 
             const keys = await this.listKeys(client, bucket, prefix)
 
-            await Promise.all(keys.map((key) => this.delData(client, bucket, key)))
+            await executeInParallel(keys.map((key) => this.delData(client, bucket, key)))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`S3.delDoc -> ${e.message}`)

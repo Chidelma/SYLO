@@ -1,4 +1,5 @@
 import { BlobServiceClient } from '@azure/storage-blob'
+import { executeInParallel } from '../utils/parallelum'
 
 export class Blob {
 
@@ -66,7 +67,7 @@ export class Blob {
 
             const keys = await this.listKeys(client, container, prefix)
 
-            await Promise.all(keys.map(async (key) => {
+            await executeInParallel(keys.map(async (key) => {
                 docs[key] = await this.getData(client, container, key)
             }))
 
@@ -98,7 +99,7 @@ export class Blob {
 
             const keys = await this.listKeys(client, container, prefix)
 
-            await Promise.all(keys.map((key) => this.delData(client, container, key)))
+            await executeInParallel(keys.map((key) => this.delData(client, container, key)))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Blob.delDoc -> ${e.message}`)

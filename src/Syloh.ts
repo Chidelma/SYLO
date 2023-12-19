@@ -4,6 +4,7 @@ import { S3 } from "./AWS/S3";
 import { S3Client } from "@aws-sdk/client-s3";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { Storage } from '@google-cloud/storage'
+import { executeInParallel } from './utils/parallelum'
 
 export class Syloh {
 
@@ -63,7 +64,7 @@ export class Syloh {
             data = Syloh.parseValue(await Promise.race(promises))
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Syloh.getData-> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Syloh.getData -> ${e.message}`)
         }
 
         return data
@@ -153,7 +154,7 @@ export class Syloh {
                 }
             }
 
-            await Promise.all(promises)
+            await executeInParallel(promises)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Syloh.putDoc -> ${e.message}`)
@@ -174,7 +175,7 @@ export class Syloh {
 
             if(this.store) promises.push(Store.delDoc(this.store, silo, collection, id))
 
-            await Promise.all(promises)
+            await executeInParallel(promises)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Syloh.delDoc -> ${e.message}`)
