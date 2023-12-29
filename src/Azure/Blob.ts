@@ -1,5 +1,5 @@
 import { BlobServiceClient } from '@azure/storage-blob'
-import { executeInParallel } from '../utils/parallelum'
+import { executeInParallel } from '../utils/paruhlel'
 
 export class Blob {
 

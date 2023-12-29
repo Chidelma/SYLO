@@ -1,5 +1,5 @@
 import { S3Client, PutObjectCommand, ListObjectsV2Command, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
-import { executeInParallel } from '../utils/parallelum'
+import { executeInParallel } from '../utils/paruhlel'
 
 export class S3 {
 

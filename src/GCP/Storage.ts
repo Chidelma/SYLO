@@ -1,5 +1,5 @@
 import { Storage } from '@google-cloud/storage'
-import { executeInParallel } from '../utils/parallelum'
+import { executeInParallel } from '../utils/paruhlel'
 
 export class Store {
 

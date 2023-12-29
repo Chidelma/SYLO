@@ -4,13 +4,13 @@ import { S3 } from "./AWS/S3";
 import { S3Client } from "@aws-sdk/client-s3";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { Storage } from '@google-cloud/storage'
-import { executeInParallel } from './utils/parallelum'
+import { executeInParallel } from './utils/paruhlel'
 
-export class Syloh {
+export class Stawrij {
 
     private s3: S3Client
     private blob: BlobServiceClient
-    private store: Storage
+    private stawr: Storage
 
     private static readonly DELIMITER = '\t\b\n'
 
@@ -24,7 +24,7 @@ export class Syloh {
 
         if(S3Client) this.s3 = S3Client
         if(blobClient) this.blob = blobClient
-        if(storageClient) this.store = storageClient
+        if(storageClient) this.stawr = storageClient
     }
 
     async getData(silo: string, path: string) {
@@ -35,22 +35,22 @@ export class Syloh {
 
             const promises: Promise<string>[] = []
 
-            if(Syloh.PLATFORM) {
+            if(Stawrij.PLATFORM) {
 
-                switch(Syloh.PLATFORM) {
-                    case Syloh.AWS:
+                switch(Stawrij.PLATFORM) {
+                    case Stawrij.AWS:
                         promises.push(S3.getData(this.s3, silo, path))
                         break
-                    case Syloh.AZURE:
+                    case Stawrij.AZURE:
                         promises.push(Blob.getData(this.blob, silo, path))
                         break
-                    case Syloh.GCP:
-                        promises.push(Store.getData(this.store, silo, path))
+                    case Stawrij.GCP:
+                        promises.push(Store.getData(this.stawr, silo, path))
                         break
                     default:
                         if(this.s3) promises.push(S3.getData(this.s3, silo, path))
                         if(this.blob) promises.push(Blob.getData(this.blob, silo, path))
-                        if(this.store) promises.push(Store.getData(this.store, silo, path))
+                        if(this.stawr) promises.push(Store.getData(this.stawr, silo, path))
                         break
                 }
                 
@@ -58,13 +58,13 @@ export class Syloh {
 
                 if(this.s3) promises.push(S3.getData(this.s3, silo, path))
                 if(this.blob) promises.push(Blob.getData(this.blob, silo, path))
-                if(this.store) promises.push(Store.getData(this.store, silo, path))
+                if(this.stawr) promises.push(Store.getData(this.stawr, silo, path))
             }
 
-            data = Syloh.parseValue(await Promise.race(promises))
+            data = Stawrij.parseValue(await Promise.race(promises))
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Syloh.getData -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.getData -> ${e.message}`)
         }
 
         return data
@@ -78,22 +78,22 @@ export class Syloh {
 
             const promises: Promise<Record<string, any>>[] = []
 
-            if(Syloh.PLATFORM) {
+            if(Stawrij.PLATFORM) {
 
-                switch(Syloh.PLATFORM) {
-                    case Syloh.AWS:
+                switch(Stawrij.PLATFORM) {
+                    case Stawrij.AWS:
                         promises.push(S3.getDoc(this.s3, silo, collection, id))
                         break
-                    case Syloh.AZURE:
+                    case Stawrij.AZURE:
                         promises.push(Blob.getDoc(this.blob, silo, collection, id))
                         break
-                    case Syloh.GCP:
-                        promises.push(Store.getDoc(this.store, silo, collection, id))
+                    case Stawrij.GCP:
+                        promises.push(Store.getDoc(this.stawr, silo, collection, id))
                         break
                     default:
                         if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id))
                         if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id))
-                        if(this.store) promises.push(Store.getDoc(this.store, silo, collection, id))
+                        if(this.stawr) promises.push(Store.getDoc(this.stawr, silo, collection, id))
                         break
                 }
 
@@ -101,15 +101,15 @@ export class Syloh {
 
                 if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id))
                 if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id))
-                if(this.store) promises.push(Store.getDoc(this.store, silo, collection, id))
+                if(this.stawr) promises.push(Store.getDoc(this.stawr, silo, collection, id))
             }
 
             doc = await Promise.race(promises)
 
-            if(constructObject) doc = Syloh.wrangleRecord<T>(doc, idKey)
+            if(constructObject) doc = Stawrij.wrangleRecord<T>(doc, idKey)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Syloh.getDoc -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.getDoc -> ${e.message}`)
         }
 
         return doc
@@ -127,7 +127,7 @@ export class Syloh {
 
                 paths = {}
 
-                const record = Syloh.unwrangleDoc<T>(doc as T, idKey)
+                const record = Stawrij.unwrangleDoc<T>(doc as T, idKey)
 
                 for(const [key, value] of record) {
 
@@ -149,15 +149,15 @@ export class Syloh {
                     promises.push(Blob.putData(this.blob, silo, key, paths[key]))
                 }
 
-                if(this.store) {
-                    promises.push(Store.putData(this.store, silo, key, paths[key]))
+                if(this.stawr) {
+                    promises.push(Store.putData(this.stawr, silo, key, paths[key]))
                 }
             }
 
             await executeInParallel(promises)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Syloh.putDoc -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.putDoc -> ${e.message}`)
         }
 
         return paths
@@ -173,12 +173,12 @@ export class Syloh {
 
             if(this.blob) promises.push(Blob.delDoc(this.blob, silo, collection, id))
 
-            if(this.store) promises.push(Store.delDoc(this.store, silo, collection, id))
+            if(this.stawr) promises.push(Store.delDoc(this.stawr, silo, collection, id))
 
             await executeInParallel(promises)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Syloh.delDoc -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.delDoc -> ${e.message}`)
         }
     }
 
@@ -190,22 +190,22 @@ export class Syloh {
 
             const promises: Promise<string[]>[] = []
 
-            if(Syloh.PLATFORM) {
+            if(Stawrij.PLATFORM) {
 
-                switch(Syloh.PLATFORM) {
-                    case Syloh.AWS:
+                switch(Stawrij.PLATFORM) {
+                    case Stawrij.AWS:
                         promises.push(S3.listKeys(this.s3, silo, prefix, max))
                         break
-                    case Syloh.AZURE:
+                    case Stawrij.AZURE:
                         promises.push(Blob.listKeys(this.blob, silo, prefix))
                         break
-                    case Syloh.GCP:
-                        promises.push(Store.listKeys(this.store, silo, prefix, max))
+                    case Stawrij.GCP:
+                        promises.push(Store.listKeys(this.stawr, silo, prefix, max))
                         break
                     default:
                         if(this.s3) promises.push(S3.listKeys(this.s3, silo, prefix, max))
                         if(this.blob) promises.push(Blob.listKeys(this.blob, silo, prefix))
-                        if(this.store) promises.push(Store.listKeys(this.store, silo, prefix, max))
+                        if(this.stawr) promises.push(Store.listKeys(this.stawr, silo, prefix, max))
                         break
                 }
 
@@ -213,13 +213,13 @@ export class Syloh {
 
                 if(this.s3) promises.push(S3.listKeys(this.s3, silo, prefix, max))
                 if(this.blob) promises.push(Blob.listKeys(this.blob, silo, prefix))
-                if(this.store) promises.push(Store.listKeys(this.store, silo, prefix, max))
+                if(this.stawr) promises.push(Store.listKeys(this.stawr, silo, prefix, max))
             }
 
             keys = await Promise.race(promises)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Syloh.listKeys -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.listKeys -> ${e.message}`)
         }
 
         return keys
@@ -239,7 +239,7 @@ export class Syloh {
                     Object.assign(result, this.unwrangleDoc(doc[key], newKey))
                 } else if(typeof doc[key] === 'object' && Array.isArray(doc[key])) {
                     if(Array.from(doc[key] as any[]).some((idx) => typeof idx === 'object')) throw new Error('Cannot have an array of objects')
-                    result.set(newKey, Array.from(doc[key] as any[]).join(Syloh.DELIMITER))
+                    result.set(newKey, Array.from(doc[key] as any[]).join(Stawrij.DELIMITER))
                 } else {
                     result.set(newKey, doc[key])
                 }
@@ -267,7 +267,7 @@ export class Syloh {
     
                     const attr = attrs[i]
         
-                    if(i === attrs.length - 1) currentObj[attr] = Syloh.parseValue(record[key])
+                    if(i === attrs.length - 1) currentObj[attr] = Stawrij.parseValue(record[key])
                     else {
                         currentObj[attr] = currentObj[attr] || {}
                         currentObj = currentObj[attr]
@@ -278,7 +278,7 @@ export class Syloh {
             }
     
         } catch (e) {
-            if (e instanceof Error) throw new Error(`Syloh.wrangleObject -> ${e.message}`)
+            if (e instanceof Error) throw new Error(`Stawrij.wrangleObject -> ${e.message}`)
         }
     
         return result as T
@@ -301,7 +301,7 @@ export class Syloh {
             if(value !== 'null') return value
 
         } catch (e) {
-            if (e instanceof Error) throw new Error(`Syloh.parseValue -> ${e.message}`)
+            if (e instanceof Error) throw new Error(`Stawrij.parseValue -> ${e.message}`)
         }
 
         return null
