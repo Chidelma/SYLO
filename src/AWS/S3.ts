@@ -1,7 +1,7 @@
 import { S3Client, PutObjectCommand, ListObjectsV2Command, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
 import { executeInParallel } from '../utils/paruhlel'
 
-export class S3 {
+export default class {
 
     static async putData(client: S3Client, bucket: string, key: string, value: any) {
 

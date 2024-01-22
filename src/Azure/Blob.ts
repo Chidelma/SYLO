@@ -1,7 +1,7 @@
 import { BlobServiceClient } from '@azure/storage-blob'
 import { executeInParallel } from '../utils/paruhlel'
 
-export class Blob {
+export default class {
 
     static async putData(client: BlobServiceClient, container: string, key: string, value: any) {
 

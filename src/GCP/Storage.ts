@@ -1,7 +1,7 @@
 import { Storage } from '@google-cloud/storage'
 import { executeInParallel } from '../utils/paruhlel'
 
-export class Store {
+export default class {
 
     static async putData(client: Storage, bucket: string, key: string, value: any) {
 

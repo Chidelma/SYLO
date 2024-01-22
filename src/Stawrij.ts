@@ -1,12 +1,12 @@
-import { Blob } from "./Azure/Blob";
-import { Store } from "./GCP/Storage";
-import { S3 } from "./AWS/S3";
+import Blob from "./Azure/Blob";
+import Store from "./GCP/Storage";
+import S3 from "./AWS/S3";
 import { S3Client } from "@aws-sdk/client-s3";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { Storage } from '@google-cloud/storage'
 import { executeInParallel } from './utils/paruhlel'
 
-export class Stawrij {
+export default class Stawrij {
 
     private s3: S3Client
     private blob: BlobServiceClient
@@ -64,7 +64,7 @@ export class Stawrij {
             data = Stawrij.parseValue(await Promise.race(promises))
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.getData -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`this.getData -> ${e.message}`)
         }
 
         return data
@@ -109,7 +109,7 @@ export class Stawrij {
             if(constructObject) doc = Stawrij.wrangleRecord<T>(doc, idKey)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.getDoc -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`this.getDoc -> ${e.message}`)
         }
 
         return doc
@@ -157,7 +157,7 @@ export class Stawrij {
             await executeInParallel(promises)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.putDoc -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`this.putDoc -> ${e.message}`)
         }
 
         return paths
@@ -178,7 +178,7 @@ export class Stawrij {
             await executeInParallel(promises)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.delDoc -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`this.delDoc -> ${e.message}`)
         }
     }
 
@@ -219,7 +219,7 @@ export class Stawrij {
             keys = await Promise.race(promises)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.listKeys -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`this.listKeys -> ${e.message}`)
         }
 
         return keys
@@ -239,7 +239,7 @@ export class Stawrij {
                     Object.assign(result, this.unwrangleDoc(doc[key], newKey))
                 } else if(typeof doc[key] === 'object' && Array.isArray(doc[key])) {
                     if(Array.from(doc[key] as any[]).some((idx) => typeof idx === 'object')) throw new Error('Cannot have an array of objects')
-                    result.set(newKey, Array.from(doc[key] as any[]).join(Stawrij.DELIMITER))
+                    result.set(newKey, Array.from(doc[key] as any[]).join(this.DELIMITER))
                 } else {
                     result.set(newKey, doc[key])
                 }
@@ -267,7 +267,7 @@ export class Stawrij {
     
                     const attr = attrs[i]
         
-                    if(i === attrs.length - 1) currentObj[attr] = Stawrij.parseValue(record[key])
+                    if(i === attrs.length - 1) currentObj[attr] = this.parseValue(record[key])
                     else {
                         currentObj[attr] = currentObj[attr] || {}
                         currentObj = currentObj[attr]
@@ -278,7 +278,7 @@ export class Stawrij {
             }
     
         } catch (e) {
-            if (e instanceof Error) throw new Error(`Stawrij.wrangleObject -> ${e.message}`)
+            if (e instanceof Error) throw new Error(`this.wrangleObject -> ${e.message}`)
         }
     
         return result as T
@@ -301,7 +301,7 @@ export class Stawrij {
             if(value !== 'null') return value
 
         } catch (e) {
-            if (e instanceof Error) throw new Error(`Stawrij.parseValue -> ${e.message}`)
+            if (e instanceof Error) throw new Error(`this.parseValue -> ${e.message}`)
         }
 
         return null
