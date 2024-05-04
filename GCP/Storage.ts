@@ -1,5 +1,4 @@
 import { Storage } from '@google-cloud/storage'
-import { executeInParallel } from '../utils/paruhlel'
 
 export default class {
 
@@ -41,7 +40,7 @@ export default class {
 
             const keys = await this.listKeys(client, bucket, prefix)
 
-            await executeInParallel(keys.map(async (key) => {
+            await Promise.all(keys.map(async (key) => {
                 docs[key] = await this.getData(client, bucket, key)
             }))
 
@@ -71,7 +70,7 @@ export default class {
 
             const keys = await this.listKeys(client, bucket, prefix)
 
-            await executeInParallel(keys.map((key) => this.delData(client, bucket, key)))
+            await Promise.all(keys.map((key) => this.delData(client, bucket, key)))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Store.delDoc -> ${e.message}`)

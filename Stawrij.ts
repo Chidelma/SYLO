@@ -4,7 +4,6 @@ import S3 from "./AWS/S3";
 import { S3Client } from "@aws-sdk/client-s3";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { Storage } from '@google-cloud/storage'
-import { executeInParallel } from './utils/paruhlel'
 
 export default class Stawrij {
 
@@ -154,7 +153,7 @@ export default class Stawrij {
                 }
             }
 
-            await executeInParallel(promises)
+            await Promise.all(promises)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`this.putDoc -> ${e.message}`)
@@ -175,7 +174,7 @@ export default class Stawrij {
 
             if(this.stawr) promises.push(Store.delDoc(this.stawr, silo, collection, id))
 
-            await executeInParallel(promises)
+            await Promise.all(promises)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`this.delDoc -> ${e.message}`)
@@ -249,7 +248,7 @@ export default class Stawrij {
         return result
     }
 
-    static wrangleRecord<T>(record: Record<string, any>, idKey: string) {
+    private static wrangleRecord<T>(record: Record<string, any>, idKey: string) {
 
         const result: Record<string, any> = {}
     
