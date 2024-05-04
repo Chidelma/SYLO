@@ -128,12 +128,12 @@ export default class Stawrij {
 
                 const record = Stawrij.unwrangleDoc<T>(doc as T, idKey)
 
-                for(const [key, value] of record) {
+                for(const key in record) {
 
                     const path = `${collection}/${doc[idKey]}/${key}`
                     const search = `${collection}/${key}/${doc[idKey]}`
 
-                    paths[path] = value
+                    paths[path] = record[key]
                     paths[search] = ''
                 }
             }
@@ -226,7 +226,7 @@ export default class Stawrij {
 
     static unwrangleDoc<T>(doc: T, idKey: string, parentKey?: string) {
 
-        const result = new Map<string, any>()
+        const result: Record<string, any> = {}
 
         for (const key in doc) {
 
@@ -238,9 +238,9 @@ export default class Stawrij {
                     Object.assign(result, this.unwrangleDoc(doc[key], newKey))
                 } else if(typeof doc[key] === 'object' && Array.isArray(doc[key])) {
                     if(Array.from(doc[key] as any[]).some((idx) => typeof idx === 'object')) throw new Error('Cannot have an array of objects')
-                    result.set(newKey, Array.from(doc[key] as any[]).join(this.DELIMITER))
+                    result[newKey] = Array.from(doc[key] as any[]).join(this.DELIMITER)
                 } else {
-                    result.set(newKey, doc[key])
+                    result[newKey] = doc[key]
                 }
             }
         }
