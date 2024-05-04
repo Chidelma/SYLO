@@ -224,7 +224,7 @@ export default class Stawrij {
         return keys
     }
 
-    private static unwrangleDoc<T>(doc: T, idKey: string, parentKey?: string) {
+    static unwrangleDoc<T>(doc: T, idKey: string, parentKey?: string) {
 
         const result = new Map<string, any>()
 
@@ -248,7 +248,7 @@ export default class Stawrij {
         return result
     }
 
-    private static wrangleRecord<T>(record: Record<string, any>, idKey: string) {
+    static wrangleRecord<T>(record: Record<string, any>, idKey: string) {
 
         const result: Record<string, any> = {}
     
@@ -283,7 +283,7 @@ export default class Stawrij {
         return result as T
     }
 
-    private static parseValue(value: string) {
+    static parseValue(value: string) {
 
         try {
 
