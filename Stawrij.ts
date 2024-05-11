@@ -69,7 +69,7 @@ export default class Stawrij {
         return data
     }
 
-    async getDoc<T extends object>(silo: string, collection: string, id: string, idKey: string, constructObject: boolean = false) {
+    async getDoc<T extends object>(silo: string, collection: string, id: string, idKey: string) {
 
         let doc: T | Record<string, any> = {}
 
@@ -103,9 +103,7 @@ export default class Stawrij {
                 if(this.stawr) promises.push(Store.getDoc(this.stawr, silo, collection, id))
             }
 
-            doc = await Promise.race(promises)
-
-            if(constructObject) doc = Stawrij.wrangleRecord<T>(doc, idKey)
+            doc = Stawrij.wrangleRecord<T>(await Promise.race(promises), idKey)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`this.getDoc -> ${e.message}`)
@@ -114,28 +112,25 @@ export default class Stawrij {
         return doc
     }
 
-    async putDoc<T extends object>(silo: string, collection: string, doc: T | Record<string, any>, idKey: string, deconstructObject: boolean = false) {
+    async putDoc<T extends object>(silo: string, collection: string, doc: T | Record<string, any>, idKey: string) {
 
-        let paths = {...doc}
+        const searchIndexes: string[] = []
         
         try {
 
             const promises: Promise<void>[] = []
 
-            if(deconstructObject) {
+            const paths: Record<string, any> = {}
 
-                paths = {}
+            const record = Stawrij.unwrangleDoc<T>(doc as T, idKey)
 
-                const record = Stawrij.unwrangleDoc<T>(doc as T, idKey)
+            for(const key in record) {
 
-                for(const key in record) {
+                const path = `${collection}/${doc[idKey]}/${key}`
 
-                    const path = `${collection}/${doc[idKey]}/${key}`
-                    const search = `${collection}/${key}/${doc[idKey]}`
+                searchIndexes.push(`${collection}/${key}/${doc[idKey]}`)
 
-                    paths[path] = record[key]
-                    paths[search] = ''
-                }
+                paths[path] = record[key]
             }
 
             for(const key in paths) {
@@ -159,7 +154,7 @@ export default class Stawrij {
             if(e instanceof Error) throw new Error(`this.putDoc -> ${e.message}`)
         }
 
-        return paths
+        return searchIndexes
     }
 
     async delDoc(silo: string, collection: string, id: string) {
