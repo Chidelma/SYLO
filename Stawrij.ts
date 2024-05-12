@@ -68,8 +68,13 @@ export default class Stawrij {
 
             doc = await Promise.race(promises)
 
-            if(listen) watch(`${collection}/**/*${id}`, { cwd: Stawrij.INDEX_PATH })
+            if(listen) {
+
+                listen(doc)
+                
+                watch(`${collection}/**/*${id}`, { cwd: Stawrij.INDEX_PATH })
                         .on("addDir", async () => listen(await this.getDoc(silo, collection, id)))
+            }
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`this.getDoc -> ${e.message}`)
@@ -182,8 +187,13 @@ export default class Stawrij {
                 }
             }
 
-            if(listen) watch(expressions, { cwd: Stawrij.INDEX_PATH })
+            if(listen) {
+                
+                listen(results)
+
+                watch(expressions, { cwd: Stawrij.INDEX_PATH })
                     .on("change", async () => listen(await this.findDocs(silo, collection, query)))
+            }
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`this.findDocs -> ${e.message}`)
