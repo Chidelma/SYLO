@@ -154,13 +154,13 @@ export default class Stawrij {
         return result
     }
 
-     async findDocs(silo: string, collection: string, query: _storeQuery) {
+    async findDocs(silo: string, collection: string, query: _storeQuery) {
 
         let results: Record<string, any>[] = []
 
         try {
 
-            const expressions = await this.combineExprs(collection, query)
+            const expressions = await this.getExprs(collection, query)
 
             const indexes = await Promise.all(expressions.map((expr) => Array.fromAsync(new Glob(expr).scan({ cwd: Stawrij.INDEX_PATH }))))
 
@@ -185,7 +185,7 @@ export default class Stawrij {
         return results
     }
 
-    private async combineExprs(collection: string, query: _storeQuery) {
+    async getExprs(collection: string, query: _storeQuery) {
 
         let exprs = new Set<string>()
 
@@ -196,7 +196,7 @@ export default class Stawrij {
             if(query.nor) exprs = new Set([...exprs, ...await this.createNorExp(collection, query.nor)])
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Silo.combineExprs -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Silo.getExprs -> ${e.message}`)
         }
 
         return Array.from<string>(exprs)
