@@ -4,16 +4,21 @@ import S3 from "./AWS/S3";
 import { S3Client } from "@aws-sdk/client-s3";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { Storage } from '@google-cloud/storage'
+import { _storeQuery, _op } from "./types/query";
+import { Glob } from 'bun'
+import { mkdirSync, rmdirSync } from "node:fs";
 
 export default class Stawrij {
 
-    private s3: S3Client
-    private blob: BlobServiceClient
-    private stawr: Storage
+    private s3?: S3Client
+    private blob?: BlobServiceClient
+    private stawr?: Storage
 
     private static readonly DELIMITER = '\t\b\n'
 
-    private static readonly PLATFORM = process.env['PLATFORM']
+    private static readonly PLATFORM = process.env['PLATFORM']!
+
+    private static readonly INDEX_PATH = process.env.INDEX_PREFIX!
 
     private static readonly AWS = 'AWS'
     private static readonly AZURE = 'AZURE'
@@ -26,50 +31,7 @@ export default class Stawrij {
         if(storageClient) this.stawr = storageClient
     }
 
-    async getData(silo: string, path: string) {
-
-        let data: any;
-
-        try {
-
-            const promises: Promise<string>[] = []
-
-            if(Stawrij.PLATFORM) {
-
-                switch(Stawrij.PLATFORM) {
-                    case Stawrij.AWS:
-                        promises.push(S3.getData(this.s3, silo, path))
-                        break
-                    case Stawrij.AZURE:
-                        promises.push(Blob.getData(this.blob, silo, path))
-                        break
-                    case Stawrij.GCP:
-                        promises.push(Store.getData(this.stawr, silo, path))
-                        break
-                    default:
-                        if(this.s3) promises.push(S3.getData(this.s3, silo, path))
-                        if(this.blob) promises.push(Blob.getData(this.blob, silo, path))
-                        if(this.stawr) promises.push(Store.getData(this.stawr, silo, path))
-                        break
-                }
-                
-            } else {
-
-                if(this.s3) promises.push(S3.getData(this.s3, silo, path))
-                if(this.blob) promises.push(Blob.getData(this.blob, silo, path))
-                if(this.stawr) promises.push(Store.getData(this.stawr, silo, path))
-            }
-
-            data = Stawrij.parseValue(await Promise.race(promises))
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`this.getData -> ${e.message}`)
-        }
-
-        return data
-    }
-
-    async getDoc<T extends object>(silo: string, collection: string, id: string, idKey: string) {
+    async getDoc<T extends object>(silo: string, collection: string, id: string) {
 
         let doc: T | Record<string, any> = {}
 
@@ -81,13 +43,13 @@ export default class Stawrij {
 
                 switch(Stawrij.PLATFORM) {
                     case Stawrij.AWS:
-                        promises.push(S3.getDoc(this.s3, silo, collection, id))
+                        promises.push(S3.getDoc(this.s3!, silo, collection, id))
                         break
                     case Stawrij.AZURE:
-                        promises.push(Blob.getDoc(this.blob, silo, collection, id))
+                        promises.push(Blob.getDoc(this.blob!, silo, collection, id))
                         break
                     case Stawrij.GCP:
-                        promises.push(Store.getDoc(this.stawr, silo, collection, id))
+                        promises.push(Store.getDoc(this.stawr!, silo, collection, id))
                         break
                     default:
                         if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id))
@@ -103,7 +65,7 @@ export default class Stawrij {
                 if(this.stawr) promises.push(Store.getDoc(this.stawr, silo, collection, id))
             }
 
-            doc = Stawrij.wrangleRecord<T>(await Promise.race(promises), idKey)
+            doc = await Promise.race(promises)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`this.getDoc -> ${e.message}`)
@@ -112,41 +74,25 @@ export default class Stawrij {
         return doc
     }
 
-    async putDoc<T extends object>(silo: string, collection: string, doc: T | Record<string, any>, idKey: string) {
-
-        const searchIndexes: string[] = []
+    async putDoc<T extends Record<string, any>>(silo: string, collection: string, doc: T | Record<string, any>, idKey: string) {
         
         try {
 
             const promises: Promise<void>[] = []
 
-            const paths: Record<string, any> = {}
-
             const record = Stawrij.unwrangleDoc<T>(doc as T, idKey)
 
-            for(const key in record) {
+            const id = doc[idKey]
 
-                const path = `${collection}/${doc[idKey]}/${key}`
+            await this.delDocIndexes(collection, id)
 
-                searchIndexes.push(`${collection}/${key}/${doc[idKey]}`)
+            for(const key in record) mkdirSync(`${Stawrij.INDEX_PATH}/${key}`, { recursive: true })
 
-                paths[path] = record[key]
-            }
-
-            for(const key in paths) {
-
-                if(this.s3) {
-                    promises.push(S3.putData(this.s3, silo, key, paths[key]))
-                }
-
-                if(this.blob) {
-                    promises.push(Blob.putData(this.blob, silo, key, paths[key]))
-                }
-
-                if(this.stawr) {
-                    promises.push(Store.putData(this.stawr, silo, key, paths[key]))
-                }
-            }
+            if(this.s3) promises.push(S3.putDoc(this.s3, silo, id, doc))
+            
+            if(this.blob) promises.push(Blob.putDoc(this.blob, silo, id, doc))
+            
+            if(this.stawr)  promises.push(Store.putDoc(this.stawr, silo, id, doc))
 
             await Promise.all(promises)
 
@@ -154,7 +100,13 @@ export default class Stawrij {
             if(e instanceof Error) throw new Error(`this.putDoc -> ${e.message}`)
         }
 
-        return searchIndexes
+    }
+
+    private  async delDocIndexes(collection: string, id: string) {
+
+        const indexes = await Array.fromAsync(new Glob(`${collection}/**/*${id}`).scan({ cwd: Stawrij.INDEX_PATH }))
+
+        for(const idx of indexes) rmdirSync(idx, { recursive: true })
     }
 
     async delDoc(silo: string, collection: string, id: string) {
@@ -171,55 +123,14 @@ export default class Stawrij {
 
             await Promise.all(promises)
 
+            await this.delDocIndexes(collection, id)
+
         } catch(e) {
             if(e instanceof Error) throw new Error(`this.delDoc -> ${e.message}`)
         }
     }
 
-    async listKeys(silo: string, prefix: string, max?: number) {
-
-        let keys: string[] = []
-
-        try {
-
-            const promises: Promise<string[]>[] = []
-
-            if(Stawrij.PLATFORM) {
-
-                switch(Stawrij.PLATFORM) {
-                    case Stawrij.AWS:
-                        promises.push(S3.listKeys(this.s3, silo, prefix, max))
-                        break
-                    case Stawrij.AZURE:
-                        promises.push(Blob.listKeys(this.blob, silo, prefix))
-                        break
-                    case Stawrij.GCP:
-                        promises.push(Store.listKeys(this.stawr, silo, prefix, max))
-                        break
-                    default:
-                        if(this.s3) promises.push(S3.listKeys(this.s3, silo, prefix, max))
-                        if(this.blob) promises.push(Blob.listKeys(this.blob, silo, prefix))
-                        if(this.stawr) promises.push(Store.listKeys(this.stawr, silo, prefix, max))
-                        break
-                }
-
-            } else {
-
-                if(this.s3) promises.push(S3.listKeys(this.s3, silo, prefix, max))
-                if(this.blob) promises.push(Blob.listKeys(this.blob, silo, prefix))
-                if(this.stawr) promises.push(Store.listKeys(this.stawr, silo, prefix, max))
-            }
-
-            keys = await Promise.race(promises)
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`this.listKeys -> ${e.message}`)
-        }
-
-        return keys
-    }
-
-    static unwrangleDoc<T>(doc: T, idKey: string, parentKey?: string) {
+    private static unwrangleDoc<T>(doc: T, idKey: string, parentKey?: string) {
 
         const result: Record<string, any> = {}
 
@@ -243,61 +154,200 @@ export default class Stawrij {
         return result
     }
 
-    static wrangleRecord<T>(record: Record<string, any>, idKey: string) {
+     async findDocs(silo: string, collection: string, query: _storeQuery) {
 
-        const result: Record<string, any> = {}
-    
+        let results: Record<string, any>[] = []
+
         try {
 
-            for(const key in record) {
+            const expressions = await this.combineExprs(collection, query)
 
-                const allAttrs = key.split('/')
+            const indexes = await Promise.all(expressions.map((expr) => Array.fromAsync(new Glob(expr).scan({ cwd: Stawrij.INDEX_PATH }))))
 
-                const attrs = allAttrs.slice(2)
-    
-                let currentObj = result
-        
-                for (let i = 0; i < attrs.length; i++) {
-    
-                    const attr = attrs[i]
-        
-                    if(i === attrs.length - 1) currentObj[attr] = this.parseValue(record[key])
-                    else {
-                        currentObj[attr] = currentObj[attr] || {}
-                        currentObj = currentObj[attr]
-                    }
+            results = await this.execOpIndexes(silo, collection, indexes.flat())
+
+            results = results.filter((doc, idx, arr) => {
+                idx === arr.findIndex((d) => d.id === doc.id)
+            })
+            
+            if(query.limit) results = results.slice(0, query.limit)
+            if(query.sort) {
+                for(const col in query.sort) {
+                    if(query.sort[col] === "asc") results.sort((a, b) => a[col].localCompare(b[col]))
+                    else results.sort((a, b) => b[col].localCompare(a[col]))
                 }
-
-                result[idKey] = allAttrs[1]
             }
-    
-        } catch (e) {
-            if (e instanceof Error) throw new Error(`this.wrangleObject -> ${e.message}`)
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`this.findDocs -> ${e.message}`)
         }
-    
-        return result as T
+
+        return results
     }
 
-    static parseValue(value: string) {
+    private async combineExprs(collection: string, query: _storeQuery) {
+
+        let exprs = new Set<string>()
 
         try {
 
-            if(value.includes(this.DELIMITER)) return value.split(this.DELIMITER)
+            if(query.and) exprs = new Set([...exprs, ...await this.createAndExp(collection, query.and)])
+            if(query.or) exprs = new Set([...exprs, ...await this.createOrExp(collection, query.or)])
+            if(query.nor) exprs = new Set([...exprs, ...await this.createNorExp(collection, query.nor)])
 
-            const num = Number(value) 
-
-            if(!Number.isNaN(num)) return num
-
-            if(value === 'true') return true
-
-            if(value === 'false') return false
-
-            if(value !== 'null') return value
-
-        } catch (e) {
-            if (e instanceof Error) throw new Error(`this.parseValue -> ${e.message}`)
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Silo.combineExprs -> ${e.message}`)
         }
 
-        return null
+        return Array.from<string>(exprs)
+    }
+
+    private getGtOp(numbers: number[], negate: boolean = false) {
+
+        let expression = ''
+
+        for(const num of numbers) expression += negate ? `[!${num < 9 ? num + 1 : 9}-9]` : `[${num < 9 ? num + 1 : 9}-9]`
+
+        return expression
+    }
+
+    private getGteOp(numbers: number[], negate: boolean = false) {
+
+        let expression = ''
+
+        for(const num of numbers) expression += negate ? `[!${num < 9 ? num : 9}-9]` : `[${num < 9 ? num : 9}-9]`
+
+        return expression
+    }
+
+    private getLtOp(numbers: number[], negate: boolean = false) {
+
+        let expression = ''
+
+        for(const num of numbers) expression += negate ? `[!0-${num < 9 ? num - 1 : 9}]` : `[0-${num < 9 ? num - 1 : 9}]`
+
+        return expression
+    }
+
+    private getLteOp(numbers: number[], negate: boolean = false) {
+
+        let expression = ''
+
+        for(const num of numbers) expression += negate ? `[!0-${num < 9 ? num : 9}]` :  `[0-${num < 9 ? num : 9}]`
+
+        return expression
+    }
+
+    private async createAndExp(collection: string, ops: _op) {
+
+        let globExprs: string[] = []
+
+        try {
+
+            const prefix = `${collection}/{${Object.keys(ops).join(',')}}`
+
+            const valExp: string[] = []
+
+            for(const col in ops) {
+
+                if(ops[col].$eq) valExp.push(ops[col].$eq)
+                if(ops[col].$gt) valExp.push(this.getGtOp(String(ops[col].$gt).split('').map((n) => Number(n))))
+                if(ops[col].$gte) valExp.push(this.getGteOp(String(ops[col].$gte).split('').map((n) => Number(n))))
+                if(ops[col].$lt) valExp.push(this.getLtOp(String(ops[col].$lt).split('').map((n) => Number(n))))
+                if(ops[col].$lte) valExp.push(this.getLteOp(String(ops[col].$lte).split('').map((n) => Number(n))))
+                if(ops[col].$ne) valExp.push(`!(${ops[col].$ne})`)
+                if(ops[col].$like) valExp.push(ops[col].$like!)
+            }
+
+            globExprs.push(`${prefix}/{${valExp.join(',')}}/**/*`)
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Silo.createAndExp -> ${e.message}`)
+        }
+
+        return globExprs
+    }
+
+    private async execOpIndexes(silo: string, collection: string, indexes: string[]) {
+
+        let results: Record<string, any>[] = []
+
+        try {
+
+            const ids = indexes.map((idx) => idx.split('/').pop()!)
+
+            results = await Promise.all(ids.map((id) => this.getDoc(silo, collection, id)))
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Silo.execOpIndexes -> ${e.message}`)
+        }
+
+        return results
+    }
+
+    private async createOrExp(collection: string, ops: _op[]) {
+
+        let globExprs: string[] = []
+
+        try {
+
+            for(const op of ops) {
+
+                const prefix = `${collection}/{${Object.keys(op).join(',')}}`
+
+                const valExp: string[] = []
+
+                for(const col in op) {
+
+                    if(op[col].$eq) valExp.push(op[col].$eq)
+                    if(op[col].$gt) valExp.push(this.getGtOp(String(op[col].$gt).split('').map((n) => Number(n))))
+                    if(op[col].$gte) valExp.push(this.getGteOp(String(op[col].$gte).split('').map((n) => Number(n))))
+                    if(op[col].$lt) valExp.push(this.getLtOp(String(op[col].$lt).split('').map((n) => Number(n))))
+                    if(op[col].$lte) valExp.push(this.getLteOp(String(op[col].$lte).split('').map((n) => Number(n))))
+                    if(op[col].$ne) valExp.push(`!(${op[col].$ne})`)
+                    if(op[col].$like) valExp.push(op[col].$like!)
+                }
+
+                globExprs.push(`${prefix}/{${valExp.join(',')}}/**/*`)
+            }
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Silo.createOrExp -> ${e.message}`)
+        }
+
+        return globExprs
+    }
+
+    private async createNorExp(collection: string, ops: _op[]) {
+
+        let globExprs: string[] = []
+
+        try {
+
+            for(const op of ops) {
+
+                const prefix = `${collection}/{${Object.keys(op).join(',')}}`
+
+                const valExp: string[] = []
+
+                for(const col in op) {
+
+                    if(op[col].$eq) valExp.push(`!(${op[col].$eq})`)
+                    if(op[col].$gt) valExp.push(this.getGtOp(String(op[col].$gt).split('').map((n) => Number(n)), true))
+                    if(op[col].$gte) valExp.push(this.getGteOp(String(op[col].$gte).split('').map((n) => Number(n))))
+                    if(op[col].$lt) valExp.push(this.getLtOp(String(op[col].$lt).split('').map((n) => Number(n))))
+                    if(op[col].$lte) valExp.push(this.getLteOp(String(op[col].$lte).split('').map((n) => Number(n))))
+                    if(op[col].$ne) valExp.push(op[col].$ne)
+                    if(op[col].$like) valExp.push(`!(${op[col].$like!})`)
+                }
+
+                globExprs.push(`${prefix}/{${valExp.join(',')}}/**/*`) 
+            }
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Silo.createNorExp -> ${e.message}`)
+        }
+
+        return globExprs
     }
 }

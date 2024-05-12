@@ -2,7 +2,7 @@ import { BlobServiceClient } from '@azure/storage-blob'
 
 export default class {
 
-    static async putData(client: BlobServiceClient, container: string, key: string, value: any) {
+    static async putDoc(client: BlobServiceClient, container: string, key: string, doc: Record<string, any>) {
 
         try {
 
@@ -10,7 +10,7 @@ export default class {
 
             const blobClient = containerClient.getBlockBlobClient(key)
 
-            await blobClient.uploadData(value)
+            await blobClient.uploadData(JSON.stringify(doc) as any)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Blob.putData -> ${e.message}`)
@@ -35,94 +35,37 @@ export default class {
         })
       }
 
-    static async getData(client: BlobServiceClient, container: string, key: string) {
+    static async getDoc(client: BlobServiceClient, container: string, collection: string, id: string) {
 
-        let value: string = '';
+        let doc: Record<string, any> = {}
 
         try {
 
             const containerClient = client.getContainerClient(container)
 
-            const blobClient = containerClient.getBlockBlobClient(key)
+            const blobClient = containerClient.getBlockBlobClient(`${collection}/${id}`)
 
             const res = await blobClient.download()
 
-            value = (await this.streamToBuffer(res.readableStreamBody!)).toString()
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Blob.getData -> ${e.message}`)
-        }
-
-        return value
-    }
-
-    static async getDoc(client: BlobServiceClient, container: string, collection: string, id: string) {
-
-        const docs: Record<string, any> = {}
-
-        try {
-
-            const prefix = `${collection}/${id}`
-
-            const keys = await this.listKeys(client, container, prefix)
-
-            await Promise.all(keys.map(async (key) => {
-                docs[key] = await this.getData(client, container, key)
-            }))
+            doc = JSON.parse((await this.streamToBuffer(res.readableStreamBody!)).toString())
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Blob.getDoc -> ${e.message}`)
         }
 
-        return docs
-    }
-
-    static async delData(client: BlobServiceClient, container: string, key: string) {
-
-        try {
-
-            const containerClient = client.getContainerClient(container)
-
-            await containerClient.deleteBlob(key)
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Blob.delData -> ${e.message}`)
-        }
+        return doc
     }
 
     static async delDoc(client: BlobServiceClient, container: string, collection: string, id: string) {
 
         try {
 
-            const prefix = `${collection}/${id}`
+            const containerClient = client.getContainerClient(container)
 
-            const keys = await this.listKeys(client, container, prefix)
-
-            await Promise.all(keys.map((key) => this.delData(client, container, key)))
+            await containerClient.deleteBlob(`${collection}/${id}`)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Blob.delDoc -> ${e.message}`)
         }
-    }
-
-    static async listKeys(client: BlobServiceClient, container: string, prefix: string) {
-
-        let keys: string[] = []
-
-        try {
-
-            const containerClient = client.getContainerClient(container)
-
-            const blobs = containerClient.listBlobsFlat({ prefix })
-
-            for await (const blob of blobs) {
-                keys.push(blob.name)
-            }
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Blob.listKeys -> ${e.message}`)
-        }
-
-        return keys
     }
 }

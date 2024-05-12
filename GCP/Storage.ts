@@ -2,11 +2,11 @@ import { Storage } from '@google-cloud/storage'
 
 export default class {
 
-    static async putData(client: Storage, bucket: string, key: string, value: any) {
+    static async putDoc(client: Storage, bucket: string, key: string, doc: Record<string, any>) {
 
         try {
 
-            await client.bucket(bucket).file(key).save(value)
+            await client.bucket(bucket).file(key).save(JSON.stringify(doc))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Store.putData -> ${e.message}`)
@@ -32,65 +32,29 @@ export default class {
 
     static async getDoc(client: Storage, bucket: string, collection: string, id: string) {
 
-        const docs: Record<string, any> = {}
+        let doc: Record<string, any> = {}
 
         try {
 
-            const prefix = `${collection}/${id}`
+            const res = await client.bucket(bucket).file(`${collection}/${id}`).download()
 
-            const keys = await this.listKeys(client, bucket, prefix)
-
-            await Promise.all(keys.map(async (key) => {
-                docs[key] = await this.getData(client, bucket, key)
-            }))
+            doc = JSON.parse(res.toString())
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Store.getDoc -> ${e.message}`)
         }
 
-        return docs
-    }
-
-    static async delData(client: Storage, bucket: string, key: string) {
-
-        try {
-
-            await client.bucket(bucket).file(key).delete()
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Store.delData -> ${e.message}`)
-        }
+        return doc
     }
 
     static async delDoc(client: Storage, bucket: string, collection: string, id: string) {
 
         try {
 
-            const prefix = `${collection}/${id}`
-
-            const keys = await this.listKeys(client, bucket, prefix)
-
-            await Promise.all(keys.map((key) => this.delData(client, bucket, key)))
+            await client.bucket(bucket).file(`${collection}/${id}`).delete()
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Store.delDoc -> ${e.message}`)
         }
-    }
-
-    static async listKeys(client: Storage, bucket: string, prefix: string, max?: number) {
-
-        let keys: string[] = []
-
-        try {
-
-            const [ files ] = await client.bucket(bucket).getFiles({ prefix, delimiter: '/', maxResults: max })
-
-            keys = files.map((file) => file.name)
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Store.listKeys -> ${e.message}`)
-        }
-
-        return keys
     }
 }
