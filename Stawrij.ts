@@ -32,7 +32,7 @@ export default class Stawrij {
         if(storageClient) this.stawr = storageClient
     }
 
-    async getDoc<T extends object>(silo: string, collection: string, id: string) {
+    async getDoc<T extends object>(silo: string, collection: string, id: string, listen?: (doc: Record<string, any>) => void) {
 
         let doc: T | Record<string, any> = {}
 
@@ -67,6 +67,9 @@ export default class Stawrij {
             }
 
             doc = await Promise.race(promises)
+
+            if(listen) watch(`${collection}/**/*${id}`, { cwd: Stawrij.INDEX_PATH })
+                        .on("addDir", async () => listen(await this.getDoc(silo, collection, id)))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`this.getDoc -> ${e.message}`)
@@ -163,10 +166,6 @@ export default class Stawrij {
 
             const expressions = await this.getExprs(collection, query)
 
-            if(listen) watch(expressions, { cwd: Stawrij.INDEX_PATH })
-                    .on("change", async () => listen(await this.findDocs(silo, collection, query)))
-            
-
             const indexes = await Promise.all(expressions.map((expr) => Array.fromAsync(new Glob(expr).scan({ cwd: Stawrij.INDEX_PATH }))))
 
             results = await this.execOpIndexes(silo, collection, indexes.flat())
@@ -182,6 +181,9 @@ export default class Stawrij {
                     else results.sort((a, b) => b[col].localCompare(a[col]))
                 }
             }
+
+            if(listen) watch(expressions, { cwd: Stawrij.INDEX_PATH })
+                    .on("change", async () => listen(await this.findDocs(silo, collection, query)))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`this.findDocs -> ${e.message}`)
