@@ -7,6 +7,7 @@ import { Storage } from '@google-cloud/storage'
 import { _storeQuery, _op } from "./types/query";
 import { Glob } from 'bun'
 import { mkdirSync, rmdirSync } from "node:fs";
+import { watch } from 'chokidar'
 
 export default class Stawrij {
 
@@ -154,13 +155,17 @@ export default class Stawrij {
         return result
     }
 
-    async findDocs(silo: string, collection: string, query: _storeQuery) {
+    async findDocs(silo: string, collection: string, query: _storeQuery, listen?: (docs: Record<string, any>[]) => void) {
 
         let results: Record<string, any>[] = []
 
         try {
 
             const expressions = await this.getExprs(collection, query)
+
+            if(listen) watch(expressions, { cwd: Stawrij.INDEX_PATH })
+                    .on("change", async () => listen(await this.findDocs(silo, collection, query)))
+            
 
             const indexes = await Promise.all(expressions.map((expr) => Array.fromAsync(new Glob(expr).scan({ cwd: Stawrij.INDEX_PATH }))))
 

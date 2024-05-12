@@ -7,6 +7,7 @@
       "@aws-sdk/client-s3": "^3.456.0",
       "@google-cloud/storage": "^7.6.0",
       "@azure/storage-blob": "^12.17.0",
-      "@aws-sdk/client-lambda": "^3.468.0"
+      "@aws-sdk/client-lambda": "^3.468.0",
+      "chokidar": "^3.6.0"
     }
   }
