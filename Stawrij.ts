@@ -40,6 +40,8 @@ export default class Stawrij {
 
             const promises: Promise<Record<string, any>>[] = []
 
+            const queue = new Set<string>()
+
             if(Stawrij.PLATFORM) {
 
                 switch(Stawrij.PLATFORM) {
@@ -71,9 +73,14 @@ export default class Stawrij {
             if(listen) {
 
                 listen(doc)
+
+                setInterval(() => {
+                    const id = Array.from(queue).shift()
+                    listen(await this.getDoc(silo, collection, Array.from(queue).shift()))
+                }, 5000)
                 
                 watch(`${collection}/**/*${id}`, { cwd: Stawrij.INDEX_PATH })
-                        .on("addDir", async () => listen(await this.getDoc(silo, collection, id)))
+                        .on("addDir", async (path) => queue.add(path.split('/').pop()!))
             }
 
         } catch(e) {
@@ -169,6 +176,8 @@ export default class Stawrij {
 
         try {
 
+            let count = 0
+
             const expressions = await this.getExprs(collection, query)
 
             const indexes = await Promise.all(expressions.map((expr) => Array.fromAsync(new Glob(expr).scan({ cwd: Stawrij.INDEX_PATH }))))
@@ -191,8 +200,15 @@ export default class Stawrij {
                 
                 listen(results)
 
+                setInterval(() => {
+                    if(count > 0) {
+                        listen(await this.findDocs(silo, collection, query))
+                        count = 0
+                    }
+                }, 5000)
+
                 watch(expressions, { cwd: Stawrij.INDEX_PATH })
-                    .on("change", async () => listen(await this.findDocs(silo, collection, query)))
+                    .on("change", async () => count++)
             }
 
         } catch(e) {
