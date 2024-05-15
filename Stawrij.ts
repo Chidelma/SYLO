@@ -72,8 +72,6 @@ export default class Stawrij {
 
             if(listen) {
 
-                listen(doc)
-
                 setInterval(() => {
                     const id = Array.from(queue).shift()
                     listen(await this.getDoc(silo, collection, Array.from(queue).shift()))
@@ -197,8 +195,6 @@ export default class Stawrij {
             }
 
             if(listen) {
-                
-                listen(results)
 
                 setInterval(() => {
                     if(count > 0) {
