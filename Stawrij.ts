@@ -72,9 +72,8 @@ export default class Stawrij {
 
             if(listen) {
 
-                setInterval(() => {
-                    const id = Array.from(queue).shift()
-                    listen(await this.getDoc(silo, collection, Array.from(queue).shift()))
+                setInterval(async () => {
+                    listen(await this.getDoc(silo, collection, Array.from(queue).shift()!))
                 }, 5000)
                 
                 watch(`${collection}/**/*${id}`, { cwd: Stawrij.INDEX_PATH })
@@ -168,7 +167,7 @@ export default class Stawrij {
         return result
     }
 
-    async findDocs(silo: string, collection: string, query: _storeQuery, listen?: (docs: Record<string, any>[]) => void) {
+    async findDocs<T>(silo: string, collection: string, query: _storeQuery<T>, listen?: (docs: Record<string, any>[]) => void) {
 
         let results: Record<string, any>[] = []
 
@@ -186,17 +185,17 @@ export default class Stawrij {
                 idx === arr.findIndex((d) => d.id === doc.id)
             })
             
-            if(query.limit) results = results.slice(0, query.limit)
-            if(query.sort) {
-                for(const col in query.sort) {
-                    if(query.sort[col] === "asc") results.sort((a, b) => a[col].localCompare(b[col]))
+            if(query.$limit) results = results.slice(0, query.$limit)
+            if(query.$sort) {
+                for(const col in query.$sort) {
+                    if(query.$sort[col] === "asc") results.sort((a, b) => a[col].localCompare(b[col]))
                     else results.sort((a, b) => b[col].localCompare(a[col]))
                 }
             }
 
             if(listen) {
 
-                setInterval(() => {
+                setInterval(async () => {
                     if(count > 0) {
                         listen(await this.findDocs(silo, collection, query))
                         count = 0
@@ -214,15 +213,20 @@ export default class Stawrij {
         return results
     }
 
-    async getExprs(collection: string, query: _storeQuery) {
+    async getExprs<T>(collection: string, query: _storeQuery<T>) {
 
         let exprs = new Set<string>()
 
         try {
 
-            if(query.and) exprs = new Set([...exprs, ...await this.createAndExp(collection, query.and)])
-            if(query.or) exprs = new Set([...exprs, ...await this.createOrExp(collection, query.or)])
-            if(query.nor) exprs = new Set([...exprs, ...await this.createNorExp(collection, query.nor)])
+            if(query.$and) exprs = new Set([...exprs, ...await this.createAndExp(collection, query.$and)])
+            if(query.$or) exprs = new Set([...exprs, ...await this.createOrExp(collection, query.$or)])
+            if(query.$nor) exprs = new Set([...exprs, ...await this.createNorExp(collection, query.$nor)])
+
+            const keys: string[] = Object.keys(query).filter((key) => !key.includes('$'))
+            const vals: any[] = keys.map((key: any) => query[key as keyof T])
+
+            if(keys.length > 0) exprs = new Set([...exprs, `${collection}/{${keys.join(',')}}/{${vals.join(',')}}/**/*`])
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Silo.getExprs -> ${e.message}`)
@@ -267,7 +271,7 @@ export default class Stawrij {
         return expression
     }
 
-    private async createAndExp(collection: string, ops: _op) {
+    private async createAndExp<T>(collection: string, ops: _op<T>) {
 
         let globExprs: string[] = []
 
@@ -279,13 +283,13 @@ export default class Stawrij {
 
             for(const col in ops) {
 
-                if(ops[col].$eq) valExp.push(ops[col].$eq)
-                if(ops[col].$gt) valExp.push(this.getGtOp(String(ops[col].$gt).split('').map((n) => Number(n))))
-                if(ops[col].$gte) valExp.push(this.getGteOp(String(ops[col].$gte).split('').map((n) => Number(n))))
-                if(ops[col].$lt) valExp.push(this.getLtOp(String(ops[col].$lt).split('').map((n) => Number(n))))
-                if(ops[col].$lte) valExp.push(this.getLteOp(String(ops[col].$lte).split('').map((n) => Number(n))))
-                if(ops[col].$ne) valExp.push(`!(${ops[col].$ne})`)
-                if(ops[col].$like) valExp.push(ops[col].$like!)
+                if(ops[col]!.$eq) valExp.push(ops[col]!.$eq)
+                if(ops[col]!.$gt) valExp.push(this.getGtOp(String(ops[col]!.$gt).split('').map((n) => Number(n))))
+                if(ops[col]!.$gte) valExp.push(this.getGteOp(String(ops[col]!.$gte).split('').map((n) => Number(n))))
+                if(ops[col]!.$lt) valExp.push(this.getLtOp(String(ops[col]!.$lt).split('').map((n) => Number(n))))
+                if(ops[col]!.$lte) valExp.push(this.getLteOp(String(ops[col]!.$lte).split('').map((n) => Number(n))))
+                if(ops[col]!.$ne) valExp.push(`!(${ops[col]!.$ne})`)
+                if(ops[col]!.$like) valExp.push(ops[col]!.$like!)
             }
 
             globExprs.push(`${prefix}/{${valExp.join(',')}}/**/*`)
@@ -314,7 +318,7 @@ export default class Stawrij {
         return results
     }
 
-    private async createOrExp(collection: string, ops: _op[]) {
+    private async createOrExp<T>(collection: string, ops: _op<T>[]) {
 
         let globExprs: string[] = []
 
@@ -328,13 +332,13 @@ export default class Stawrij {
 
                 for(const col in op) {
 
-                    if(op[col].$eq) valExp.push(op[col].$eq)
-                    if(op[col].$gt) valExp.push(this.getGtOp(String(op[col].$gt).split('').map((n) => Number(n))))
-                    if(op[col].$gte) valExp.push(this.getGteOp(String(op[col].$gte).split('').map((n) => Number(n))))
-                    if(op[col].$lt) valExp.push(this.getLtOp(String(op[col].$lt).split('').map((n) => Number(n))))
-                    if(op[col].$lte) valExp.push(this.getLteOp(String(op[col].$lte).split('').map((n) => Number(n))))
-                    if(op[col].$ne) valExp.push(`!(${op[col].$ne})`)
-                    if(op[col].$like) valExp.push(op[col].$like!)
+                    if(op[col]!.$eq) valExp.push(op[col]!.$eq)
+                    if(op[col]!.$gt) valExp.push(this.getGtOp(String(op[col]!.$gt).split('').map((n) => Number(n))))
+                    if(op[col]!.$gte) valExp.push(this.getGteOp(String(op[col]!.$gte).split('').map((n) => Number(n))))
+                    if(op[col]!.$lt) valExp.push(this.getLtOp(String(op[col]!.$lt).split('').map((n) => Number(n))))
+                    if(op[col]!.$lte) valExp.push(this.getLteOp(String(op[col]!.$lte).split('').map((n) => Number(n))))
+                    if(op[col]!.$ne) valExp.push(`!(${op[col]!.$ne})`)
+                    if(op[col]!.$like) valExp.push(op[col]!.$like!)
                 }
 
                 globExprs.push(`${prefix}/{${valExp.join(',')}}/**/*`)
@@ -347,7 +351,7 @@ export default class Stawrij {
         return globExprs
     }
 
-    private async createNorExp(collection: string, ops: _op[]) {
+    private async createNorExp<T>(collection: string, ops: _op<T>[]) {
 
         let globExprs: string[] = []
 
@@ -361,13 +365,13 @@ export default class Stawrij {
 
                 for(const col in op) {
 
-                    if(op[col].$eq) valExp.push(`!(${op[col].$eq})`)
-                    if(op[col].$gt) valExp.push(this.getGtOp(String(op[col].$gt).split('').map((n) => Number(n)), true))
-                    if(op[col].$gte) valExp.push(this.getGteOp(String(op[col].$gte).split('').map((n) => Number(n))))
-                    if(op[col].$lt) valExp.push(this.getLtOp(String(op[col].$lt).split('').map((n) => Number(n))))
-                    if(op[col].$lte) valExp.push(this.getLteOp(String(op[col].$lte).split('').map((n) => Number(n))))
-                    if(op[col].$ne) valExp.push(op[col].$ne)
-                    if(op[col].$like) valExp.push(`!(${op[col].$like!})`)
+                    if(op[col]!.$eq) valExp.push(`!(${op[col]!.$eq})`)
+                    if(op[col]!.$gt) valExp.push(this.getGtOp(String(op[col]!.$gt).split('').map((n) => Number(n)), true))
+                    if(op[col]!.$gte) valExp.push(this.getGteOp(String(op[col]!.$gte).split('').map((n) => Number(n))))
+                    if(op[col]!.$lt) valExp.push(this.getLtOp(String(op[col]!.$lt).split('').map((n) => Number(n))))
+                    if(op[col]!.$lte) valExp.push(this.getLteOp(String(op[col]!.$lte).split('').map((n) => Number(n))))
+                    if(op[col]!.$ne) valExp.push(op[col]!.$ne)
+                    if(op[col]!.$like) valExp.push(`!(${op[col]!.$like!})`)
                 }
 
                 globExprs.push(`${prefix}/{${valExp.join(',')}}/**/*`) 

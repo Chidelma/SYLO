@@ -8,18 +8,12 @@ interface _operand {
     $like?: string
 }
 
-export interface _op {
-    [key: string]: _operand
-}
+export type _op<T> = Partial<Record<keyof T, _operand>>
 
-interface _sort {
-    [key: string]: 'asc' | 'desc'
-}
-
-export interface _storeQuery {
-    and?: _op
-    or?: _op[]
-    nor?: _op[]
-    limit?: number
-    sort?: _sort
+export type _storeQuery<T> = Partial<Record<keyof T, string | number | boolean | null>> & {
+    $and?: _op<T>
+    $or?: Array<_op<T>>
+    $nor?: Array<_op<T>>
+    $limit?: number
+    $sort?: Partial<Record<keyof T, 'asc' | 'desc'>>,
 }
