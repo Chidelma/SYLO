@@ -15,8 +15,6 @@ export default class Stawrij {
     private blob?: BlobServiceClient
     private stawr?: Storage
 
-    private static readonly DELIMITER = '\t\b\n'
-
     private static readonly PLATFORM = process.env['PLATFORM']!
 
     private static readonly INDEX_PATH = process.env.INDEX_PREFIX!
@@ -32,7 +30,7 @@ export default class Stawrij {
         if(storageClient) this.stawr = storageClient
     }
 
-    async getDoc<T extends Record<string, any>>(silo: string, collection: string, id: string, listen?: (doc: T) => void) {
+    async getDoc<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, id: U, listen?: (doc: Omit<T, U>) => void) {
 
         let doc: T = {} as T
 
@@ -74,10 +72,10 @@ export default class Stawrij {
 
                 setInterval(async () => {
                     const id = Array.from(queue).shift()!
-                    if(id) listen(await this.getDoc(silo, collection, id))
+                    if(id) listen(await this.getDoc(silo, collection, id as Exclude<keyof T, U>))
                 }, 2500)
                 
-                watch(`${collection}/**/*${id}`, { cwd: Stawrij.INDEX_PATH })
+                watch(`${collection}/**/*${String(id)}`, { cwd: Stawrij.INDEX_PATH })
                         .on("addDir", async (path) => queue.add(path.split('/').pop()!))
             }
 
@@ -88,25 +86,23 @@ export default class Stawrij {
         return doc
     }
 
-    async putDoc<T extends Record<string, any>>(silo: string, collection: string, doc: T | Record<string, any>, idKey: string) {
+    async putDoc<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, id: U, doc: Omit<T, U>) {
         
         try {
 
             const promises: Promise<void>[] = []
 
-            const record = Stawrij.unwrangleDoc<T>(doc as T, idKey)
-
-            const id = doc[idKey]
+            const indexes = Stawrij.createIndexes(id, doc)
 
             await this.delDocIndexes(collection, id)
 
-            for(const key in record) mkdirSync(`${Stawrij.INDEX_PATH}/${key}`, { recursive: true })
+            for(const idx of indexes) mkdirSync(`${Stawrij.INDEX_PATH}/${collection}/${idx}`, { recursive: true })
 
-            if(this.s3) promises.push(S3.putDoc(this.s3, silo, id, doc))
+            if(this.s3) promises.push(S3.putDoc(this.s3, silo, collection, id, doc))
             
-            if(this.blob) promises.push(Blob.putDoc(this.blob, silo, id, doc))
+            if(this.blob) promises.push(Blob.putDoc(this.blob, silo, collection, id, doc))
             
-            if(this.stawr)  promises.push(Store.putDoc(this.stawr, silo, id, doc))
+            if(this.stawr)  promises.push(Store.putDoc(this.stawr, silo, collection, id, doc))
 
             await Promise.all(promises)
 
@@ -116,14 +112,14 @@ export default class Stawrij {
 
     }
 
-    private  async delDocIndexes(collection: string, id: string) {
+    private  async delDocIndexes(collection: string, id: string | number | symbol) {
 
-        const indexes = await Array.fromAsync(new Glob(`${collection}/**/*${id}`).scan({ cwd: Stawrij.INDEX_PATH }))
+        const indexes = await Array.fromAsync(new Glob(`${collection}/**/*${String(id)}`).scan({ cwd: Stawrij.INDEX_PATH }))
 
         for(const idx of indexes) rmdirSync(idx, { recursive: true })
     }
 
-    async delDoc(silo: string, collection: string, id: string) {
+    async delDoc(silo: string, collection: string, id: string | number | symbol) {
 
         try {
 
@@ -144,28 +140,26 @@ export default class Stawrij {
         }
     }
 
-    private static unwrangleDoc<T>(doc: T, idKey: string, parentKey?: string) {
+    private static createIndexes<T extends Record<string, any>>(id: string | number | symbol, doc: T, parentKey?: string) {
 
-        const result: Record<string, any> = {}
+        const indexes: string[] = []
 
-        for (const key in doc) {
+        for(const key in doc) {
 
-            if(key !== idKey) {
+            const newKey = parentKey ? `${parentKey}/${key}` : key
 
-                const newKey = parentKey ? `${parentKey}/${key}` : key
-
-                if (typeof doc[key] === 'object' && !Array.isArray(doc[key]) && doc[key] !== null) {
-                    Object.assign(result, this.unwrangleDoc(doc[key], newKey))
-                } else if(typeof doc[key] === 'object' && Array.isArray(doc[key])) {
-                    if(Array.from(doc[key] as any[]).some((idx) => typeof idx === 'object')) throw new Error('Cannot have an array of objects')
-                    result[newKey] = Array.from(doc[key] as any[]).join(this.DELIMITER)
-                } else {
-                    result[newKey] = doc[key]
-                }
+            if(typeof doc[key] === 'object' && !Array.isArray(doc[key])) {
+                indexes.push(...this.createIndexes(id, doc[key], newKey))
+            } else if(typeof doc[key] === 'object' && Array.isArray(doc[key])) {
+                const items: (string | number | boolean)[] = doc[key]
+                if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
+                items.map((item) => indexes.push(`${newKey}/${item}/${String(id)}`))
+            } else {
+                indexes.push(`${newKey}/${String(id)}`)
             }
         }
 
-        return result
+        return indexes
     }
 
     async findDocs<T extends Record<string, any>>(silo: string, collection: string, query: _storeQuery<T>, listen?: (docs: T[]) => void) {
@@ -302,7 +296,7 @@ export default class Stawrij {
         return globExprs
     }
 
-    private async execOpIndexes<T extends Record<string, any>>(silo: string, collection: string, indexes: string[]) {
+    private async execOpIndexes<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, indexes: string[]) {
 
         let results: T[] = []
 
@@ -310,7 +304,7 @@ export default class Stawrij {
 
             const ids = indexes.map((idx) => idx.split('/').pop()!)
 
-            results = await Promise.all(ids.map((id) => this.getDoc<T>(silo, collection, id)))
+            results = await Promise.all(ids.map((id) => this.getDoc<T, U>(silo, collection, id as U)))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Silo.execOpIndexes -> ${e.message}`)
