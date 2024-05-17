@@ -32,13 +32,13 @@ export default class Stawrij {
         if(storageClient) this.stawr = storageClient
     }
 
-    async getDoc<T extends object>(silo: string, collection: string, id: string, listen?: (doc: Record<string, any>) => void) {
+    async getDoc<T extends Record<string, any>>(silo: string, collection: string, id: string, listen?: (doc: T) => void) {
 
-        let doc: T | Record<string, any> = {}
+        let doc: T = {} as T
 
         try {
 
-            const promises: Promise<Record<string, any>>[] = []
+            const promises: Promise<T>[] = []
 
             const queue = new Set<string>()
 
@@ -168,9 +168,9 @@ export default class Stawrij {
         return result
     }
 
-    async findDocs<T>(silo: string, collection: string, query: _storeQuery<T>, listen?: (docs: Record<string, any>[]) => void) {
+    async findDocs<T extends Record<string, any>>(silo: string, collection: string, query: _storeQuery<T>, listen?: (docs: T[]) => void) {
 
-        let results: Record<string, any>[] = []
+        let results: T[] = []
 
         try {
 
@@ -302,15 +302,15 @@ export default class Stawrij {
         return globExprs
     }
 
-    private async execOpIndexes(silo: string, collection: string, indexes: string[]) {
+    private async execOpIndexes<T extends Record<string, any>>(silo: string, collection: string, indexes: string[]) {
 
-        let results: Record<string, any>[] = []
+        let results: T[] = []
 
         try {
 
             const ids = indexes.map((idx) => idx.split('/').pop()!)
 
-            results = await Promise.all(ids.map((id) => this.getDoc(silo, collection, id)))
+            results = await Promise.all(ids.map((id) => this.getDoc<T>(silo, collection, id)))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Silo.execOpIndexes -> ${e.message}`)

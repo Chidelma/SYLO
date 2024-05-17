@@ -2,7 +2,7 @@ import { Storage } from '@google-cloud/storage'
 
 export default class {
 
-    static async putDoc(client: Storage, bucket: string, key: string, doc: Record<string, any>) {
+    static async putDoc<T extends Record<string, any>>(client: Storage, bucket: string, key: string, doc: T) {
 
         try {
 
@@ -13,26 +13,9 @@ export default class {
         }
     }
 
-    static async getData(client: Storage, bucket: string, key: string) {
+    static async getDoc<T>(client: Storage, bucket: string, collection: string, id: string) {
 
-        let value: string = '';
-
-        try {
-
-            const res = await client.bucket(bucket).file(key).download()
-
-            value = res.toString()
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Store.getData -> ${e.message}`)
-        }
-
-        return value
-    }
-
-    static async getDoc(client: Storage, bucket: string, collection: string, id: string) {
-
-        let doc: Record<string, any> = {}
+        let doc: T = {} as T
 
         try {
 

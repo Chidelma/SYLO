@@ -2,7 +2,7 @@ import { BlobServiceClient } from '@azure/storage-blob'
 
 export default class {
 
-    static async putDoc(client: BlobServiceClient, container: string, key: string, doc: Record<string, any>) {
+    static async putDoc<T extends Record<string, any>>(client: BlobServiceClient, container: string, key: string, doc: T) {
 
         try {
 
@@ -35,9 +35,9 @@ export default class {
         })
       }
 
-    static async getDoc(client: BlobServiceClient, container: string, collection: string, id: string) {
+    static async getDoc<T extends Record<string, any>>(client: BlobServiceClient, container: string, collection: string, id: string) {
 
-        let doc: Record<string, any> = {}
+        let doc: T = {} as T
 
         try {
 

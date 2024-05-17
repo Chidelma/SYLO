@@ -2,7 +2,7 @@ import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } fro
 
 export default class {
 
-    static async putDoc(client: S3Client, bucket: string, key: string, doc: Record<string, any>) {
+    static async putDoc<T extends Record<string, any>>(client: S3Client, bucket: string, key: string, doc: T) {
 
         try {
 
@@ -13,9 +13,9 @@ export default class {
         }
     }
 
-    static async getDoc(client: S3Client, bucket: string, collection: string, id: string) {
+    static async getDoc<T extends Record<string, any>>(client: S3Client, bucket: string, collection: string, id: string) {
 
-        let doc: Record<string, any> = {}
+        let doc: T = {} as T
 
         try {
 
