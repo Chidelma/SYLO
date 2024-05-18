@@ -32,7 +32,7 @@ export default class Stawrij {
 
     async getDoc<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, id: U, listen?: (doc: Omit<T, U>) => void) {
 
-        let doc: T = {} as T
+        let doc: Omit<T, U> = {} as Omit<T, U>
 
         try {
 
@@ -72,7 +72,7 @@ export default class Stawrij {
 
                 setInterval(async () => {
                     const id = Array.from(queue).shift()!
-                    if(id) listen(await this.getDoc(silo, collection, id as Exclude<keyof T, U>))
+                    if(id) listen(await this.getDoc(silo, collection, id as U))
                 }, 2500)
                 
                 watch(`${collection}/**/*${String(id)}`, { cwd: Stawrij.INDEX_PATH })
@@ -119,7 +119,7 @@ export default class Stawrij {
             const fullDoc = await this.getDoc<T, U>(silo, collection, id)
 
             for(const key in doc) {
-                if(fullDoc[key]) fullDoc[key as keyof Omit<T, U>] = doc[key as keyof Omit<Partial<T>, U>]!
+                if(fullDoc[key as keyof Omit<T, U>]) fullDoc[key as keyof Omit<T, U>] = doc[key as keyof Omit<Partial<T>, U>]!
             }
 
             await this.putDoc<T, U>(silo, collection, id, fullDoc)
@@ -181,7 +181,7 @@ export default class Stawrij {
 
     async findDocs<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, query: _storeQuery<T, U>, listen?: (docs: Omit<T, U>[]) => void) {
 
-        let results: T[] = []
+        let results: Omit<T, U>[] = []
 
         try {
 
@@ -192,16 +192,12 @@ export default class Stawrij {
             const indexes = await Promise.all(expressions.map((expr) => Array.fromAsync(new Glob(expr).scan({ cwd: Stawrij.INDEX_PATH }))))
 
             results = await this.execOpIndexes(silo, collection, indexes.flat())
-
-            results = results.filter((doc, idx, arr) => {
-                idx === arr.findIndex((d) => d.id === doc.id)
-            })
             
             if(query.$limit) results = results.slice(0, query.$limit)
             if(query.$sort) {
                 for(const col in query.$sort) {
-                    if(query.$sort[col as keyof Omit<T, U>] === "asc") results.sort((a, b) => a[col].localCompare(b[col]))
-                    else results.sort((a, b) => b[col].localCompare(a[col]))
+                    if(query.$sort[col as keyof Omit<T, U>] === "asc") results.sort((a, b) => a[col as keyof Omit<T, U>].localCompare(b[col as keyof Omit<T, U>]))
+                    else results.sort((a, b) => b[col as keyof Omit<T, U>].localCompare(a[col as keyof Omit<T, U>]))
                 }
             }
 
@@ -315,7 +311,7 @@ export default class Stawrij {
 
     private async execOpIndexes<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, indexes: string[]) {
 
-        let results: T[] = []
+        let results: Omit<T, U>[] = []
 
         try {
 
