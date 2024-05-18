@@ -10,10 +10,10 @@ interface _operand {
 
 export type _op<T> = Partial<Record<keyof T, _operand>>
 
-export type _storeQuery<T> = Partial<Record<keyof T, string | number | boolean | null>> & {
-    $and?: _op<T>
-    $or?: Array<_op<T>>
-    $nor?: Array<_op<T>>
+export type _storeQuery<T, U extends keyof T> = Partial<Record<keyof Omit<T, U>, string | number| boolean | null | Omit<_operand, "$eq">>> & {
+    $and?: _op<Omit<T, U>>
+    $or?: Array<_op<Omit<T, U>>>
+    $nor?: Array<_op<Omit<T, U>>>
     $limit?: number
-    $sort?: Partial<Record<keyof T, 'asc' | 'desc'>>,
+    $sort?: Partial<Record<keyof Omit<T, U>, 'asc' | 'desc'>>,
 }

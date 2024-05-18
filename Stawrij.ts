@@ -112,6 +112,23 @@ export default class Stawrij {
 
     }
 
+    async patchDoc<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, id: U, doc: Omit<Partial<T>, U>) {
+        
+        try {
+
+            const fullDoc = await this.getDoc<T, U>(silo, collection, id)
+
+            for(const key in doc) {
+                if(fullDoc[key]) fullDoc[key as keyof Omit<T, U>] = doc[key as keyof Omit<Partial<T>, U>]!
+            }
+
+            await this.putDoc<T, U>(silo, collection, id, fullDoc)
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`this.putDoc -> ${e.message}`)
+        }
+    }
+
     private  async delDocIndexes(collection: string, id: string | number | symbol) {
 
         const indexes = await Array.fromAsync(new Glob(`${collection}/**/*${String(id)}`).scan({ cwd: Stawrij.INDEX_PATH }))
@@ -162,7 +179,7 @@ export default class Stawrij {
         return indexes
     }
 
-    async findDocs<T extends Record<string, any>>(silo: string, collection: string, query: _storeQuery<T>, listen?: (docs: T[]) => void) {
+    async findDocs<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, query: _storeQuery<T, U>, listen?: (docs: Omit<T, U>[]) => void) {
 
         let results: T[] = []
 
@@ -183,7 +200,7 @@ export default class Stawrij {
             if(query.$limit) results = results.slice(0, query.$limit)
             if(query.$sort) {
                 for(const col in query.$sort) {
-                    if(query.$sort[col] === "asc") results.sort((a, b) => a[col].localCompare(b[col]))
+                    if(query.$sort[col as keyof Omit<T, U>] === "asc") results.sort((a, b) => a[col].localCompare(b[col]))
                     else results.sort((a, b) => b[col].localCompare(a[col]))
                 }
             }
@@ -208,7 +225,7 @@ export default class Stawrij {
         return results
     }
 
-    async getExprs<T>(collection: string, query: _storeQuery<T>) {
+    async getExprs<T, U extends keyof T>(collection: string, query: _storeQuery<T, U>) {
 
         let exprs = new Set<string>()
 
@@ -219,7 +236,7 @@ export default class Stawrij {
             if(query.$nor) exprs = new Set([...exprs, ...await this.createNorExp(collection, query.$nor)])
 
             const keys: string[] = Object.keys(query).filter((key) => !key.includes('$'))
-            const vals: any[] = keys.map((key: any) => query[key as keyof T])
+            const vals: any[] = keys.map((key) => query[key as keyof Omit<T, U>])
 
             if(keys.length > 0) exprs = new Set([...exprs, `${collection}/{${keys.join(',')}}/{${vals.join(',')}}/**/*`])
 
