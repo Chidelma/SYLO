@@ -179,9 +179,9 @@ export default class Stawrij {
         return indexes
     }
 
-    async findDocs<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, query: _storeQuery<T, U>, listen?: (docs: Omit<T, U>[]) => void) {
+    async findDocs<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, query: _storeQuery<T, U>, listen?: (docs: T[]) => void) {
 
-        let results: Omit<T, U>[] = []
+        let results: T[] = []
 
         try {
 
