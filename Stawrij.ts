@@ -30,9 +30,9 @@ export default class Stawrij {
         if(storageClient) this.stawr = storageClient
     }
 
-    async getDoc<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, id: U, listen?: (doc: Omit<T, U>) => void) {
+    async getDoc<T extends Record<string, any>>(silo: string, collection: string, id: string, listen?: (doc: T) => void) {
 
-        let doc: Omit<T, U> = {} as Omit<T, U>
+        let doc: T = {} as T
 
         try {
 
@@ -72,7 +72,7 @@ export default class Stawrij {
 
                 setInterval(async () => {
                     const id = Array.from(queue).shift()!
-                    if(id) listen(await this.getDoc(silo, collection, id as U))
+                    if(id) listen(await this.getDoc(silo, collection, id))
                 }, 2500)
                 
                 watch(`${collection}/**/*${String(id)}`, { cwd: Stawrij.INDEX_PATH })
@@ -86,7 +86,7 @@ export default class Stawrij {
         return doc
     }
 
-    async putDoc<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, id: U, doc: Omit<T, U>) {
+    async putDoc<T extends Record<string, any>>(silo: string, collection: string, id: string, doc:T) {
         
         try {
 
@@ -112,17 +112,17 @@ export default class Stawrij {
 
     }
 
-    async patchDoc<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, id: U, doc: Omit<Partial<T>, U>) {
+    async patchDoc<T extends Record<string, any>>(silo: string, collection: string, id: string, doc: Partial<T>) {
         
         try {
 
-            const fullDoc = await this.getDoc<T, U>(silo, collection, id)
+            const fullDoc = await this.getDoc<T>(silo, collection, id)
 
             for(const key in doc) {
-                if(fullDoc[key as keyof Omit<T, U>]) fullDoc[key as keyof Omit<T, U>] = doc[key as keyof Omit<Partial<T>, U>]!
+                if(fullDoc[key]) fullDoc[key] = doc[key]!
             }
 
-            await this.putDoc<T, U>(silo, collection, id, fullDoc)
+            await this.putDoc<T>(silo, collection, id, fullDoc)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`this.putDoc -> ${e.message}`)
@@ -309,15 +309,15 @@ export default class Stawrij {
         return globExprs
     }
 
-    private async execOpIndexes<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, indexes: string[]) {
+    private async execOpIndexes<T extends Record<string, any>>(silo: string, collection: string, indexes: string[]) {
 
-        let results: Omit<T, U>[] = []
+        let results: T[] = []
 
         try {
 
             const ids = indexes.map((idx) => idx.split('/').pop()!)
 
-            results = await Promise.all(ids.map((id) => this.getDoc<T, U>(silo, collection, id as U)))
+            results = await Promise.all(ids.map((id) => this.getDoc<T>(silo, collection, id)))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Silo.execOpIndexes -> ${e.message}`)
