@@ -4,10 +4,11 @@ import S3 from "./AWS/S3";
 import { S3Client } from "@aws-sdk/client-s3";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { Storage } from '@google-cloud/storage'
-import { _storeQuery, _op } from "./types/query";
+import { _storeQuery } from "./types/query";
 import { Glob } from 'bun'
 import { mkdirSync, rmdirSync } from "node:fs";
 import { watch } from 'chokidar'
+import Query from './Kweeree'
 
 export default class Stawrij {
 
@@ -71,7 +72,7 @@ export default class Stawrij {
             if(listen) {
 
                 setInterval(async () => {
-                    const id = Array.from(queue).shift()!
+                    const id = Array.from(queue).shift()
                     if(id) listen(await this.getDoc(silo, collection, id))
                 }, 2500)
                 
@@ -80,34 +81,32 @@ export default class Stawrij {
             }
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`this.getDoc -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.getDoc -> ${e.message}`)
         }
 
         return doc
     }
 
-    async putDoc<T extends Record<string, any>>(silo: string, collection: string, id: string, doc:T) {
+    async putDoc<T extends Record<string, any>>(silo: string, collection: string, id: string, doc: T) {
         
         try {
 
             const promises: Promise<void>[] = []
 
-            const indexes = Stawrij.createIndexes(id, doc)
-
-            await this.delDocIndexes(collection, id)
-
-            for(const idx of indexes) mkdirSync(`${Stawrij.INDEX_PATH}/${collection}/${idx}`, { recursive: true })
+            const indexes = Stawrij.createIndexes(id, doc).map((idx) => `${Stawrij.INDEX_PATH}/${collection}/${idx}`)
 
             if(this.s3) promises.push(S3.putDoc(this.s3, silo, collection, id, doc))
             
             if(this.blob) promises.push(Blob.putDoc(this.blob, silo, collection, id, doc))
             
-            if(this.stawr)  promises.push(Store.putDoc(this.stawr, silo, collection, id, doc))
+            if(this.stawr) promises.push(Store.putDoc(this.stawr, silo, collection, id, doc))
 
             await Promise.all(promises)
 
+            await this.updateIndexes(collection, id, new Set(indexes))
+
         } catch(e) {
-            if(e instanceof Error) throw new Error(`this.putDoc -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.putDoc -> ${e.message}`)
         }
 
     }
@@ -125,15 +124,39 @@ export default class Stawrij {
             await this.putDoc<T>(silo, collection, id, fullDoc)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`this.putDoc -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.putDoc -> ${e.message}`)
         }
     }
 
-    private  async delDocIndexes(collection: string, id: string | number | symbol) {
+    private async updateIndexes(collection: string, id: string | number | symbol, newIndexes: Set<string>) {
 
-        const indexes = await Array.fromAsync(new Glob(`${collection}/**/*${String(id)}`).scan({ cwd: Stawrij.INDEX_PATH }))
+        try {
 
-        for(const idx of indexes) rmdirSync(idx, { recursive: true })
+            const extractValue = (directory: string) => {
+                const paths = directory.split('/')
+                const idx = paths.findIndex((dir) => dir === collection)
+                return paths[idx + 2]
+            }
+    
+            const indexes = await Array.fromAsync(new Glob(`${collection}/**/*${String(id)}`).scan({ cwd: Stawrij.INDEX_PATH }))
+    
+            const oldIndexes = new Set(indexes)
+    
+            const oldValues = new Set(Array.from(oldIndexes).map(extractValue))
+            const newValues = new Set(Array.from(newIndexes).map(extractValue))
+    
+            const valuesToRemove = new Set(Array.from(oldValues).filter((val) => !newValues.has(val)))
+            const valuesToAdd = new Set(Array.from(newValues).filter((val) => !oldValues.has(val)))
+    
+            const toRemove = new Set(Array.from(oldIndexes).filter((dir) => valuesToRemove.has(extractValue(dir))))
+            const toAdd = new Set(Array.from(newIndexes).filter((dir) => valuesToAdd.has(extractValue(dir))))
+    
+            for(const idx of toRemove) rmdirSync(idx, { recursive: true })
+            for(const idx of toAdd) mkdirSync(idx, { recursive: true })
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Stawrij.updateIndexes -> ${e.message}`)
+        }
     }
 
     async delDoc(silo: string, collection: string, id: string | number | symbol) {
@@ -150,10 +173,12 @@ export default class Stawrij {
 
             await Promise.all(promises)
 
-            await this.delDocIndexes(collection, id)
+            const indexes = await Array.fromAsync(new Glob(`${collection}/**/*${String(id)}`).scan({ cwd: Stawrij.INDEX_PATH }))
+
+            for(const idx of indexes) rmdirSync(idx, { recursive: true })
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`this.delDoc -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.delDoc -> ${e.message}`)
         }
     }
 
@@ -179,6 +204,21 @@ export default class Stawrij {
         return indexes
     }
 
+    async findDocsSQL<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, sql: string, listen?: (docs: T[]) => void) {
+
+        let results: T[] = []
+
+        try {
+
+            results = await this.findDocs(silo, collection, Query.convert<T, U>(sql), listen)
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Stawrji.findDocsSQL-> ${e.message}`)
+        }
+
+        return results
+    }
+
     async findDocs<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, query: _storeQuery<T, U>, listen?: (docs: T[]) => void) {
 
         let results: T[] = []
@@ -187,7 +227,7 @@ export default class Stawrij {
 
             let changed = false
 
-            const expressions = await this.getExprs(collection, query)
+            const expressions = await Query.getExprs(collection, query)
 
             const indexes = await Promise.all(expressions.map((expr) => Array.fromAsync(new Glob(expr).scan({ cwd: Stawrij.INDEX_PATH }))))
 
@@ -215,98 +255,10 @@ export default class Stawrij {
             }
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`this.findDocs -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.findDocs -> ${e.message}`)
         }
 
         return results
-    }
-
-    async getExprs<T, U extends keyof T>(collection: string, query: _storeQuery<T, U>) {
-
-        let exprs = new Set<string>()
-
-        try {
-
-            if(query.$and) exprs = new Set([...exprs, ...await this.createAndExp(collection, query.$and)])
-            if(query.$or) exprs = new Set([...exprs, ...await this.createOrExp(collection, query.$or)])
-            if(query.$nor) exprs = new Set([...exprs, ...await this.createNorExp(collection, query.$nor)])
-
-            const keys: string[] = Object.keys(query).filter((key) => !key.includes('$'))
-            const vals: any[] = keys.map((key) => query[key as keyof Omit<T, U>])
-
-            if(keys.length > 0) exprs = new Set([...exprs, `${collection}/{${keys.join(',')}}/{${vals.join(',')}}/**/*`])
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Silo.getExprs -> ${e.message}`)
-        }
-
-        return Array.from<string>(exprs)
-    }
-
-    private getGtOp(numbers: number[], negate: boolean = false) {
-
-        let expression = ''
-
-        for(const num of numbers) expression += negate ? `[!${num < 9 ? num + 1 : 9}-9]` : `[${num < 9 ? num + 1 : 9}-9]`
-
-        return expression
-    }
-
-    private getGteOp(numbers: number[], negate: boolean = false) {
-
-        let expression = ''
-
-        for(const num of numbers) expression += negate ? `[!${num < 9 ? num : 9}-9]` : `[${num < 9 ? num : 9}-9]`
-
-        return expression
-    }
-
-    private getLtOp(numbers: number[], negate: boolean = false) {
-
-        let expression = ''
-
-        for(const num of numbers) expression += negate ? `[!0-${num < 9 ? num - 1 : 9}]` : `[0-${num < 9 ? num - 1 : 9}]`
-
-        return expression
-    }
-
-    private getLteOp(numbers: number[], negate: boolean = false) {
-
-        let expression = ''
-
-        for(const num of numbers) expression += negate ? `[!0-${num < 9 ? num : 9}]` :  `[0-${num < 9 ? num : 9}]`
-
-        return expression
-    }
-
-    private async createAndExp<T>(collection: string, ops: _op<T>) {
-
-        let globExprs: string[] = []
-
-        try {
-
-            const prefix = `${collection}/{${Object.keys(ops).join(',')}}`
-
-            const valExp: string[] = []
-
-            for(const col in ops) {
-
-                if(ops[col]!.$eq) valExp.push(ops[col]!.$eq)
-                if(ops[col]!.$gt) valExp.push(this.getGtOp(String(ops[col]!.$gt).split('').map((n) => Number(n))))
-                if(ops[col]!.$gte) valExp.push(this.getGteOp(String(ops[col]!.$gte).split('').map((n) => Number(n))))
-                if(ops[col]!.$lt) valExp.push(this.getLtOp(String(ops[col]!.$lt).split('').map((n) => Number(n))))
-                if(ops[col]!.$lte) valExp.push(this.getLteOp(String(ops[col]!.$lte).split('').map((n) => Number(n))))
-                if(ops[col]!.$ne) valExp.push(`!(${ops[col]!.$ne})`)
-                if(ops[col]!.$like) valExp.push(ops[col]!.$like!)
-            }
-
-            globExprs.push(`${prefix}/{${valExp.join(',')}}/**/*`)
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Silo.createAndExp -> ${e.message}`)
-        }
-
-        return globExprs
     }
 
     private async execOpIndexes<T extends Record<string, any>>(silo: string, collection: string, indexes: string[]) {
@@ -315,80 +267,14 @@ export default class Stawrij {
 
         try {
 
-            const ids = indexes.map((idx) => idx.split('/').pop()!)
+            const ids = Array.from(new Set(indexes.map((idx) => idx.split('/').pop()!)))
 
             results = await Promise.all(ids.map((id) => this.getDoc<T>(silo, collection, id)))
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Silo.execOpIndexes -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.execOpIndexes -> ${e.message}`)
         }
 
         return results
-    }
-
-    private async createOrExp<T>(collection: string, ops: _op<T>[]) {
-
-        let globExprs: string[] = []
-
-        try {
-
-            for(const op of ops) {
-
-                const prefix = `${collection}/{${Object.keys(op).join(',')}}`
-
-                const valExp: string[] = []
-
-                for(const col in op) {
-
-                    if(op[col]!.$eq) valExp.push(op[col]!.$eq)
-                    if(op[col]!.$gt) valExp.push(this.getGtOp(String(op[col]!.$gt).split('').map((n) => Number(n))))
-                    if(op[col]!.$gte) valExp.push(this.getGteOp(String(op[col]!.$gte).split('').map((n) => Number(n))))
-                    if(op[col]!.$lt) valExp.push(this.getLtOp(String(op[col]!.$lt).split('').map((n) => Number(n))))
-                    if(op[col]!.$lte) valExp.push(this.getLteOp(String(op[col]!.$lte).split('').map((n) => Number(n))))
-                    if(op[col]!.$ne) valExp.push(`!(${op[col]!.$ne})`)
-                    if(op[col]!.$like) valExp.push(op[col]!.$like!)
-                }
-
-                globExprs.push(`${prefix}/{${valExp.join(',')}}/**/*`)
-            }
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Silo.createOrExp -> ${e.message}`)
-        }
-
-        return globExprs
-    }
-
-    private async createNorExp<T>(collection: string, ops: _op<T>[]) {
-
-        let globExprs: string[] = []
-
-        try {
-
-            for(const op of ops) {
-
-                const prefix = `${collection}/{${Object.keys(op).join(',')}}`
-
-                const valExp: string[] = []
-
-                for(const col in op) {
-
-                    if(op[col]!.$eq) valExp.push(`!(${op[col]!.$eq})`)
-                    if(op[col]!.$gt) valExp.push(this.getGtOp(String(op[col]!.$gt).split('').map((n) => Number(n)), true))
-                    if(op[col]!.$gte) valExp.push(this.getGteOp(String(op[col]!.$gte).split('').map((n) => Number(n))))
-                    if(op[col]!.$lt) valExp.push(this.getLtOp(String(op[col]!.$lt).split('').map((n) => Number(n))))
-                    if(op[col]!.$lte) valExp.push(this.getLteOp(String(op[col]!.$lte).split('').map((n) => Number(n))))
-                    if(op[col]!.$ne) valExp.push(op[col]!.$ne)
-                    if(op[col]!.$like) valExp.push(`!(${op[col]!.$like!})`)
-                }
-
-                globExprs.push(`${prefix}/{${valExp.join(',')}}/**/*`) 
-            }
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Silo.createNorExp -> ${e.message}`)
-        }
-
-        return globExprs
     }
 }

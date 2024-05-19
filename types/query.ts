@@ -1,4 +1,4 @@
-interface _operand {
+export interface _operand {
     $eq?: any
     $ne?: any
     $gt?: number
@@ -15,5 +15,7 @@ export type _storeQuery<T, U extends keyof T> = Partial<Record<keyof Omit<T, U>,
     $or?: Array<_op<Omit<T, U>>>
     $nor?: Array<_op<Omit<T, U>>>
     $limit?: number
-    $sort?: Partial<Record<keyof Omit<T, U>, 'asc' | 'desc'>>,
+    $sort?: Partial<Record<keyof Omit<T, U>, 'asc' | 'desc'>>
 }
+
+export type _condition = { column: string, operator: string, value: string | number| boolean | null }
