@@ -20,7 +20,7 @@ export type _storeQuery<T> = {
 
 export type _condition = { column: string, operator: string, value: string | number| boolean | null }
 
-export type _storeUpdate<T, U extends keyof T> = {
+export type _storeUpdate<T> = {
     [K in keyof Partial<Omit<T, '_id'>>]: T[K]
 } & {
     $collection?: string

@@ -78,9 +78,9 @@ export default class {
         return query
     }
 
-    static convertUpdate<T extends _schema<T>, U extends keyof T>(sql: string) {
+    static convertUpdate<T extends _schema<T>>(sql: string) {
 
-        const update: _storeUpdate<T, U> = {} as _storeUpdate<T, U>
+        const update: _storeUpdate<T> = {} as _storeUpdate<T>
 
         try {
 

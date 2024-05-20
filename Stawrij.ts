@@ -27,8 +27,6 @@ export default class Stawrij {
 
     private static readonly ID_KEY = "_id"
 
-    private static readonly ARR_ID = "__ARRAY__"
-
     constructor({ S3Client, blobClient, storageClient }: { S3Client?: S3Client, blobClient?: BlobServiceClient, storageClient?: Storage }) {
 
         if(S3Client) this.s3 = S3Client
@@ -118,6 +116,29 @@ export default class Stawrij {
 
     }
 
+    async putDocsSQL<T extends _schema<T>>(silo: string, sql: string, collection?: string) {
+
+        try {
+
+            const insertSchema = Query.convertInsert<T>(sql)
+
+            const doc: T = {} as T
+
+            const keys = Object.keys(insertSchema).filter(key => !key.startsWith('$'))
+
+            for(const key of keys) {
+                doc[key as keyof Omit<T, '_id'>] = (insertSchema as T)[key as keyof Omit<T, '_id'>]
+            }
+
+            doc._id = crypto.randomUUID()
+
+            await this.putDoc(silo, collection ?? insertSchema.$collection!, doc)
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Stawrji.putDocsSQL-> ${e.message}`)
+        }
+    }
+
     async patchDoc<T extends _schema<T>>(silo: string, collection: string, doc: Partial<T>) {
         
         try {
@@ -134,6 +155,29 @@ export default class Stawrij {
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.putDoc -> ${e.message}`)
+        }
+    }
+
+
+    async patchDocsSQL<T extends _schema<T>>(silo: string, sql: string, collection?: string) {
+
+        try {
+
+            const updateSchema = Query.convertUpdate<T>(sql)
+
+            const docs = await this.findDocs(silo, collection ?? updateSchema.$collection!, updateSchema.$where!)
+
+            const keys = Object.keys(updateSchema).filter(key => !key.startsWith('$'))
+
+            await Promise.all(docs.map(doc => {
+
+                for(const key of keys) doc[key as keyof Omit<T, '_id'>] = (updateSchema as T)[key as keyof Omit<T, '_id'>] 
+
+                return this.putDoc(silo, collection ?? updateSchema.$collection!, doc)
+            }))
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Stawrij.patchDocSQL -> ${e.message}`)
         }
     }
 
@@ -187,6 +231,21 @@ export default class Stawrij {
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.delDoc -> ${e.message}`)
+        }
+    }
+
+    async delDocSQL<T extends _schema<T>>(silo: string, sql: string, collection?: string) {
+
+        try {
+
+            const deleteSchema = Query.convertDelete<T>(sql)
+
+            const docs = await this.findDocs(silo, collection ?? deleteSchema.$collection!, deleteSchema)
+
+            await Promise.all(docs.map(doc => this.delDoc(silo, collection ?? collection ?? deleteSchema.$collection!, doc._id!)))
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Stawrij.delDocSQL -> ${e.message}`)
         }
     }
 
