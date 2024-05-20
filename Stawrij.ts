@@ -116,7 +116,7 @@ export default class Stawrij {
 
     }
 
-    async putDocsSQL<T extends _schema<T>>(silo: string, sql: string, collection?: string) {
+    async putDocSQL<T extends _schema<T>>(silo: string, sql: string, collection?: string) {
 
         try {
 
@@ -161,6 +161,8 @@ export default class Stawrij {
 
     async patchDocsSQL<T extends _schema<T>>(silo: string, sql: string, collection?: string) {
 
+        let count = 0
+
         try {
 
             const updateSchema = Query.convertUpdate<T>(sql)
@@ -176,9 +178,13 @@ export default class Stawrij {
                 return this.putDoc(silo, collection ?? updateSchema.$collection!, doc)
             }))
 
+            count = docs.length
+
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.patchDocSQL -> ${e.message}`)
         }
+
+        return count
     }
 
     private async updateIndexes(collection: string, id: string, newIndexes: Set<string>) {
@@ -234,7 +240,9 @@ export default class Stawrij {
         }
     }
 
-    async delDocSQL<T extends _schema<T>>(silo: string, sql: string, collection?: string) {
+    async delDocsSQL<T extends _schema<T>>(silo: string, sql: string, collection?: string) {
+
+        let count = 0
 
         try {
 
@@ -244,9 +252,13 @@ export default class Stawrij {
 
             await Promise.all(docs.map(doc => this.delDoc(silo, collection ?? collection ?? deleteSchema.$collection!, doc._id!)))
 
+            count = docs.length
+
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.delDocSQL -> ${e.message}`)
         }
+
+        return count
     }
 
     private static deconstructDoc<T extends _schema<T>>(collection: string, id: string, obj: Record<string, any>, parentKey?: string) {
