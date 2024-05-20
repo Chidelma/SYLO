@@ -250,7 +250,7 @@ export default class Stawrij {
 
             const docs = await this.findDocs(silo, collection ?? deleteSchema.$collection!, deleteSchema)
 
-            await Promise.all(docs.map(doc => this.delDoc(silo, collection ?? collection ?? deleteSchema.$collection!, doc._id!)))
+            await Promise.all(docs.map(doc => this.delDoc(silo, collection ?? deleteSchema.$collection!, doc._id!)))
 
             count = docs.length
 
