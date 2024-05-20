@@ -1,41 +1,22 @@
 import { BlobServiceClient } from '@azure/storage-blob'
+import { _schema } from '../types/schema'
 
 export default class {
 
-    static async putDoc<T extends Record<string, any>>(client: BlobServiceClient, container: string, collection: string, id: string | number | symbol, doc: T) {
+    static async putDoc<T extends _schema<T>>(client: BlobServiceClient, container: string, collection: string, doc: T, deconstructDoc: (collection: string, is: string, doc: T) => string[]) {
 
         try {
 
             const containerClient = client.getContainerClient(container)
 
-            const blobClient = containerClient.getBlockBlobClient(`${collection}/${String(id)}`)
-
-            await blobClient.uploadData(JSON.stringify(doc) as any)
+            await Promise.all(deconstructDoc(collection, doc._id!, doc).map((key) => containerClient.getBlockBlobClient(key).uploadData('' as any)))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Blob.putData -> ${e.message}`)
         }
     }
 
-    private static async streamToBuffer(readableStream: NodeJS.ReadableStream) {
-
-        return new Promise((resolve: (value: Buffer) => void, reject) => {
-          
-            const chunks: any[] = []
-
-            readableStream.on("data", (data) => {
-                chunks.push(data instanceof Buffer ? data : Buffer.from(data));
-            })
-
-            readableStream.on("end", () => {
-                resolve(Buffer.concat(chunks))
-            })
-
-            readableStream.on("error", reject)
-        })
-      }
-
-    static async getDoc<T extends Record<string, any>>(client: BlobServiceClient, container: string, collection: string, id: string | number | symbol) {
+    static async getDoc<T extends _schema<T>>(client: BlobServiceClient, container: string, collection: string, id: string, constructDoc: (keys: string[]) => T) {
 
         let doc: T = {} as T
 
@@ -43,11 +24,11 @@ export default class {
 
             const containerClient = client.getContainerClient(container)
 
-            const blobClient = containerClient.getBlockBlobClient(`${collection}/${String(id)}`)
+            const keys: string[] = []
 
-            const res = await blobClient.download()
+            for await (const blob of containerClient.listBlobsFlat({ prefix: `${collection}/${id}` })) keys.push(blob.name)
 
-            doc = JSON.parse((await this.streamToBuffer(res.readableStreamBody!)).toString())
+            doc = constructDoc(keys)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Blob.getDoc -> ${e.message}`)
@@ -56,13 +37,17 @@ export default class {
         return doc
     }
 
-    static async delDoc(client: BlobServiceClient, container: string, collection: string, id: string | number | symbol) {
+    static async delDoc(client: BlobServiceClient, container: string, collection: string, id: string) {
 
         try {
 
             const containerClient = client.getContainerClient(container)
 
-            await containerClient.deleteBlob(`${collection}/${String(id)}`)
+            const keys: string[] = []
+
+            for await (const blob of containerClient.listBlobsFlat({ prefix: `${collection}/${id}` })) keys.push(blob.name)
+
+            await Promise.all(keys.map((key) => containerClient.getBlockBlobClient(key).delete()))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Blob.delDoc -> ${e.message}`)

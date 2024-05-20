@@ -9,6 +9,7 @@ import { Glob } from 'bun'
 import { mkdirSync, rmdirSync } from "node:fs";
 import { watch } from 'chokidar'
 import Query from './Kweeree'
+import { _schema } from './types/schema'
 
 export default class Stawrij {
 
@@ -24,6 +25,10 @@ export default class Stawrij {
     private static readonly AZURE = 'AZURE'
     private static readonly GCP = 'GCP'
 
+    private static readonly ID_KEY = "_id"
+
+    private static readonly ARR_ID = "__ARRAY__"
+
     constructor({ S3Client, blobClient, storageClient }: { S3Client?: S3Client, blobClient?: BlobServiceClient, storageClient?: Storage }) {
 
         if(S3Client) this.s3 = S3Client
@@ -31,7 +36,7 @@ export default class Stawrij {
         if(storageClient) this.stawr = storageClient
     }
 
-    async getDoc<T extends Record<string, any>>(silo: string, collection: string, id: string, listen?: (doc: T) => void) {
+    async getDoc<T extends _schema<T>>(silo: string, collection: string, id: string, listen?: (doc: T) => void) {
 
         let doc: T = {} as T
 
@@ -45,26 +50,26 @@ export default class Stawrij {
 
                 switch(Stawrij.PLATFORM) {
                     case Stawrij.AWS:
-                        promises.push(S3.getDoc(this.s3!, silo, collection, id))
+                        promises.push(S3.getDoc(this.s3!, silo, collection, id, Stawrij.constructDoc<T>))
                         break
                     case Stawrij.AZURE:
-                        promises.push(Blob.getDoc(this.blob!, silo, collection, id))
+                        promises.push(Blob.getDoc(this.blob!, silo, collection, id, Stawrij.constructDoc<T>))
                         break
                     case Stawrij.GCP:
-                        promises.push(Store.getDoc(this.stawr!, silo, collection, id))
+                        promises.push(Store.getDoc(this.stawr!, silo, collection, id, Stawrij.constructDoc<T>))
                         break
                     default:
-                        if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id))
-                        if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id))
-                        if(this.stawr) promises.push(Store.getDoc(this.stawr, silo, collection, id))
+                        if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id, Stawrij.constructDoc<T>))
+                        if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id, Stawrij.constructDoc<T>))
+                        if(this.stawr) promises.push(Store.getDoc(this.stawr, silo, collection, id, Stawrij.constructDoc<T>))
                         break
                 }
 
             } else {
 
-                if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id))
-                if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id))
-                if(this.stawr) promises.push(Store.getDoc(this.stawr, silo, collection, id))
+                if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id, Stawrij.constructDoc<T>))
+                if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id, Stawrij.constructDoc<T>))
+                if(this.stawr) promises.push(Store.getDoc(this.stawr, silo, collection, id, Stawrij.constructDoc<T>))
             }
 
             doc = await Promise.race(promises)
@@ -87,23 +92,25 @@ export default class Stawrij {
         return doc
     }
 
-    async putDoc<T extends Record<string, any>>(silo: string, collection: string, id: string, doc: T) {
+    async putDoc<T extends _schema<T>>(silo: string, collection: string, doc: T) {
         
         try {
 
+            doc._id = doc._id ?? crypto.randomUUID()
+
             const promises: Promise<void>[] = []
 
-            const indexes = Stawrij.createIndexes(id, doc).map((idx) => `${Stawrij.INDEX_PATH}/${collection}/${idx}`)
+            const indexes = Stawrij.createIndexes(doc).map((idx) => `${Stawrij.INDEX_PATH}/${collection}/${idx}`)
 
-            if(this.s3) promises.push(S3.putDoc(this.s3, silo, collection, id, doc))
+            if(this.s3) promises.push(S3.putDoc(this.s3, silo, collection, doc, Stawrij.deconstructDoc))
             
-            if(this.blob) promises.push(Blob.putDoc(this.blob, silo, collection, id, doc))
+            if(this.blob) promises.push(Blob.putDoc(this.blob, silo, collection, doc, Stawrij.deconstructDoc))
             
-            if(this.stawr) promises.push(Store.putDoc(this.stawr, silo, collection, id, doc))
+            if(this.stawr) promises.push(Store.putDoc(this.stawr, silo, collection, doc, Stawrij.deconstructDoc))
 
             await Promise.all(promises)
 
-            await this.updateIndexes(collection, id, new Set(indexes))
+            await this.updateIndexes(collection, doc._id, new Set(indexes))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.putDoc -> ${e.message}`)
@@ -111,34 +118,35 @@ export default class Stawrij {
 
     }
 
-    async patchDoc<T extends Record<string, any>>(silo: string, collection: string, id: string, doc: Partial<T>) {
+    async patchDoc<T extends _schema<T>>(silo: string, collection: string, doc: Partial<T>) {
         
         try {
 
-            const fullDoc = await this.getDoc<T>(silo, collection, id)
+            if(!doc._id) throw new Error("This document does not contain and _id")
+
+            const fullDoc = await this.getDoc<T>(silo, collection, doc._id as string)
 
             for(const key in doc) {
                 if(fullDoc[key]) fullDoc[key] = doc[key]!
             }
 
-            await this.putDoc<T>(silo, collection, id, fullDoc)
+            await this.putDoc<T>(silo, collection, fullDoc)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.putDoc -> ${e.message}`)
         }
     }
 
-    private async updateIndexes(collection: string, id: string | number | symbol, newIndexes: Set<string>) {
+    private async updateIndexes(collection: string, id: string, newIndexes: Set<string>) {
 
         try {
 
             const extractValue = (directory: string) => {
                 const paths = directory.split('/')
-                const idx = paths.findIndex((dir) => dir === collection)
-                return paths[idx + 2]
+                return paths[paths.length - 2]
             }
     
-            const indexes = await Array.fromAsync(new Glob(`${collection}/**/*${String(id)}`).scan({ cwd: Stawrij.INDEX_PATH }))
+            const indexes = await Array.fromAsync(new Glob(`${collection}/**/*${id}`).scan({ cwd: Stawrij.INDEX_PATH }))
     
             const oldIndexes = new Set(indexes)
     
@@ -159,7 +167,7 @@ export default class Stawrij {
         }
     }
 
-    async delDoc(silo: string, collection: string, id: string | number | symbol) {
+    async delDoc(silo: string, collection: string, id: string) {
 
         try {
 
@@ -173,7 +181,7 @@ export default class Stawrij {
 
             await Promise.all(promises)
 
-            const indexes = await Array.fromAsync(new Glob(`${collection}/**/*${String(id)}`).scan({ cwd: Stawrij.INDEX_PATH }))
+            const indexes = await Array.fromAsync(new Glob(`${collection}/**/*${id}`).scan({ cwd: Stawrij.INDEX_PATH }))
 
             for(const idx of indexes) rmdirSync(idx, { recursive: true })
 
@@ -182,35 +190,117 @@ export default class Stawrij {
         }
     }
 
-    private static createIndexes<T extends Record<string, any>>(id: string | number | symbol, doc: T, parentKey?: string) {
+    private static deconstructDoc<T extends _schema<T>>(collection: string, id: string, obj: Record<string, any>, parentKey?: string) {
+
+        const keys: string[] = []
+
+        delete obj[this.ID_KEY]
+
+        for(const key in obj) {
+
+            const newKey = parentKey ? `${parentKey}/${key}` : key
+
+            if(typeof obj[key] === 'object' && !Array.isArray(obj[key])) {
+                keys.push(...this.deconstructDoc(collection, id, obj[key], newKey))
+            } else if(typeof obj[key] === 'object' && Array.isArray(obj[key])) {
+                const items: (string | number | boolean)[] = obj[key]
+                if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
+                items.map((item, idx) => keys.push(`${collection}/${id}/${newKey}/${idx}/${item}`))
+            } else {
+                keys.push(`${collection}/${id}/${newKey}`)
+            }
+        }
+
+        return keys
+    }
+
+    private static constructDoc<T extends _schema<T>>(keys: string[]) {
+
+        const doc: Record<string, any> = {}
+
+        for(const key of keys) {
+
+            const segements = key.split('/')
+
+            doc._id = segements[1]
+
+            const path = segements.slice(2, -1)
+            const value = segements[segements.length - 1]
+            const index = !isNaN(Number(value)) ? parseInt(value, 10) : NaN
+
+            let currObj = doc
+
+            for(let i = 0; i < path.length; i++) {
+
+                const segment = path[i]
+
+                const isLastSegment = i === path.length - 1
+
+                if(isLastSegment) {
+                    if(!isNaN(index)) {
+                        if(!Array.isArray(currObj[segment])) currObj[segment] = []
+                        currObj[segment][index] = this.parseValue(value)
+                    } else currObj[segment] = this.parseValue(value)
+                } else {
+                    if(!currObj[segment]) currObj[segment] = {}
+                    currObj = currObj[segment]
+                }
+            }
+        }
+
+        const convertToArray = (obj: any) => {
+
+            if(typeof obj === "object" && obj !== null) {
+                for(const key in obj) {
+                    if(obj.hasOwnProperty(key)) {
+                        const value = obj[key]
+                        if(typeof value == 'object' && value !== null) obj[key] = convertToArray(value)
+                    }
+                }
+
+                const numericKeys = Object.keys(obj).every(k => !isNaN(Number(k)))
+                if(numericKeys) return Object.keys(obj).sort((a, b) => Number(a) - Number(b)).map(k => obj[k])
+            }
+
+            return obj
+        }
+
+        return convertToArray(doc) as T
+    }
+
+    private static createIndexes(doc: Record<string, any>, parentKey?: string) {
 
         const indexes: string[] = []
+
+        const id = doc[this.ID_KEY]
+
+        delete doc[this.ID_KEY]
 
         for(const key in doc) {
 
             const newKey = parentKey ? `${parentKey}/${key}` : key
 
             if(typeof doc[key] === 'object' && !Array.isArray(doc[key])) {
-                indexes.push(...this.createIndexes(id, doc[key], newKey))
+                indexes.push(...this.createIndexes(doc[key], newKey))
             } else if(typeof doc[key] === 'object' && Array.isArray(doc[key])) {
                 const items: (string | number | boolean)[] = doc[key]
                 if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
-                items.map((item) => indexes.push(`${newKey}/${item}/${String(id)}`))
+                items.map((item, idx) => indexes.push(`${newKey}/${item}/${idx}/${id}`))
             } else {
-                indexes.push(`${newKey}/${String(id)}`)
+                indexes.push(`${newKey}/${id}`)
             }
         }
 
         return indexes
     }
 
-    async findDocsSQL<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, sql: string, listen?: (docs: T[]) => void) {
+    async findDocsSQL<T extends _schema<T>>(silo: string, collection: string, sql: string, listen?: (docs: T[]) => void) {
 
         let results: T[] = []
 
         try {
 
-            results = await this.findDocs(silo, collection, Query.convert<T, U>(sql), listen)
+            results = await this.findDocs(silo, collection, Query.convertQuery<T>(sql), listen)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrji.findDocsSQL-> ${e.message}`)
@@ -219,7 +309,7 @@ export default class Stawrij {
         return results
     }
 
-    async findDocs<T extends Record<string, any>, U extends keyof T>(silo: string, collection: string, query: _storeQuery<T, U>, listen?: (docs: T[]) => void) {
+    async findDocs<T extends _schema<T>>(silo: string, collection: string, query: _storeQuery<T>, listen?: (docs: T[]) => void) {
 
         let results: T[] = []
 
@@ -227,17 +317,38 @@ export default class Stawrij {
 
             let changed = false
 
-            const expressions = await Query.getExprs(collection, query)
+            const expressions = await Query.getExprs(query, collection)
 
             const indexes = await Promise.all(expressions.map((expr) => Array.fromAsync(new Glob(expr).scan({ cwd: Stawrij.INDEX_PATH }))))
 
-            results = await this.execOpIndexes(silo, collection, indexes.flat())
+            results = await this.execOpIndexes(silo, collection, indexes.flat(), query.$limit)
             
-            if(query.$limit) results = results.slice(0, query.$limit)
             if(query.$sort) {
                 for(const col in query.$sort) {
-                    if(query.$sort[col as keyof Omit<T, U>] === "asc") results.sort((a, b) => a[col as keyof Omit<T, U>].localCompare(b[col as keyof Omit<T, U>]))
-                    else results.sort((a, b) => b[col as keyof Omit<T, U>].localCompare(a[col as keyof Omit<T, U>]))
+                    if(query.$sort[col as keyof Omit<T, '_id'>] === "asc") results.sort((a, b) => {
+
+                        const aVal = a[col as keyof Omit<T, '_id'>]
+                        const bVal = b[col as keyof Omit<T, '_id'>]
+
+                        if(typeof aVal === "string" && typeof bVal === "string") return (aVal as string).localeCompare(bVal)
+
+                        if(aVal < bVal) return -1
+                        if(aVal > bVal) return 1
+
+                        return 0
+                    })
+                    else results.sort((a, b) => {
+
+                        const aVal = a[col as keyof Omit<T, '_id'>]
+                        const bVal = b[col as keyof Omit<T, '_id'>]
+
+                        if(typeof aVal === "string" && typeof bVal === "string") return (bVal as string).localeCompare(aVal)
+
+                        if(aVal < bVal) return 1
+                        if(aVal > bVal) return -1
+
+                        return 0
+                    })
                 }
             }
 
@@ -261,13 +372,15 @@ export default class Stawrij {
         return results
     }
 
-    private async execOpIndexes<T extends Record<string, any>>(silo: string, collection: string, indexes: string[]) {
+    private async execOpIndexes<T extends _schema<T>>(silo: string, collection: string, indexes: string[], limit?: number) {
 
         let results: T[] = []
 
         try {
 
-            const ids = Array.from(new Set(indexes.map((idx) => idx.split('/').pop()!)))
+            let ids = Array.from(new Set(indexes.map((idx) => idx.split('/').pop()!)))
+
+            if(limit) ids = ids.slice(0, limit)
 
             results = await Promise.all(ids.map((id) => this.getDoc<T>(silo, collection, id)))
 
@@ -276,5 +389,20 @@ export default class Stawrij {
         }
 
         return results
+    }
+
+    private static parseValue(value: string) {
+    
+        const num = Number(value) 
+
+        if(!Number.isNaN(num)) return num
+
+        if(value === "true") return true
+
+        if(value === "false") return false
+
+        if(value === 'null') return null
+    
+        return value
     }
 }

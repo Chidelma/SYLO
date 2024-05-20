@@ -10,12 +10,27 @@ export interface _operand {
 
 export type _op<T> = Partial<Record<keyof T, _operand>>
 
-export type _storeQuery<T, U extends keyof T> = Partial<Record<keyof Omit<T, U>, string | number| boolean | null | Omit<_operand, "$eq">>> & {
-    $and?: _op<Omit<T, U>>
-    $or?: Array<_op<Omit<T, U>>>
-    $nor?: Array<_op<Omit<T, U>>>
+export type _storeQuery<T> = {
+    $select?: Array<keyof T>
+    $collection?: string
+    $ops?: Array<_op<Omit<T, '_id'>>>
     $limit?: number
-    $sort?: Partial<Record<keyof Omit<T, U>, 'asc' | 'desc'>>
+    $sort?: Partial<Record<keyof Omit<T, '_id'>, 'asc' | 'desc'>>
 }
 
 export type _condition = { column: string, operator: string, value: string | number| boolean | null }
+
+export type _storeUpdate<T, U extends keyof T> = {
+    [K in keyof Partial<Omit<T, '_id'>>]: T[K]
+} & {
+    $collection?: string
+    $where?: _storeQuery<T>
+}
+
+export type _storeDelete<T> = _storeQuery<T>
+
+export type _storeInsert<T> = {
+    [K in keyof Omit<T, '_id'>]: T[K]
+} & {
+    $collection?: string
+}

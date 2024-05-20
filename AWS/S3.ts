@@ -1,27 +1,31 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
+import { S3Client, PutObjectCommand, DeleteObjectCommand, ListObjectsCommand } from '@aws-sdk/client-s3'
+import { _schema } from '../types/schema'
+
 
 export default class {
 
-    static async putDoc<T extends Record<string, any>>(client: S3Client, bucket: string, collection: string, id: string | number | symbol, doc: T) {
+    static async putDoc<T extends _schema<T>>(client: S3Client, bucket: string, collection: string, doc: T, deconstructDoc: (collection: string, id: string, doc: T) => string[]) {
 
         try {
 
-            await client.send(new PutObjectCommand({ Bucket: bucket, Key: `${collection}/${String(id)}`, Body: JSON.stringify(doc) }))
+            await Promise.all(deconstructDoc(collection, doc._id!, doc).map((key) => client.send(new PutObjectCommand({ Bucket: bucket, Key: key }))))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`S3.putData -> ${e.message}`)
         }
     }
 
-    static async getDoc<T extends Record<string, any>>(client: S3Client, bucket: string, collection: string, id: string | number | symbol) {
+    static async getDoc<T extends _schema<T>>(client: S3Client, bucket: string, collection: string, id: string, constructDoc: (keys: string[]) => T) {
 
         let doc: T = {} as T
 
         try {
 
-            const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: `${collection}/${String(id)}` }))
+            const res = await client.send(new ListObjectsCommand({ Bucket: bucket, Prefix: `${collection}/${id}` }))
 
-            doc = JSON.parse(await res.Body!.transformToString())
+            const keys = Array.from(new Set(res.Contents!.map((content) => content.Key!)))
+
+            doc = constructDoc(keys)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`S3.getDoc -> ${e.message}`)
@@ -30,11 +34,15 @@ export default class {
         return doc
     }
 
-    static async delDoc(client: S3Client, bucket: string, collection: string, id: string | number | symbol) {
+    static async delDoc(client: S3Client, bucket: string, collection: string, id: string) {
 
         try {
 
-            await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: `${collection}/${String(id)}` }))
+            const res = await client.send(new ListObjectsCommand({ Bucket: bucket, Prefix: `${collection}/${id}` }))
+
+            const keys = Array.from(new Set(res.Contents!.map((content) => content.Key!)))
+
+            await Promise.all(keys.map((key) => client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }))))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`S3.delDoc -> ${e.message}`)
