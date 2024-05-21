@@ -5,9 +5,9 @@ import { S3Client } from "@aws-sdk/client-s3";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { Storage } from '@google-cloud/storage'
 import { _storeQuery } from "./types/query";
-import { Glob } from 'bun'
-import { mkdirSync, rmdirSync } from "node:fs";
-import { watch } from 'chokidar'
+import { unlinkSync } from "node:fs";
+import { Glob as gb } from "glob";
+import { Glob } from "bun";
 import Query from './Kweeree'
 import { _schema } from './types/schema'
 
@@ -34,7 +34,7 @@ export default class Stawrij {
         if(storageClient) this.stawr = storageClient
     }
 
-    async getDoc<T extends _schema<T>>(silo: string, collection: string, id: string, listen?: (doc: T) => void) {
+    async getDoc<T extends _schema<T>>(silo: string, collection: string, id: string, listen?: () => void) {
 
         let doc: T = {} as T
 
@@ -74,13 +74,21 @@ export default class Stawrij {
 
             if(listen) {
 
-                setInterval(async () => {
-                    const id = Array.from(queue).shift()
-                    if(id) listen(await this.getDoc(silo, collection, id))
-                }, 2500)
+                new gb(`${collection}/**/*${id}`, {
+                    stat: true,
+                    nodir: true,
+                    cwd: Stawrij.INDEX_PATH,
+                    ignore: {
+                        ignored: p => queue.has(p.name)
+                    }
+                }).stream().on("data", id => {
+                    queue.add(id)
+                    setTimeout(() => {
+                        listen()
+                        queue.clear()
+                    }, 2000);
+                })
                 
-                watch(`${collection}/**/*${String(id)}`, { cwd: Stawrij.INDEX_PATH })
-                        .on("addDir", async (path) => queue.add(path.split('/').pop()!))
             }
 
         } catch(e) {
@@ -209,8 +217,8 @@ export default class Stawrij {
             const toRemove = new Set(Array.from(oldIndexes).filter((dir) => valuesToRemove.has(extractValue(dir))))
             const toAdd = new Set(Array.from(newIndexes).filter((dir) => valuesToAdd.has(extractValue(dir))))
     
-            for(const idx of toRemove) rmdirSync(idx, { recursive: true })
-            for(const idx of toAdd) mkdirSync(idx, { recursive: true })
+            for(const idx of toRemove) unlinkSync(idx)
+            for(const idx of toAdd) await Bun.write(idx, ' ')
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.updateIndexes -> ${e.message}`)
@@ -233,7 +241,7 @@ export default class Stawrij {
 
             const indexes = await Array.fromAsync(new Glob(`${collection}/**/*${id}`).scan({ cwd: Stawrij.INDEX_PATH }))
 
-            for(const idx of indexes) rmdirSync(idx, { recursive: true })
+            for(const idx of indexes) unlinkSync(idx)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.delDoc -> ${e.message}`)
@@ -365,7 +373,7 @@ export default class Stawrij {
         return indexes
     }
 
-    async findDocsSQL<T extends _schema<T>>(silo: string, collection: string, sql: string, listen?: (docs: T[]) => void) {
+    async findDocsSQL<T extends _schema<T>>(silo: string, collection: string, sql: string, listen?: (ids: string[]) => void) {
 
         let results: T[] = []
 
@@ -380,13 +388,13 @@ export default class Stawrij {
         return results
     }
 
-    async findDocs<T extends _schema<T>>(silo: string, collection: string, query: _storeQuery<T>, listen?: (docs: T[]) => void) {
+    async findDocs<T extends _schema<T>>(silo: string, collection: string, query: _storeQuery<T>, listen?: (ids: string[]) => void) {
 
         let results: T[] = []
 
         try {
 
-            let changed = false
+            const queue = new Set<string>()
 
             const expressions = await Query.getExprs(query, collection)
 
@@ -425,15 +433,20 @@ export default class Stawrij {
 
             if(listen) {
 
-                setInterval(async () => {
-                    if(changed) {
-                        listen(await this.findDocs(silo, collection, query))
-                        changed = false
+                new gb(expressions, {
+                    stat: true,
+                    nodir: true,
+                    cwd: Stawrij.INDEX_PATH,
+                    ignore: {
+                        ignored: p => queue.has(p.name)
                     }
-                }, 2500)
-
-                watch(expressions, { cwd: Stawrij.INDEX_PATH })
-                    .on("change", async () => changed = true)
+                }).stream().on("data", id => {
+                    queue.add(id)
+                    setTimeout(() => {
+                        listen(Array.from(queue))
+                        queue.clear()
+                    }, 2000);
+                })
             }
 
         } catch(e) {
