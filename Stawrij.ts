@@ -34,7 +34,7 @@ export default class Stawrij {
         if(storageClient) this.stawr = storageClient
     }
 
-    async getDoc<T extends _schema<T>>(silo: string, collection: string, id: string, listen?: () => void) {
+    async getDoc<T extends _schema<T>>(silo: string, collection: string, id: string, listen?: (id: string) => void) {
 
         let doc: T = {} as T
 
@@ -84,7 +84,7 @@ export default class Stawrij {
                 }).stream().on("data", id => {
                     queue.add(id)
                     setTimeout(() => {
-                        listen()
+                        listen(id)
                         queue.clear()
                     }, 2000);
                 })
