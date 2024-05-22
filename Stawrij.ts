@@ -1,6 +1,7 @@
 import Blob from "./Azure/Blob";
 import Store from "./GCP/Storage";
 import S3 from "./AWS/S3";
+import Cluster from "./FDB/Cluster" 
 import { S3Client } from "@aws-sdk/client-s3";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { Storage } from '@google-cloud/storage'
@@ -10,16 +11,18 @@ import { Glob as gb } from "glob";
 import { Glob } from "bun";
 import Query from './Kweeree'
 import { _schema } from './types/schema'
+import { Database, open } from "foundationdb";
 
 export default class Stawrij {
 
     private s3?: S3Client
     private blob?: BlobServiceClient
     private stawr?: Storage
+    private db?: Database
 
-    private static readonly PLATFORM = process.env['PLATFORM']!
+    private static readonly PLATFORM = process.env.PLATFORM
 
-    private static readonly INDEX_PATH = process.env.INDEX_PREFIX!
+    private static readonly INDEX_PATH = process.env.INDEX_PREFIX ?? `${process.cwd()}/db`
 
     private static readonly AWS = 'AWS'
     private static readonly AZURE = 'AZURE'
@@ -32,6 +35,23 @@ export default class Stawrij {
         if(S3Client) this.s3 = S3Client
         if(blobClient) this.blob = blobClient
         if(storageClient) this.stawr = storageClient
+
+        if(!S3Client && !blobClient && !storageClient) this.db = open()
+    }
+
+    private async getColData(silo: string, prefix: string) {
+
+        const promises: Promise<string[]>[] = []
+
+        if(this.s3) promises.push(S3.getColData(this.s3, silo, prefix))
+            
+        if(this.blob) promises.push(Blob.getColData(this.blob, silo, prefix))
+        
+        if(this.stawr) promises.push(Store.getColData(this.stawr, silo, prefix))
+
+        if(this.db) promises.push(Cluster.getColData(this.db, prefix))
+
+        return await Promise.race(promises)
     }
 
     async getDoc<T extends _schema<T>>(silo: string, collection: string, id: string, listen?: (id: string) => void) {
@@ -44,52 +64,39 @@ export default class Stawrij {
 
             const queue = new Set<string>()
 
-            if(Stawrij.PLATFORM) {
-
-                switch(Stawrij.PLATFORM) {
-                    case Stawrij.AWS:
-                        promises.push(S3.getDoc(this.s3!, silo, collection, id, Stawrij.constructDoc<T>))
-                        break
-                    case Stawrij.AZURE:
-                        promises.push(Blob.getDoc(this.blob!, silo, collection, id, Stawrij.constructDoc<T>))
-                        break
-                    case Stawrij.GCP:
-                        promises.push(Store.getDoc(this.stawr!, silo, collection, id, Stawrij.constructDoc<T>))
-                        break
-                    default:
-                        if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id, Stawrij.constructDoc<T>))
-                        if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id, Stawrij.constructDoc<T>))
-                        if(this.stawr) promises.push(Store.getDoc(this.stawr, silo, collection, id, Stawrij.constructDoc<T>))
-                        break
-                }
-
-            } else {
-
-                if(this.s3) promises.push(S3.getDoc(this.s3, silo, collection, id, Stawrij.constructDoc<T>))
-                if(this.blob) promises.push(Blob.getDoc(this.blob, silo, collection, id, Stawrij.constructDoc<T>))
-                if(this.stawr) promises.push(Store.getDoc(this.stawr, silo, collection, id, Stawrij.constructDoc<T>))
-            }
-
-            doc = await Promise.race(promises)
-
             if(listen) {
 
-                new gb(`${collection}/**/*${id}`, {
-                    stat: true,
-                    nodir: true,
+                new gb(`${collection}:*:${id}`, {
                     cwd: Stawrij.INDEX_PATH,
                     ignore: {
                         ignored: p => queue.has(p.name)
                     }
-                }).stream().on("data", id => {
+                }).stream().on("data", path => {
+                    const id = path.split(':').pop()!
                     queue.add(id)
                     setTimeout(() => {
                         listen(id)
                         queue.clear()
                     }, 2000);
                 })
-                
             }
+
+            switch(Stawrij.PLATFORM) {
+                case Stawrij.AWS:
+                    promises.push(S3.getDoc(this.s3!, silo, collection, id, Stawrij.constructDoc))
+                    break
+                case Stawrij.AZURE:
+                    promises.push(Blob.getDoc(this.blob!, silo, collection, id, Stawrij.constructDoc))
+                    break
+                case Stawrij.GCP:
+                    promises.push(Store.getDoc(this.stawr!, silo, collection, id, Stawrij.constructDoc))
+                    break
+                default:
+                    promises.push(Cluster.getDoc(this.db!, collection, id, Stawrij.constructDoc))
+                    break
+            }
+
+            doc = await Promise.race(promises)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.getDoc -> ${e.message}`)
@@ -98,25 +105,30 @@ export default class Stawrij {
         return doc
     }
 
+    private async putData(silo: string, key: string) {
+
+        const promises: Promise<void>[] = []
+
+        if(this.s3) promises.push(S3.putData(this.s3, silo, key))
+            
+        if(this.blob) promises.push(Blob.putData(this.blob, silo, key))
+        
+        if(this.stawr) promises.push(Store.putData(this.stawr, silo, key))
+
+        if(this.db) promises.push(Cluster.putData(this.db, key))
+
+        await Promise.all(promises)
+    }
+
     async putDoc<T extends _schema<T>>(silo: string, collection: string, doc: T) {
         
         try {
 
             doc._id = doc._id ?? crypto.randomUUID()
 
-            const promises: Promise<void>[] = []
+            const indexes = Stawrij.createIndexes(doc).map((idx) => `${Stawrij.INDEX_PATH}/${collection}:${idx}`)
 
-            const indexes = Stawrij.createIndexes(doc).map((idx) => `${Stawrij.INDEX_PATH}/${collection}/${idx}`)
-
-            if(this.s3) promises.push(S3.putDoc(this.s3, silo, collection, doc, Stawrij.deconstructDoc))
-            
-            if(this.blob) promises.push(Blob.putDoc(this.blob, silo, collection, doc, Stawrij.deconstructDoc))
-            
-            if(this.stawr) promises.push(Store.putDoc(this.stawr, silo, collection, doc, Stawrij.deconstructDoc))
-
-            await Promise.all(promises)
-
-            await this.updateIndexes(collection, doc._id, new Set(indexes))
+            this.updateIndexes(silo, collection, doc._id, new Set(indexes))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.putDoc -> ${e.message}`)
@@ -151,15 +163,11 @@ export default class Stawrij {
         
         try {
 
-            if(!doc._id) throw new Error("This document does not contain and _id")
+            if(!doc._id) throw new Error("This document does not contain an _id")
 
-            const fullDoc = await this.getDoc<T>(silo, collection, doc._id as string)
+            const keys = Stawrij.deconstructDoc(collection, doc._id! as string, doc)
 
-            for(const key in doc) {
-                if(fullDoc[key]) fullDoc[key] = doc[key]!
-            }
-
-            await this.putDoc<T>(silo, collection, fullDoc)
+            await this.updateIndexes(silo, collection, doc._id! as string, new Set(keys))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.putDoc -> ${e.message}`)
@@ -175,18 +183,24 @@ export default class Stawrij {
 
             const updateSchema = Query.convertUpdate<T>(sql)
 
-            const docs = await this.findDocs(silo, collection ?? updateSchema.$collection!, updateSchema.$where!)
+            const coll = collection ?? updateSchema.$collection!
+
+            const expressions = await Query.getExprs(updateSchema.$where!, coll)
+
+            const indexes = await Promise.all(expressions.map((expr) => Array.fromAsync(new Glob(expr).scan({ cwd: Stawrij.INDEX_PATH }))))
 
             const keys = Object.keys(updateSchema).filter(key => !key.startsWith('$'))
 
-            await Promise.all(docs.map(doc => {
+            await Promise.all(indexes.flat().map(idx => idx.split(':').pop()!).map(id => {
 
-                for(const key of keys) doc[key as keyof Omit<T, '_id'>] = (updateSchema as T)[key as keyof Omit<T, '_id'>] 
+                const partialDoc: Record<string, any> = { _id: id }
 
-                return this.putDoc(silo, collection ?? updateSchema.$collection!, doc)
+                for(const key of keys) partialDoc[key] = updateSchema[key as keyof Omit<T, '_id'>]
+                
+                return this.patchDoc(silo, coll, partialDoc)
             }))
 
-            count = docs.length
+            count = indexes.flat().length
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.patchDocSQL -> ${e.message}`)
@@ -195,16 +209,16 @@ export default class Stawrij {
         return count
     }
 
-    private async updateIndexes(collection: string, id: string, newIndexes: Set<string>) {
+    private async updateIndexes(silo: string, collection: string, id: string, newIndexes: Set<string>) {
 
         try {
 
-            const extractValue = (directory: string) => {
-                const paths = directory.split('/')
-                return paths[paths.length - 2]
+            const extractValue = (file: string) => {
+                const segements = file.split(':')
+                return segements[segements.length - 2]
             }
     
-            const indexes = await Array.fromAsync(new Glob(`${collection}/**/*${id}`).scan({ cwd: Stawrij.INDEX_PATH }))
+            const indexes = await Array.fromAsync(new Glob(`${collection}:*:${id}`).scan({ cwd: Stawrij.INDEX_PATH }))
     
             const oldIndexes = new Set(indexes)
     
@@ -216,13 +230,39 @@ export default class Stawrij {
     
             const toRemove = new Set(Array.from(oldIndexes).filter((dir) => valuesToRemove.has(extractValue(dir))))
             const toAdd = new Set(Array.from(newIndexes).filter((dir) => valuesToAdd.has(extractValue(dir))))
-    
-            for(const idx of toRemove) unlinkSync(idx)
-            for(const idx of toAdd) await Bun.write(idx, ' ')
+
+            await Promise.all(Array.from(toRemove).map(index => {
+                unlinkSync(index)
+                const segments = index.split(':')
+                const collIdx = segments.findIndex(seg => seg === collection)
+                return this.delData(silo, segments.slice(collIdx).join(':'))
+            }))
+
+            await Promise.all(Array.from(toAdd).map(async index => {
+                await Bun.write(index, '.')
+                const segments = index.split(':')
+                const collIdx = segments.findIndex(seg => seg === collection)
+                return this.putData(silo, segments.slice(collIdx).join(':'))
+            }))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.updateIndexes -> ${e.message}`)
         }
+    }
+
+    private async delData(silo: string, key: string) {
+
+        const promises: Promise<void>[] = []
+
+        if(this.s3) promises.push(S3.delData(this.s3, silo, key))
+            
+        if(this.blob) promises.push(Blob.delData(this.blob, silo, key))
+        
+        if(this.stawr) promises.push(Store.delData(this.stawr, silo, key))
+
+        if(this.db) promises.push(Cluster.delData(this.db, key))
+
+        await Promise.all(promises)
     }
 
     async delDoc(silo: string, collection: string, id: string) {
@@ -237,9 +277,11 @@ export default class Stawrij {
 
             if(this.stawr) promises.push(Store.delDoc(this.stawr, silo, collection, id))
 
+            if(this.db) promises.push(Cluster.delDoc(this.db, collection, id))
+
             await Promise.all(promises)
 
-            const indexes = await Array.fromAsync(new Glob(`${collection}/**/*${id}`).scan({ cwd: Stawrij.INDEX_PATH }))
+            const indexes = await Array.fromAsync(new Glob(`${collection}:*:${id}`).scan({ cwd: Stawrij.INDEX_PATH }))
 
             for(const idx of indexes) unlinkSync(idx)
 
@@ -256,11 +298,15 @@ export default class Stawrij {
 
             const deleteSchema = Query.convertDelete<T>(sql)
 
-            const docs = await this.findDocs(silo, collection ?? deleteSchema.$collection!, deleteSchema)
+            const coll = collection ?? deleteSchema.$collection!
 
-            await Promise.all(docs.map(doc => this.delDoc(silo, collection ?? deleteSchema.$collection!, doc._id!)))
+            const expressions = await Query.getExprs(deleteSchema, coll)
 
-            count = docs.length
+            const indexes = await Promise.all(expressions.map((expr) => Array.fromAsync(new Glob(expr).scan({ cwd: Stawrij.INDEX_PATH }))))
+
+            await Promise.all(indexes.flat().map(idx => idx.split(':').pop()!).map(id => this.delDoc(silo, coll, id)))
+
+            count = indexes.flat().length
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.delDocSQL -> ${e.message}`)
@@ -277,29 +323,29 @@ export default class Stawrij {
 
         for(const key in obj) {
 
-            const newKey = parentKey ? `${parentKey}/${key}` : key
+            const newKey = parentKey ? `${parentKey}:${key}` : key
 
             if(typeof obj[key] === 'object' && !Array.isArray(obj[key])) {
                 keys.push(...this.deconstructDoc(collection, id, obj[key], newKey))
             } else if(typeof obj[key] === 'object' && Array.isArray(obj[key])) {
                 const items: (string | number | boolean)[] = obj[key]
                 if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
-                items.map((item, idx) => keys.push(`${collection}/${id}/${newKey}/${idx}/${item}`))
+                items.map((item, idx) => keys.push(`${collection}:${id}:${newKey}:${idx}:${item}`))
             } else {
-                keys.push(`${collection}/${id}/${newKey}`)
+                keys.push(`${collection}:${id}:${newKey}`)
             }
         }
 
         return keys
     }
 
-    private static constructDoc<T extends _schema<T>>(keys: string[]) {
+    private static constructDoc(keys: string[]) {
 
         const doc: Record<string, any> = {}
 
         for(const key of keys) {
 
-            const segements = key.split('/')
+            const segements = key.split(':')
 
             doc._id = segements[1]
 
@@ -344,7 +390,7 @@ export default class Stawrij {
             return obj
         }
 
-        return convertToArray(doc) as T
+        return convertToArray(doc)
     }
 
     private static createIndexes(doc: Record<string, any>, parentKey?: string) {
@@ -357,16 +403,16 @@ export default class Stawrij {
 
         for(const key in doc) {
 
-            const newKey = parentKey ? `${parentKey}/${key}` : key
+            const newKey = parentKey ? `${parentKey}:${key}` : key
 
             if(typeof doc[key] === 'object' && !Array.isArray(doc[key])) {
                 indexes.push(...this.createIndexes(doc[key], newKey))
             } else if(typeof doc[key] === 'object' && Array.isArray(doc[key])) {
                 const items: (string | number | boolean)[] = doc[key]
                 if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
-                items.map((item, idx) => indexes.push(`${newKey}/${item}/${idx}/${id}`))
+                items.map((item, idx) => indexes.push(`${newKey}:${item}:${idx}:${id}`))
             } else {
-                indexes.push(`${newKey}/${id}`)
+                indexes.push(`${newKey}:${id}`)
             }
         }
 
@@ -382,7 +428,7 @@ export default class Stawrij {
             results = await this.findDocs(silo, collection, Query.convertQuery<T>(sql), listen)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrji.findDocsSQL-> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.findDocsSQL-> ${e.message}`)
         }
 
         return results
@@ -398,9 +444,25 @@ export default class Stawrij {
 
             const expressions = await Query.getExprs(query, collection)
 
+            if(listen) {
+
+                new gb(expressions, {
+                    cwd: Stawrij.INDEX_PATH,
+                    ignore: {
+                        ignored: p => queue.has(p.name)
+                    }
+                }).stream().on("data", path => {
+                    queue.add(path.split(':').pop()!)
+                    setTimeout(() => {
+                        listen(Array.from(queue))
+                        queue.clear()
+                    }, 2000);
+                })
+            }
+
             const indexes = await Promise.all(expressions.map((expr) => Array.fromAsync(new Glob(expr).scan({ cwd: Stawrij.INDEX_PATH }))))
 
-            results = await this.execOpIndexes(silo, collection, indexes.flat(), query.$limit)
+            results = await this.execOpIndexes(silo, collection, indexes.flat(), query)
             
             if(query.$sort) {
                 for(const col in query.$sort) {
@@ -431,24 +493,6 @@ export default class Stawrij {
                 }
             }
 
-            if(listen) {
-
-                new gb(expressions, {
-                    stat: true,
-                    nodir: true,
-                    cwd: Stawrij.INDEX_PATH,
-                    ignore: {
-                        ignored: p => queue.has(p.name)
-                    }
-                }).stream().on("data", id => {
-                    queue.add(id)
-                    setTimeout(() => {
-                        listen(Array.from(queue))
-                        queue.clear()
-                    }, 2000);
-                })
-            }
-
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.findDocs -> ${e.message}`)
         }
@@ -456,17 +500,28 @@ export default class Stawrij {
         return results
     }
 
-    private async execOpIndexes<T extends _schema<T>>(silo: string, collection: string, indexes: string[], limit?: number) {
+    private async execOpIndexes<T extends _schema<T>>(silo: string, collection: string, indexes: string[], query: _storeQuery<T>) {
 
         let results: T[] = []
 
         try {
 
-            let ids = Array.from(new Set(indexes.map((idx) => idx.split('/').pop()!)))
+            let ids = Array.from(new Set(indexes.map((idx) => idx.split(':').pop()!)))
 
-            if(limit) ids = ids.slice(0, limit)
+            if(query.$limit) ids = ids.slice(0, query.$limit)
 
-            results = await Promise.all(ids.map((id) => this.getDoc<T>(silo, collection, id)))
+            if(query.$select && query.$select.length > 0) {
+
+                for(const id of ids) {
+
+                    const prefixes = query.$select.map(column => `${collection}:${id}:${String(column)}`)
+
+                    const colData = await Promise.all(prefixes.map(prefix => this.getColData(silo, prefix)))
+
+                    results.push(Stawrij.constructDoc(colData.flat()))
+                }
+
+            } else results = await Promise.all(ids.map((id) => this.getDoc<T>(silo, collection, id)))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.execOpIndexes -> ${e.message}`)

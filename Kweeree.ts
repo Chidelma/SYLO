@@ -187,7 +187,7 @@ export default class {
                 operand.$lte = condition.value as number
                 break
             case "like":
-                operand.$like = condition.value as string
+                operand.$like = (condition.value as string).replaceAll('%', '*')
                 break
             default:
                 throw new Error(`Unsupported SQL operator: ${condition.operator}`)
@@ -209,7 +209,7 @@ export default class {
         return { column, operator, value: this.parseValue(value) }
     }
 
-    static async getExprs<T, U extends keyof T>(query: _storeQuery<T>, collection?: string) {
+    static async getExprs<T>(query: _storeQuery<T>, collection?: string) {
 
         let exprs = new Set<string>()
 
@@ -223,27 +223,27 @@ export default class {
 
                         const col = op[column as keyof Omit<T, '_id'>]!
 
-                        const prefix = `${collection ?? query.$collection}/${column}`
+                        const prefix = `${collection ?? query.$collection}:${column}`
 
-                        if(col.$eq) exprs = new Set([...exprs, `${prefix}/${col.$eq}/**/*`])
-                        if(col.$ne) exprs = new Set([...exprs, `${prefix}/!${col.$ne}/**/*`])
+                        if(col.$eq) exprs = new Set([...exprs, `${prefix}:${col.$eq}:*`])
+                        if(col.$ne) exprs = new Set([...exprs, `${prefix}:!(${col.$ne}):*`])
                         if(col.$gt) {
                             const valOp = this.getGtOp(String(col.$gt).split('').map((n) => Number(n)))
-                            exprs = new Set([...exprs, `${prefix}/${valOp}/**/*`])
+                            exprs = new Set([...exprs, `${prefix}:${valOp}:*`])
                         }
                         if(col.$gte) {
                             const valOp = this.getGteOp(String(col.$gte).split('').map((n) => Number(n)))
-                            exprs = new Set([...exprs, `${prefix}/${valOp}/**/*`])
+                            exprs = new Set([...exprs, `${prefix}:${valOp}:*`])
                         }
                         if(col.$lt) {
                             const valOp = this.getLtOp(String(col.$lt).split('').map((n) => Number(n)))
-                            exprs = new Set([...exprs, `${prefix}/${valOp}/**/*`])
+                            exprs = new Set([...exprs, `${prefix}:${valOp}:*`])
                         }
                         if(col.$lte) {
                             const valOp = this.getLteOp(String(col.$lte).split('').map((n) => Number(n)))
-                            exprs = new Set([...exprs, `${prefix}/${valOp}/**/*`])
+                            exprs = new Set([...exprs, `${prefix}:${valOp}:*`])
                         }
-                        if(col.$like) exprs = new Set([...exprs, `${prefix}/${col.$like}/**/*`])
+                        if(col.$like) exprs = new Set([...exprs, `${prefix}:${col.$like}:*`])
                     }
                 }
             }
