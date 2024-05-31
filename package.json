@@ -10,7 +10,8 @@
     "@azure/storage-blob": "^12.17.0",
     "@aws-sdk/client-lambda": "^3.468.0",
     "glob": "^10.3.15",
-    "foundationdb": "2.0.1"
+    "@redis/client": "^1.5.16",
+    "chokidar": "^3.6.0"
   },
   "module": "index.ts",
   "type": "module",

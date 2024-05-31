@@ -3,28 +3,100 @@ import { _schema } from './types/schema'
 
 export default class {
 
+    static getJSONPositions(input: string) {
+
+        const stack: number[] = []
+        const squareStack: number[] = []
+        const result: number[][] = []
+
+        for (let i = 0; i < input.length; i++) {
+            if (input[i] === '{') {
+                if (stack.length === 0) stack.push(i);
+                else stack.push(i)
+            } else if (input[i] === '}') {
+                if (stack.length === 0) throw new Error(`Unmatched closing brace at position ${i}`);
+                const openingIndex = stack.pop();
+                if (stack.length === 0) {
+                    if (openingIndex !== undefined) {
+                        result.push([openingIndex, i]);
+                    }
+                }
+            } else if (input[i] === '[') {
+                if (squareStack.length === 0) squareStack.push(i);
+                else squareStack.push(i)
+            } else if (input[i] === ']') {
+                if (squareStack.length === 0) throw new Error(`Unmatched closing bracket at position ${i}`);
+                const openingIndex = squareStack.pop();
+                if (squareStack.length === 0) {
+                    if (openingIndex !== undefined) {
+                        result.push([openingIndex, i]);
+                    }
+                }
+            }
+        }
+
+        if (stack.length > 0) {
+            throw new Error('Unmatched opening brace(s) found')
+        }
+
+        return result
+    }
+
     static convertInsert<T extends _schema<T>>(sql: string) {
 
         const insert: _storeInsert<T> = {} as _storeInsert<T>
 
         try {
 
+            const jsonPlaceholder = "_JSON_"
+
             const lowerSQL = sql.toLowerCase()
 
-            const insertMatch = lowerSQL.match(/insert\s+into\s+(\w+)\s*\((.+?)\)\s*values\s*\((.+?)\)/i)
+            const insertMatch = lowerSQL.match(/insert\s+into\s+(\w+)\s*\((.+?)\)\s*values\s*\((.*?)\)/is)
 
             if(!insertMatch) throw new Error("Invalid SQL INSERT statement")
 
-            const [_, collection, columString, valuesString] = insertMatch
+            const [_, collection, columString, __] = insertMatch
+
+            const valuesString = lowerSQL.split('values')[1].trim().slice(1, -1)
 
             insert.$collection = collection
 
-            const columns = columString.split(',').map(col => col.trim())
-            const values = valuesString.split(',').map(val => val.trim())
+            const values: any[] = []
 
-            if(columns.length !== values.length) throw new Error("Columns and values count do not match")
+            const indexes = this.getJSONPositions(valuesString)
 
-            columns.forEach((column, idx) => insert[column as keyof Omit<T, '_id'>] = this.parseValue(values[idx]) as any)
+            valuesString.split(',').forEach(val => {
+
+                if(!val.includes('\"')) {
+                    values.push(val)
+                } else values.push(jsonPlaceholder)
+            })
+
+            while(indexes.length > 0) {
+
+                const firstIdx = values.indexOf(jsonPlaceholder)
+                const lastIndex = values.lastIndexOf(jsonPlaceholder)
+
+                if(firstIdx > -1) {
+                    const [start, end] = indexes.shift()!
+                    values[firstIdx] = JSON.parse(valuesString.slice(start, end + 1))
+                }
+
+                if(indexes.length === 0) break
+
+                if(lastIndex > -1) {
+                    const [start, end] = indexes.pop()!
+                    values[lastIndex] = JSON.parse(valuesString.slice(start, end + 1))
+                }
+            }
+
+            const allVaues = values.filter(val => val !== jsonPlaceholder)
+
+            columString.split(',').forEach((col, idx) => {
+                const value = allVaues[idx]
+                insert[col as keyof Omit<T, '_id'>] = typeof value !== "object" ? this.parseValue(value) as any : value
+            })
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Query.convertQuery -> ${e.message}`)
@@ -47,7 +119,7 @@ export default class {
 
             const [_, columns, collection, whereClause, orderByClause, limitClause] = selectMatch
 
-            query = this.parseWherClause(whereClause)
+            if(whereClause) query = this.parseWherClause(whereClause)
 
             query.$collection = collection
 
@@ -86,13 +158,13 @@ export default class {
 
             const lowerSQL = sql.toLowerCase()
 
-            const updateMatch = lowerSQL.match(/update\s+(\w+)\s+set(.+?)\s+where\s+(.+)/i)
+            const updateMatch = lowerSQL.match(/update\s+(\w+)\s+set\s+(.+?)(?:\s+where\s+(.+))?$/)
 
             if(!updateMatch) throw new Error("Invalid SQL Update Statement")
 
-            update.$collection = updateMatch[1]
+            const [_, collection, setClause, whereClause] = updateMatch
 
-            const setClause = updateMatch[2]
+            update.$collection = collection
 
             const setConditionsArray = setClause.split(',').map((cond) => cond.trim())
 
@@ -101,7 +173,7 @@ export default class {
                 update[column as keyof Omit<T, '_id'>] = this.parseValue(value) as any
             })
 
-            update.$where = this.parseWherClause(updateMatch[3])
+            update.$where = whereClause ? this.parseWherClause(whereClause) : {}
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Query.convertUpdate -> ${e.message}`)
@@ -118,14 +190,18 @@ export default class {
 
             const lowerSQL = sql.toLowerCase()
 
-            const whereMatch = lowerSQL.match(/delete\s+from\s+\w+\s+where\s+(.+)/i)
+            const whereMatch = lowerSQL.match(/delete\s+from\s+(\w+)(?:\s+where\s+(.+))?/i)
 
             if(!whereMatch) throw new Error("Invalid SQL DELETE Statement")
 
-            deleteStore = this.parseWherClause(whereMatch[1])
+            const [_, collection, whereClause] = whereMatch
+
+            if(whereClause) deleteStore = this.parseWherClause(whereClause)
+
+            deleteStore.$collection = collection
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Query.convertUpdate -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Query.convertDelete -> ${e.message}`)
         }
 
         return deleteStore
@@ -223,30 +299,30 @@ export default class {
 
                         const col = op[column as keyof Omit<T, '_id'>]!
 
-                        const prefix = `${collection ?? query.$collection}:${column}`
+                        const prefix = `${collection ?? query.$collection}/${column}`
 
-                        if(col.$eq) exprs = new Set([...exprs, `${prefix}:${col.$eq}:*`])
-                        if(col.$ne) exprs = new Set([...exprs, `${prefix}:!(${col.$ne}):*`])
+                        if(col.$eq) exprs = new Set([...exprs, `${prefix}/${col.$eq}/**/*`])
+                        if(col.$ne) exprs = new Set([...exprs, `${prefix}/!(${col.$ne})/**/*`])
                         if(col.$gt) {
                             const valOp = this.getGtOp(String(col.$gt).split('').map((n) => Number(n)))
-                            exprs = new Set([...exprs, `${prefix}:${valOp}:*`])
+                            exprs = new Set([...exprs, `${prefix}/${valOp}/**/*`])
                         }
                         if(col.$gte) {
                             const valOp = this.getGteOp(String(col.$gte).split('').map((n) => Number(n)))
-                            exprs = new Set([...exprs, `${prefix}:${valOp}:*`])
+                            exprs = new Set([...exprs, `${prefix}/${valOp}/**/*`])
                         }
                         if(col.$lt) {
                             const valOp = this.getLtOp(String(col.$lt).split('').map((n) => Number(n)))
-                            exprs = new Set([...exprs, `${prefix}:${valOp}:*`])
+                            exprs = new Set([...exprs, `${prefix}/${valOp}/**/*`])
                         }
                         if(col.$lte) {
                             const valOp = this.getLteOp(String(col.$lte).split('').map((n) => Number(n)))
-                            exprs = new Set([...exprs, `${prefix}:${valOp}:*`])
+                            exprs = new Set([...exprs, `${prefix}/${valOp}/**/*`])
                         }
-                        if(col.$like) exprs = new Set([...exprs, `${prefix}:${col.$like}:*`])
+                        if(col.$like) exprs = new Set([...exprs, `${prefix}/${col.$like.replaceAll('%', '*')}/**/*`])
                     }
                 }
-            }
+            } else exprs = new Set([`${collection ?? query.$collection}/**/*`])
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Query.getExprs -> ${e.message}`)
