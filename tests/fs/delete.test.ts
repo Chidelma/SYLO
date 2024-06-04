@@ -15,7 +15,7 @@ describe("NO-SQL", async () => {
 
     for(const comment of comments.slice(0, 25)) await Silo.putDoc(SILO, COMMENTS, comment)
 
-    let results = await Silo.findDocs<_comment>(COMMENTS, { $limit: 1 })
+    let results = await Silo.findDocs<_comment>(COMMENTS, { }).next(1)
 
     test("DELETE ONE", async () => {
 
@@ -23,7 +23,7 @@ describe("NO-SQL", async () => {
 
         await Silo.delDoc(SILO, COMMENTS, id)
 
-        results = await Silo.findDocs<_comment>(COMMENTS, {})
+        results = await Silo.findDocs<_comment>(COMMENTS, {}).next()
 
         const idx = results.findIndex(com => com._id === id)
 
@@ -35,7 +35,7 @@ describe("NO-SQL", async () => {
 
         await Silo.delDocs<_comment>(SILO, COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] })
 
-        results = await Silo.findDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] })
+        results = await Silo.findDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] }).next()
 
         expect(results.length).toEqual(0)
 
@@ -45,7 +45,7 @@ describe("NO-SQL", async () => {
 
         await Silo.delDocs<_comment>(SILO, COMMENTS, {})
 
-        results = await Silo.findDocs<_comment>(COMMENTS, {})
+        results = await Silo.findDocs<_comment>(COMMENTS, {}).next()
 
         expect(results.length).toBe(0)
 
@@ -67,7 +67,7 @@ describe("SQL", async () => {
         await Silo.putDocSQL(SILO, `INSERT INTO ${USERS} (${keys.join(',')}) VALUES (${values.join(',')})`)
     }
 
-    let results = await Silo.findDocsSQL<_user>(`SELECT * FROM users LIMIT 1`)
+    let results = await Silo.findDocsSQL<_user>(`SELECT * FROM users`).next(1)
 
     test("DELETE CLAUSE", async () => {
 
@@ -75,7 +75,7 @@ describe("SQL", async () => {
 
         await Silo.delDocsSQL<_user>(SILO, `DELETE from users WHERE name = '${name}'`)
 
-        results = await Silo.findDocsSQL<_user>(`SELECT * FROM users WHERE name = '${name}'`)
+        results = await Silo.findDocsSQL<_user>(`SELECT * FROM users WHERE name = '${name}'`).next()
 
         const idx = results.findIndex(com => com.name === name)
 
@@ -86,7 +86,7 @@ describe("SQL", async () => {
 
         await Silo.delDocsSQL<_user>(SILO, `DELETE from users`)
 
-        results = await Silo.findDocsSQL<_user>(`SELECT * FROM users`)
+        results = await Silo.findDocsSQL<_user>(`SELECT * FROM users`).next()
 
         expect(results.length).toBe(0)
     })

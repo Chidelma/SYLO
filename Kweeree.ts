@@ -113,35 +113,17 @@ export default class {
 
             const lowerSQL = sql.toLowerCase()
 
-            const selectMatch = lowerSQL.match(/select\s+(.*?)\s+from\s+(\w+)\s*(?:where\s+(.+?))?(?:\s+order\s+by\s+(.+?))?(?:\s+limit\s+(\d+))?$/i)
+            const selectMatch = lowerSQL.match(/select\s+(.*?)\s+from\s+(\w+)\s*(?:where\s+(.+?))?$/i)
 
             if(!selectMatch) throw new Error("Invalid SQL SELECT statement")
 
-            const [_, columns, collection, whereClause, orderByClause, limitClause] = selectMatch
+            const [_, columns, collection, whereClause] = selectMatch
 
             if(whereClause) query = this.parseWherClause(whereClause)
 
             query.$collection = collection
 
             if(columns !== '*') query.$select = columns.split(',').map(col => col.trim()) as Array<keyof T>
-
-            if(limitClause) query.$limit = parseInt(limitClause.trim(), 10)
-
-            const parseOrderByClause = (orderByClause: string) => {
-
-                const sort: Partial<Record<keyof Omit<T, '_id'>, 'asc' | 'desc'>> = {}
-
-                const columns = orderByClause.split(',')
-
-                columns.forEach(column => {
-                    const [col, order] = column.trim().split(/\s+/)
-                    sort[col as keyof Omit<T, '_id'>] = (order && order.toLowerCase() === 'desc') ? 'desc' : 'asc'
-                })
-
-                return sort
-            }
-
-            if(orderByClause) query.$sort = parseOrderByClause(orderByClause)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Query.convertQuery -> ${e.message}`)

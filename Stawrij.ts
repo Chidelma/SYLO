@@ -1,9 +1,10 @@
-import { S3Client } from "@aws-sdk/client-s3";
+import { DataRedundancy, S3Client } from "@aws-sdk/client-s3";
 import { BlobServiceClient } from "@azure/storage-blob";
 import { Storage } from '@google-cloud/storage'
 import { _storeDelete, _storeQuery, _storeUpdate } from "./types/query";
 import Query from './Kweeree'
-import { _schema, _keyval } from './types/schema'
+import { _schema } from './types/schema'
+import { _keyval } from "./types/general";
 import { RedisClientType, RedisFunctions, RedisModules, RedisScripts } from "@redis/client";
 import Dir from "./Index/Directory";
 
@@ -51,42 +52,34 @@ export default class Stawrij {
         worker.postMessage(message)
     }
 
-    static async getDoc<T extends _schema<T>>(collection: string, id: string, onChange?: (doc: T) => void, onDelete?: () => void) {
+    static getDoc<T extends _schema<T>>(collection: string, id: string) {
 
-        let doc: T = {} as T
+        return {
 
-        try {
+            async *[Symbol.asyncIterator]() {
 
-            const recontructDoc = async () => {
+                for await (const _ of Dir.onChange(`${collection}/**/${id}`, "addDir")) {
+                    yield await Dir.reconstructDoc<T>(collection, id)
+                }
+            },
 
-                const fileIndexes = await Dir.searchIndexes(`${collection}/**/${id}`, true)
-                const dirIndexes = await Dir.searchIndexes(`${collection}/**/${id}/`)
+            async once() {
+
+                let doc: T = {} as T
+
+                await Dir.onChange(`${collection}/**/${id}`, "addDir").next()
+
+                doc = await Dir.reconstructDoc<T>(collection, id)
                 
-                const keyVals = await Dir.reArrangeIndexes([...fileIndexes, ...dirIndexes])
+                return doc
+            },
 
-                let keyVal: Record<string, string> = {}
-
-                keyVals.map(keyval => keyval.data).forEach(data => {
-                    const segs = data.split('/')
-                    const val = segs.pop()!
-                    const key = segs.join('/')
-                    keyVal = { ...keyVal, [key]: val }
-                })
-                
-                return Dir.constructDoc(keyVal, id) as T
+            async *onDelete() {
+                for await (const _ of Dir.onChange(`${collection}/**/${id}`, "unlinkDir")) {
+                    yield id
+                }
             }
-
-            if(onChange) Dir.onAdd(`${collection}/**/${id}`, async () => onChange(await recontructDoc()))
-
-            if(onDelete) Dir.onDelete(`${collection}/**/${id}`, onDelete)
-
-            doc = await recontructDoc()
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.getDoc -> ${e.message}`)
         }
-
-        return doc
     }
 
     static async putDoc<T extends _schema<T>>(silo: string, collection: string, doc: T) {
@@ -159,7 +152,7 @@ export default class Stawrij {
 
             if(!doc._id) throw new Error("Stawrij document does not contain an _id")
 
-                console.log(`Updating ${doc._id}`)
+            console.log(`Updating ${doc._id}`)
 
             await this.putDoc(silo, collection, doc as T)
 
@@ -321,112 +314,81 @@ export default class Stawrij {
     }
     
 
-    static async findDocsSQL<T extends _schema<T>>(sql: string, collection?: string, onAdd?: (doc: T) => void, onDelete?: (id: string) => void) {
+    static findDocsSQL<T extends _schema<T>>(sql: string, collection?: string) {
 
-        let results: T[] = []
+        const query = Query.convertQuery<T>(sql)
 
-        try {
-
-            const query = Query.convertQuery<T>(sql)
-
-            results = await Stawrij.findDocs(collection ?? query.$collection!, query, onAdd, onDelete)
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.findDocsSQL-> ${e.message}`)
-        }
-
-        return results
+        return Stawrij.findDocs(collection ?? query.$collection!, query)
     }
 
-    static async findDocs<T extends _schema<T>>(collection: string, query: _storeQuery<T>, onAdd?: (doc: T) => void, onDelete?: (id: string) => void) {
+    static findDocs<T extends _schema<T>>(collection: string, query: _storeQuery<T>) {
 
-        let results: T[] = []
+        return {
 
-        try {
+            async *[Symbol.asyncIterator]() {
 
-            const expressions = await Query.getExprs(query, collection)
+                const expressions = await Query.getExprs(query, collection)
 
-            if(onAdd) Dir.onAdd(expressions, async (id: string) => {
-                onAdd(await this.getDoc(collection, id))
-            })
+                for await(const id of Dir.onChange(expressions, "addDir")) {
 
-            if(onDelete) Dir.onDelete(expressions, onDelete)
+                    const doc = await Dir.reconstructDoc<T>(collection, id)
 
-            const indexes = [...await Dir.searchIndexes(expressions, true), ...await Dir.searchIndexes(expressions)]
-            
-            const groupByUUID = (indexes: string[]) => {
+                    if(query.$select && query.$select.length > 0) {
 
-                const groupMap = new Map<string, string[]>()
+                        const result = {...doc}
 
-                indexes.forEach(idx => {
-                    const id = idx.split('/').pop()!
-                    if(!groupMap.has(id)) groupMap.set(id, [idx])
-                    else groupMap.get(id)?.push(idx)
-                })
+                        for(const col in result) {
+                            if(!query.$select.includes(col as keyof T)) delete result[col]
+                        }
 
-                return groupMap
-            }
-
-            let res: Record<string, any>[] = []
-
-            for(const [id, currIndexes] of groupByUUID(indexes).entries()) {
-                const keyVals = await Dir.reArrangeIndexes(currIndexes)
-                let keyVal: Record<string, string> = {}
-                keyVals.map(keyval => keyval.data).forEach(data => {
-                    const segs = data.split('/')
-                    const val = segs.pop()!
-                    const key = segs.join('/')
-                    keyVal = { ...keyVal, [key]: val }
-                })
-                res.push(Dir.constructDoc(keyVal, id) as T)
-            }
-
-            if(query.$limit) res = res.slice(0, query.$limit)
-
-            if(query.$select && query.$select.length > 0) {
-
-                for(const result of res) {
-                    for(const column in result) {
-                        if(!query.$select.includes(column as keyof T)) delete result[column]
-                    }
+                        yield result as T
+                    
+                    } else yield doc
                 }
-            }
-
-            results = res as T[]
+            },
             
-            if(query.$sort) {
-                for(const col in query.$sort) {
-                    if(query.$sort[col as keyof Omit<T, '_id'>] === "asc") results.sort((a, b) => {
+            async next(limit?: number) {
+                
+                const results: T[] = []
 
-                        const aVal = a[col as keyof Omit<T, '_id'>]
-                        const bVal = b[col as keyof Omit<T, '_id'>]
+                const expressions = await Query.getExprs(query, collection)
 
-                        if(typeof aVal === "string" && typeof bVal === "string") return (aVal as string).localeCompare(bVal)
+                const iter = Dir.onChange(expressions, "addDir")
 
-                        if(aVal < bVal) return -1
-                        if(aVal > bVal) return 1
+                let count = 0
+                
+                while(true) {
 
-                        return 0
-                    })
-                    else results.sort((a, b) => {
+                    const res = await iter.next({ count, limit })
+                    
+                    if(res.done || count === limit) break
 
-                        const aVal = a[col as keyof Omit<T, '_id'>]
-                        const bVal = b[col as keyof Omit<T, '_id'>]
+                    const doc = await Dir.reconstructDoc<T>(collection, res.value)
 
-                        if(typeof aVal === "string" && typeof bVal === "string") return (bVal as string).localeCompare(aVal)
+                    if(query.$select && query.$select.length > 0) {
 
-                        if(aVal < bVal) return 1
-                        if(aVal > bVal) return -1
+                        const subRes = {...doc}
 
-                        return 0
-                    })
-                }
+                        for(const col in subRes) {
+                            if(!query.$select.includes(col as keyof T)) delete subRes[col]
+                        }
+
+                        results.push(subRes)
+                    
+                    } else results.push(doc)
+
+                    if(limit) count++
+                } 
+
+                return results
+            },
+
+            async *onDelete() {
+
+                const expressions = await Query.getExprs(query, collection)
+
+                for await(const id of Dir.onChange(expressions, "unlinkDir")) yield id
             }
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.findDocs -> ${e.message}`)
         }
-
-        return results
     }
 }

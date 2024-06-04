@@ -17,11 +17,11 @@ describe("NO-SQL", async () => {
 
     test("UPDATE ONE", async () => {
 
-        let results = await Silo.findDocs<_photo>(PHOTOS, { $limit: 1 })
+        let results = await Silo.findDocs<_photo>(PHOTOS, { }).next(1)
 
         await Silo.patchDoc<_photo>(SILO, PHOTOS, { _id: results[0]._id, title: "All Mighty" })
 
-        results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [{ title: { $eq: "All Mighty" } }]})
+        results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [{ title: { $eq: "All Mighty" } }]}).next()
 
         expect(results.length).toBe(1)
     })
@@ -30,7 +30,7 @@ describe("NO-SQL", async () => {
 
         const count = await Silo.patchDocs<_photo>(SILO, PHOTOS, { title: "All Mighti", $where: { $ops: [{ title: { $like: "%est%" } }] } })
 
-        const results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighti" } } ] })
+        const results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighti" } } ] }).next()
 
         expect(results.length).toBe(count)
     })
@@ -61,7 +61,7 @@ describe("SQL", async () => {
 
         const count = await Silo.patchDocsSQL<_todo>(SILO, `UPDATE ${TODOS} SET title = 'All Mighty' WHERE title LIKE '%est%'`)
 
-        const results = await Silo.findDocsSQL<_todo>(`SELECT * FROM ${TODOS} WHERE title = 'All Mighty'`)
+        const results = await Silo.findDocsSQL<_todo>(`SELECT * FROM ${TODOS} WHERE title = 'All Mighty'`).next()
 
         expect(results.length).toBe(count)
     })
@@ -70,7 +70,7 @@ describe("SQL", async () => {
 
         const count = await Silo.patchDocsSQL<_todo>(SILO, `UPDATE ${TODOS} SET title = 'All Mightier'`)
 
-        const results = await Silo.findDocsSQL<_todo>(`SELECT * FROM ${TODOS} WHERE title = 'All Mightier'`)
+        const results = await Silo.findDocsSQL<_todo>(`SELECT * FROM ${TODOS} WHERE title = 'All Mightier'`).next()
 
         expect(results.length).toBe(count)
     })

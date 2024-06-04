@@ -14,8 +14,6 @@ export type _storeQuery<T> = {
     $select?: Array<keyof T>
     $collection?: string
     $ops?: Array<_op<Omit<T, '_id'>>>
-    $limit?: number
-    $sort?: Partial<Record<keyof Omit<T, '_id'>, 'asc' | 'desc'>>
 }
 
 export type _condition = { column: string, operator: string, value: string | number| boolean | null }
@@ -34,3 +32,8 @@ export type _storeInsert<T> = {
 } & {
     $collection?: string
 }
+
+export type _createCollection<T> = {
+    name: string,
+    columns: Array<keyof Omit<T, '_id'>>
+} 

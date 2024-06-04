@@ -1,6 +1,6 @@
 import { test, expect, describe } from 'bun:test'
 import Silo from '../../Stawrij'
-import { SILO, _post, albums, posts } from '../data'
+import { SILO, _album, _post, albums, posts } from '../data'
 import { mkdirSync, rmSync } from 'fs'
 
 Silo.configureStorages({})
@@ -15,9 +15,10 @@ describe("NO-SQL", () => {
 
         for(const post of posts.slice(0, 25)) await Silo.putDoc(SILO, 'posts', post)
 
-        const results = await Silo.findDocs<_post>('posts', {})
+        const results = await Silo.findDocs<_post>('posts', {}).next()
 
         expect(results.length).toEqual(25)
+
     }, 60 * 60 * 1000)
 })
 
@@ -33,8 +34,9 @@ describe("SQL", () => {
             await Silo.putDocSQL(SILO, `INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join(',')})`)
         }
 
-        const results = await Silo.findDocsSQL<_post>(`SELECT * FROM ${ALBUMS}`)
+        const results = await Silo.findDocsSQL<_post>(`SELECT * FROM ${ALBUMS}`).next()
 
         expect(results.length).toEqual(25)
+
     }, 60 * 60 * 1000)
 })

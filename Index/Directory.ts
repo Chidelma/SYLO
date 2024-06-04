@@ -1,41 +1,8 @@
 import { mkdirSync, rmSync, existsSync } from "fs"
 import { glob } from "glob"
-import { _keyval, _schema } from "../types/schema"
+import { _schema } from "../types/schema"
+import { _keyval } from "../types/general"
 import { watch } from "chokidar"
-
-class Queue {
-
-    private UUID: string
-    private lastId: string
-    private currId: string
-    private lastTime: number
-
-    constructor() {
-        this.UUID = crypto.randomUUID()
-        this.lastId = ''
-        this.currId = ''
-        this.lastTime = Date.now()
-    }
-
-    private isNewChange() {
-        return this.currId !== this.lastId || (this.currId === this.lastId && (Date.now() - this.lastTime) >= 1000)
-    }
-
-    dequeue(listener: (id: string) => void) {
-        addEventListener(this.UUID, () => {
-            if(this.isNewChange()) {
-                listener(this.currId)
-                this.lastId = this.currId
-                this.lastTime = Date.now()
-            }
-        })
-    }
-
-    enqueue(id: string) {
-        this.currId = id
-        dispatchEvent(new Event(this.UUID))
-    }
-}
 
 export default class {
 
@@ -48,7 +15,26 @@ export default class {
     private static readonly CHAR_LIMIT = 255
 
     private static isIndex(path: string) {
-        return path.split('/').length >= 4 && this.uuidPattern.test(path)
+        return path.split('/').length >= 4 && /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(path)
+    }
+
+    static async reconstructDoc<T extends _schema<T>>(collection: string, id: string) {
+
+        const fileIndexes = await this.searchIndexes(`${collection}/**/${id}`, true)
+        const dirIndexes = await this.searchIndexes(`${collection}/**/${id}/`)
+        
+        const keyVals = await this.reArrangeIndexes([...fileIndexes, ...dirIndexes])
+
+        let keyVal: Record<string, string> = {}
+
+        keyVals.map(keyval => keyval.data).forEach(data => {
+            const segs = data.split('/')
+            const val = segs.pop()!
+            const key = segs.join('/')
+            keyVal = { ...keyVal, [key]: val }
+        })
+        
+        return this.constructDoc(keyVal, id) as T
     }
 
     static async reArrangeIndexes(indexes: string[]) {
@@ -75,26 +61,55 @@ export default class {
         return keyVals
     }
 
-    static onAdd(pattern: string | string[], add: (id: string) => void) {
+    static async *onChange(pattern: string | string[], action: "addDir" | "unlinkDir") {
 
-        const queue = new Queue()
+        const dataPath = this.DATA_PATH
+        const isIndex = this.isIndex
+        const queue = new Set<string>()
 
-        queue.dequeue(add)
-
-        watch(pattern, { cwd: this.DATA_PATH }).on("addDir", path => {
-            if(this.isIndex(path)) queue.enqueue(path.split('/').pop()!)
+        const stream = new ReadableStream<string>({
+            start(controller) {
+                watch(pattern, { cwd: dataPath }).on(action, path => {
+                    if(isIndex(path)) {
+                        const id = path.split('/').pop()!
+                        if(!queue.has(id)) {
+                            queue.add(id)
+                            controller.enqueue(id)
+                            setTimeout(() => queue.delete(id), 500)
+                        }
+                    }
+                })
+            }
         })
-    }
 
-    static onDelete(pattern: string | string[], del: (id: string) => void) {
+        const reader = stream.getReader()
 
-        const queue = new Queue()
+        let data: { limit?: number, count: number } | undefined
 
-        queue.dequeue(del)
+        let lowestLatency = 500
 
-        watch(pattern, { cwd: this.DATA_PATH }).on("unlinkDir", path => {
-            if(this.isIndex(path)) queue.enqueue(path.split('/').pop()!)
-        })
+        while(true) {
+
+            let res: { done: boolean, value: string | undefined };
+
+            if (data) {
+                const startTime = Date.now()
+                res = await Promise.race([
+                    reader.read() as Promise<{ done: boolean, value: string | undefined }>,
+                    new Promise<{ done: boolean, value: undefined }>(resolve =>
+                        setTimeout(() => resolve({ done: true, value: undefined }), lowestLatency)
+                    )
+                ]);
+                const elapsed = Date.now() - startTime
+                if(elapsed <= lowestLatency) lowestLatency = elapsed
+            } else {
+                res = await reader.read() as { done: boolean, value: string | undefined };
+            }
+
+            if(res.done || (data && data.limit === data.count)) break
+            
+            data = yield res.value as string
+        }
     }
 
     static async searchIndexes(pattern: string | string[], nodir: boolean = false) {
