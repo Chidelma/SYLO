@@ -1,16 +1,14 @@
 import { test, expect, describe } from 'bun:test'
-import Silo from '../../Stawrij'
-import { SILO, _album, albums } from '../data'
+import Silo from '../Stawrij'
+import { _album, albums } from './data'
 import { mkdirSync, rmSync } from 'node:fs'
-
-Silo.configureStorages({})
 
 rmSync(process.env.DATA_PREFIX!, {recursive:true})
 mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
 
 const ALBUMS = 'albums'
 
-for(const album of albums.slice(0, 25)) await Silo.putDoc(SILO, ALBUMS, album)
+await Silo.bulkPutDocs<_album>(ALBUMS, albums.slice(0, 25))
 
 describe("NO-SQL", async () => {
 
@@ -23,7 +21,7 @@ describe("NO-SQL", async () => {
 
     test("SELECT PARTIAL", async () => {
 
-        const results = await Silo.findDocs<_album>(ALBUMS, { $select: ["title"] }).next()
+        const results = await Silo.findDocs<_album>(ALBUMS, { $select: ["title"] }).next() as _album[]
 
         const onlyTtitle = results.every(user => user.title && !user._id && !user.userId)
 
@@ -32,7 +30,7 @@ describe("NO-SQL", async () => {
 
     test("GET ONE", async () => {
 
-        const results = await Silo.findDocs<_album>(ALBUMS, {}).next(1)
+        const results = await Silo.findDocs<_album>(ALBUMS, {}).next(1) as _album[]
 
         const result = await Silo.getDoc<_album>(ALBUMS, results[0]._id!).once()
 
@@ -41,9 +39,9 @@ describe("NO-SQL", async () => {
 
     test("SELECT CLAUSE", async () => {
 
-        const results = await Silo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $eq: 8 } }] }).next()
-
-        const onlyUserId = results.every(user => user.userId === 8)
+        const results = await Silo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $eq: 2 } }] }).next() as _album[]
+        
+        const onlyUserId = results.every(user => user.userId === 2)
 
         expect(onlyUserId).toBe(true)
     })
@@ -60,7 +58,7 @@ describe("SQL", () => {
 
     test("SELECT PARTIAL", async () => {
 
-        const results = await Silo.findDocsSQL<_album>(`SELECT title FROM ${ALBUMS}`).next()
+        const results = await Silo.findDocsSQL<_album>(`SELECT title FROM ${ALBUMS}`).next() as _album[]
 
         const onlyTtitle = results.every(user => user.title && !user._id && !user.userId)
 
@@ -69,9 +67,9 @@ describe("SQL", () => {
 
     test("SELECT CLAUSE", async () => {
 
-        const results = await Silo.findDocsSQL<_album>(`SELECT * FROM ${ALBUMS} WHERE userId = 8`).next()
+        const results = await Silo.findDocsSQL<_album>(`SELECT * FROM ${ALBUMS} WHERE userId = 2`).next() as _album[]
 
-        const onlyUserId = results.every(user => user.userId === 8)
+        const onlyUserId = results.every(user => user.userId === 2)
 
         expect(onlyUserId).toBe(true)
     })

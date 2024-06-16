@@ -80,6 +80,4 @@ res = await fetch(`https://jsonplaceholder.typicode.com/users`)
 
 export const users: _user[] = await res.json()
 
-export const SILO = 'vyckr-test-db'
-
 export {}

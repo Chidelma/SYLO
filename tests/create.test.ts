@@ -1,9 +1,7 @@
 import { test, expect, describe } from 'bun:test'
-import Silo from '../../Stawrij'
-import { SILO, _album, _post, albums, posts } from '../data'
+import Silo from '../Stawrij'
+import { _album, _post, albums, posts } from './data'
 import { mkdirSync, rmSync } from 'fs'
-
-Silo.configureStorages({})
 
 rmSync(process.env.DATA_PREFIX!, {recursive:true})
 
@@ -13,9 +11,9 @@ describe("NO-SQL", () => {
 
     test("PUT", async () => {
 
-        for(const post of posts.slice(0, 25)) await Silo.putDoc(SILO, 'posts', post)
+        await Silo.bulkPutDocs<_post>('posts', posts.slice(0, 25))
 
-        const results = await Silo.findDocs<_post>('posts', {}).next()
+        const results = await Silo.findDocs<_post>('posts', {}).next() as _post[]
 
         expect(results.length).toEqual(25)
 
@@ -31,10 +29,10 @@ describe("SQL", () => {
         for(const album of albums.slice(0, 25)) {
             const keys = Object.keys(album)
             const values = Object.values(album).map(val => { if(typeof val === 'string') { return `'${val}'` } else return val })
-            await Silo.putDocSQL(SILO, `INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join(',')})`)
+            await Silo.putDocSQL(`INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join(',')})`)
         }
 
-        const results = await Silo.findDocsSQL<_post>(`SELECT * FROM ${ALBUMS}`).next()
+        const results = await Silo.findDocsSQL<_post>(`SELECT * FROM ${ALBUMS}`).next() as _album[]
 
         expect(results.length).toEqual(25)
 

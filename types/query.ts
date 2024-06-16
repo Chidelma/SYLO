@@ -32,8 +32,3 @@ export type _storeInsert<T> = {
 } & {
     $collection?: string
 }
-
-export type _createCollection<T> = {
-    name: string,
-    columns: Array<keyof Omit<T, '_id'>>
-} 

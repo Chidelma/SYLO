@@ -1,9 +1,7 @@
 import { test, expect, describe } from 'bun:test'
-import Silo from '../../Stawrij'
-import { SILO, _comment, comments, users, _user } from '../data'
+import Silo from '../Stawrij'
+import {  _comment, comments, users, _user } from './data'
 import { mkdirSync, rmSync } from 'node:fs'
-
-Silo.configureStorages({})
 
 rmSync(process.env.DATA_PREFIX!, {recursive:true})
 
@@ -13,17 +11,17 @@ describe("NO-SQL", async () => {
 
     const COMMENTS = 'comments'
 
-    for(const comment of comments.slice(0, 25)) await Silo.putDoc(SILO, COMMENTS, comment)
+    await Silo.bulkPutDocs<_comment>(COMMENTS, comments.slice(0, 25))
 
-    let results = await Silo.findDocs<_comment>(COMMENTS, { }).next(1)
+    let results = await Silo.findDocs<_comment>(COMMENTS, {}).next(1) as _comment[]
 
     test("DELETE ONE", async () => {
 
         const id = results[0]._id!
 
-        await Silo.delDoc(SILO, COMMENTS, id)
+        await Silo.delDoc(COMMENTS, id)
 
-        results = await Silo.findDocs<_comment>(COMMENTS, {}).next()
+        results = await Silo.findDocs<_comment>(COMMENTS, {}).next() as _comment[]
 
         const idx = results.findIndex(com => com._id === id)
 
@@ -33,9 +31,9 @@ describe("NO-SQL", async () => {
 
     test("DELETE CLAUSE", async () => {
 
-        await Silo.delDocs<_comment>(SILO, COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] })
+        await Silo.delDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] })
 
-        results = await Silo.findDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] }).next()
+        results = await Silo.findDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] }).next() as _comment[]
 
         expect(results.length).toEqual(0)
 
@@ -43,9 +41,9 @@ describe("NO-SQL", async () => {
 
     test("DELETE ALL", async () => {
 
-        await Silo.delDocs<_comment>(SILO, COMMENTS, {})
+        await Silo.delDocs<_comment>(COMMENTS, {})
 
-        results = await Silo.findDocs<_comment>(COMMENTS, {}).next()
+        results = await Silo.findDocs<_comment>(COMMENTS, {}).next() as _comment[]
 
         expect(results.length).toBe(0)
 
@@ -64,18 +62,18 @@ describe("SQL", async () => {
             else if(typeof val === 'object') return JSON.stringify(val)
             else return val
         })
-        await Silo.putDocSQL(SILO, `INSERT INTO ${USERS} (${keys.join(',')}) VALUES (${values.join(',')})`)
+        await Silo.putDocSQL(`INSERT INTO ${USERS} (${keys.join(',')}) VALUES (${values.join(',')})`)
     }
 
-    let results = await Silo.findDocsSQL<_user>(`SELECT * FROM users`).next(1)
+    let results = await Silo.findDocsSQL<_user>(`SELECT * FROM users`).next(1) as _user[]
 
     test("DELETE CLAUSE", async () => {
 
         const name = results[0].name!
 
-        await Silo.delDocsSQL<_user>(SILO, `DELETE from users WHERE name = '${name}'`)
+        await Silo.delDocsSQL<_user>(`DELETE from users WHERE name = '${name}'`)
 
-        results = await Silo.findDocsSQL<_user>(`SELECT * FROM users WHERE name = '${name}'`).next()
+        results = await Silo.findDocsSQL<_user>(`SELECT * FROM users WHERE name = '${name}'`).next() as _user[]
 
         const idx = results.findIndex(com => com.name === name)
 
@@ -84,9 +82,9 @@ describe("SQL", async () => {
 
     test("DELETE ALL", async () => {
 
-        await Silo.delDocsSQL<_user>(SILO, `DELETE from users`)
+        await Silo.delDocsSQL<_user>(`DELETE from users`)
 
-        results = await Silo.findDocsSQL<_user>(`SELECT * FROM users`).next()
+        results = await Silo.findDocsSQL<_user>(`SELECT * FROM users`).next() as _user[]
 
         expect(results.length).toBe(0)
     })

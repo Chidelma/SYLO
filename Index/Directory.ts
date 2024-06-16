@@ -1,33 +1,33 @@
 import { mkdirSync, rmSync, existsSync } from "fs"
-import { glob } from "glob"
+import { glob, Glob } from "glob"
+import { watch } from "chokidar"
 import { _schema } from "../types/schema"
 import { _keyval } from "../types/general"
-import { watch } from "chokidar"
 
 export default class {
 
     static readonly DATA_PATH = process.env.DATA_PREFIX ?? `${process.cwd()}/db`
 
-    private static readonly uuidPattern = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
-
     private static readonly ID_KEY = "_id"
 
     private static readonly CHAR_LIMIT = 255
 
-    private static isIndex(path: string) {
-        return path.split('/').length >= 4 && /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(path)
+    private static readonly SLASH_ASCII = "%2F"
+
+    static hasUUID(idx: string) {
+        const segs = idx.split('/')
+        return segs.length >= 5 && /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(segs[segs.length - 2])
     }
 
     static async reconstructDoc<T extends _schema<T>>(collection: string, id: string) {
 
-        const fileIndexes = await this.searchIndexes(`${collection}/**/${id}`, true)
-        const dirIndexes = await this.searchIndexes(`${collection}/**/${id}/`)
+        const indexes = [...await this.searchIndexes(`${collection}/**/${id}/*`, true), ...await this.searchIndexes(`${collection}/**/${id}/*/`)]
         
-        const keyVals = await this.reArrangeIndexes([...fileIndexes, ...dirIndexes])
+        const keyVals = await this.reArrangeIndexes(indexes)
 
         let keyVal: Record<string, string> = {}
 
-        keyVals.map(keyval => keyval.data).forEach(data => {
+        keyVals.forEach(data => {
             const segs = data.split('/')
             const val = segs.pop()!
             const key = segs.join('/')
@@ -39,46 +39,91 @@ export default class {
 
     static async reArrangeIndexes(indexes: string[]) {
 
-        const keyVals: _keyval[] = []
+        const keyVals: string[] = []
 
         for(const index of indexes) {
 
             const segments = [...index.split('/')]
 
+            segments.pop()!
             const id = segments.pop()!
-            const val = await Bun.file(`${this.DATA_PATH}/${index}`).exists() ? await Bun.file(`${this.DATA_PATH}/${index}`).text() : segments.pop()!
+            const file = Bun.file(`${this.DATA_PATH}/${index}`)
+            const val = await file.exists() ? await file.text() : segments.pop()!
             const collection = segments.shift()! 
 
             segments.unshift(id)
             segments.unshift(collection)
 
-            keyVals.push({
-                index,
-                data: `${segments.join('/')}/${val}`
-            })
+            keyVals.push(`${segments.join('/')}/${val}`)
         }
 
         return keyVals
     }
 
-    static async *onChange(pattern: string | string[], action: "addDir" | "unlinkDir") {
-
+    static async *onChange(pattern: string | string[], action: "addDir" | "unlinkDir", listen: boolean = false) {
+        
         const dataPath = this.DATA_PATH
-        const isIndex = this.isIndex
-        const queue = new Set<string>()
+        const queue: Record<string, Set<string>> = {}
+        const hasUUID = this.hasUUID
+
+        const isComplete = (path: string, id: string, size: number) => {
+
+            if(queue[id]) {
+
+                queue[id].add(path)
+
+                if(size === (queue[id].size + 1)) {
+                    queue[id].clear()
+                    return true
+                }
+
+            } else queue[id] = new Set([path])
+
+            return false
+        }
+
+        const isPartialChange = () => {
+
+            if(Array.isArray(pattern)) {
+
+                const firstPattern = pattern[0]
+
+                const segs = firstPattern.split('/')
+
+                if(!segs[1].includes('*')) return true
+
+            } else {
+
+                const segs = pattern.split('/')
+
+                if(!segs[1].includes('*')) return true
+            }
+
+            return false
+        }
+
+        const enqueueID = (controller: ReadableStreamDefaultController, path: string) => {
+            if(hasUUID(path)) {
+                const segs = path.split('/')
+                const size = Number(segs.pop()!)
+                const id = segs.pop()!
+                if(isComplete(path, id, size) || isPartialChange()) {
+                    controller.enqueue(id)
+                }
+            }
+        }
 
         const stream = new ReadableStream<string>({
             start(controller) {
-                watch(pattern, { cwd: dataPath }).on(action, path => {
-                    if(isIndex(path)) {
-                        const id = path.split('/').pop()!
-                        if(!queue.has(id)) {
-                            queue.add(id)
-                            controller.enqueue(id)
-                            setTimeout(() => queue.delete(id), 500)
-                        }
-                    }
-                })
+                if(listen) {
+                    watch(pattern, { cwd: dataPath }).on(action, path => {
+                        enqueueID(controller, path)
+                    })
+                } else {
+                    new Glob(pattern, { cwd: dataPath }).stream().on("data", path => {
+                        enqueueID(controller, path)
+                    })
+                }
             }
         })
 
@@ -92,7 +137,9 @@ export default class {
 
             let res: { done: boolean, value: string | undefined };
 
-            if (data) {
+            if(listen) res = await reader.read() as { done: boolean, value: string | undefined }
+            else {
+
                 const startTime = Date.now()
                 res = await Promise.race([
                     reader.read() as Promise<{ done: boolean, value: string | undefined }>,
@@ -101,9 +148,7 @@ export default class {
                     )
                 ]);
                 const elapsed = Date.now() - startTime
-                if(elapsed <= lowestLatency) lowestLatency = elapsed
-            } else {
-                res = await reader.read() as { done: boolean, value: string | undefined };
+                if(elapsed <= lowestLatency) lowestLatency = elapsed + 1
             }
 
             if(res.done || (data && data.limit === data.count)) break
@@ -116,7 +161,7 @@ export default class {
 
         const indexes = await glob(pattern, { cwd: this.DATA_PATH, nodir })
 
-        return indexes.filter(idx => idx.split('/').length >= 4 && this.uuidPattern.test(idx))
+        return indexes.filter(this.hasUUID)
     }
 
     static async updateIndex(index: string) {
@@ -125,14 +170,16 @@ export default class {
 
         const collection = segements.shift()!
         const key = segements.shift()!
+
+        const size = segements.pop()!
         const id = segements.pop()!
         const val = segements.pop()!
 
-        const currIndexes = await this.searchIndexes(`${collection}/${key}/**/${id}`)
+        const currIndexes = await this.searchIndexes(`${collection}/${key}/**/${id}/*`)
 
         currIndexes.forEach(idx => rmSync(`${this.DATA_PATH}/${idx}`, { recursive: true }))
 
-        val.length > this.CHAR_LIMIT ? await Bun.write(`${this.DATA_PATH}/${collection}/${key}/${segements.join('/')}/${id}`, val) : mkdirSync(`${this.DATA_PATH}/${index}`, { recursive: true })
+        val.length > this.CHAR_LIMIT ? await Bun.write(`${this.DATA_PATH}/${collection}/${key}/${segements.join('/')}/${id}/${size}`, val) : mkdirSync(`${this.DATA_PATH}/${index}`, { recursive: true })
     }
 
     static deleteIndex(index: string) {
@@ -142,7 +189,7 @@ export default class {
 
     static deconstructDoc<T extends _schema<T>>(collection: string, id: string, doc: Record<string, any>, parentKey?: string) {
 
-        const keyVals: _keyval[] = []
+        const indexes: string[] = []
 
         const obj = {...doc}
 
@@ -153,25 +200,15 @@ export default class {
             const newKey = parentKey ? `${parentKey}/${key}` : key
 
             if(typeof obj[key] === 'object' && !Array.isArray(obj[key])) {
-                keyVals.push(...this.deconstructDoc(collection, id, obj[key], newKey))
+                indexes.push(...this.deconstructDoc(collection, id, obj[key], newKey))
             } else if(typeof obj[key] === 'object' && Array.isArray(obj[key])) {
                 const items: (string | number | boolean)[] = obj[key]
                 if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
-                items.forEach((item, idx) => {
-                    keyVals.push({
-                        data: `${collection}/${id}/${newKey}/${idx}/${item}`,
-                        index: `${collection}/${newKey}/${idx}/${item}/${id}`
-                    })
-                })
-            } else {
-                keyVals.push({ 
-                    data: `${collection}/${id}/${newKey}/${obj[key]}`,
-                    index: `${collection}/${newKey}/${obj[key]}/${id}`
-                })
-            }
+                items.forEach((item, idx) => indexes.push(`${collection}/${newKey}/${idx}/${String(item).replaceAll('/', this.SLASH_ASCII)}/${id}`))
+            } else indexes.push(`${collection}/${newKey}/${String(obj[key]).replaceAll('/', this.SLASH_ASCII)}/${id}`)
         }
 
-        return keyVals
+        return indexes
     }
 
     static constructDoc(keyVal: Record<string, string>, id: string) {
@@ -199,8 +236,8 @@ export default class {
 
             const lastKey = keys.shift()!
 
-            if(lastKey.match(/^\d+$/)) curr[parseInt(lastKey, 10)] = this.parseValue(keyVal[fullKey])
-            else curr[lastKey] = this.parseValue(keyVal[fullKey])
+            if(lastKey.match(/^\d+$/)) curr[parseInt(lastKey, 10)] = this.parseValue(keyVal[fullKey].replaceAll(this.SLASH_ASCII, '/'))
+            else curr[lastKey] = this.parseValue(keyVal[fullKey].replaceAll(this.SLASH_ASCII, '/'))
         }
 
         doc[this.ID_KEY] = id
