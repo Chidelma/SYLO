@@ -62,7 +62,7 @@ export default class {
 
     static async *onChange(pattern: string | string[], action: "addDir" | "unlinkDir", listen: boolean = false) {
         
-        const dataPath = this.DATA_PATH
+        const cwd = this.DATA_PATH
         const queue: Record<string, Set<string>> = {}
         const hasUUID = this.hasUUID
 
@@ -90,13 +90,13 @@ export default class {
 
                 const segs = firstPattern.split('/')
 
-                if(!segs[1].includes('*')) return true
+                if(!segs.slice(1, -1).every((elem) => elem.includes('*'))) return true
 
             } else {
 
                 const segs = pattern.split('/')
 
-                if(!segs[1].includes('*')) return true
+                if(!segs.slice(1, -1).every((elem) => elem.includes('*'))) return true
             }
 
             return false
@@ -116,11 +116,11 @@ export default class {
         const stream = new ReadableStream<string>({
             start(controller) {
                 if(listen) {
-                    watch(pattern, { cwd: dataPath }).on(action, path => {
+                    watch(pattern, { cwd }).on(action, path => {
                         enqueueID(controller, path)
                     })
                 } else {
-                    new Glob(pattern, { cwd: dataPath }).stream().on("data", path => {
+                    new Glob(pattern, { cwd }).stream().on("data", path => {
                         enqueueID(controller, path)
                     })
                 }
@@ -148,7 +148,7 @@ export default class {
                     )
                 ]);
                 const elapsed = Date.now() - startTime
-                if(elapsed <= lowestLatency) lowestLatency = elapsed + 1
+                if(elapsed < lowestLatency) lowestLatency = elapsed + 1
             }
 
             if(res.done || (data && data.limit === data.count)) break

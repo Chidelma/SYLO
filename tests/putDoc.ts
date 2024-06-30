@@ -1,4 +1,4 @@
-import Silo from '../Stawrij'
+import Silo from '../src/Stawrij'
 import { posts, _post } from './data'
 import { mkdirSync, rmSync } from 'node:fs'
 

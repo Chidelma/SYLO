@@ -1,4 +1,4 @@
-import Silo from '../Stawrij'
+import Silo from '../src/Stawrij'
 
 self.onmessage = async (ev) => {
 
