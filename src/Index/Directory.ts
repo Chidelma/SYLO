@@ -6,7 +6,7 @@ import { _keyval } from "../types/general"
 
 export default class {
 
-    static readonly DATA_PATH = process.env.DATA_PREFIX ?? `${process.cwd()}/db`
+    static readonly DATA_PATH = process.env.DATA_PREFIX || `${process.cwd()}/db`
 
     private static readonly ID_KEY = "_id"
 
@@ -17,6 +17,73 @@ export default class {
     static hasUUID(idx: string) {
         const segs = idx.split('/')
         return segs.length >= 5 && /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(segs[segs.length - 2])
+    }
+
+    static async aquireLock(collection: string, id: string) {
+
+        try {
+
+            if(await this.isLocked(collection, id)) {
+
+                this.queueProcess(collection, id)
+    
+                for await (const _ of this.onUnlock(`${collection}/${id}/${process.pid}`)) {
+                    break
+                }
+            }
+    
+            this.queueProcess(collection, id)
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Dir.aquireLock -> ${e.message}`)
+        }
+    }
+
+    private static async *onUnlock(pattern: string) {
+
+        const cwd = this.DATA_PATH
+
+        const stream = new ReadableStream<string>({
+            start(controller) {
+                watch(pattern, { cwd }).on("unlinkDir", path => {
+                    controller.enqueue(path)
+                })
+            }
+        })
+
+        const reader = stream.getReader()
+
+        const path = await reader.read()
+
+        yield path.value
+    }
+
+    static async releaseLock(collection: string, id: string) {
+
+        try {
+
+            rmSync(`${this.DATA_PATH}/${collection}/${id}/${process.pid}`, { recursive: true })
+
+            const results = await glob(`${collection}/${id}/**/`, { withFileTypes: true, stat: true, cwd: this.DATA_PATH })
+            
+            const timeSortedDir = results.sort((a, b) => a.birthtimeMs! - b.birthtimeMs!).map(p => p.relative()).filter(p => p.split('/').length === 3)
+
+            if(timeSortedDir.length > 0) rmSync(`${this.DATA_PATH}/${timeSortedDir[0]}`, { recursive: true })
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Dir.releaseLock -> ${e.message}`)
+        }
+    }
+
+    private static async isLocked(collection: string, id: string) {
+
+        const results = await glob(`${collection}/${id}/**/`, { cwd: this.DATA_PATH })
+
+        return results.length > 0
+    }
+
+    private static queueProcess(collection: string, id: string) {
+        mkdirSync(`${this.DATA_PATH}/${collection}/${id}/${process.pid}`, { recursive: true })
     }
 
     static async reconstructDoc<T extends _schema<T>>(collection: string, id: string) {

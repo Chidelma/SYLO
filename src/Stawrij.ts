@@ -73,6 +73,8 @@ export default class Stawrij {
         
         try {
 
+            await Dir.aquireLock(collection, _id)
+
             doc._id = _id
 
             console.log(`Writing ${doc._id}`)
@@ -80,6 +82,8 @@ export default class Stawrij {
             const indexes = Dir.deconstructDoc(collection, doc._id, doc).map(idx => `${idx}/${Object.keys(doc).length}`)
 
             await Promise.all(indexes.map(idx => new Promise<void>(resolve => this.invokeWorker(this.indexUrl, { action: 'PUT', data: { idx } }, resolve))))
+
+            await Dir.releaseLock(collection, _id)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.putDoc -> ${e.message}`)
@@ -191,11 +195,15 @@ export default class Stawrij {
 
         try {
 
+            await Dir.aquireLock(collection, id)
+
             console.log(`Deleting ${id}`)
 
             const indexes = [...await Dir.searchIndexes(`${collection}/**/${id}/*`, true), ...await Dir.searchIndexes(`${collection}/**/${id}/*/`)]
 
             await Promise.all(indexes.map(idx => new Promise<void>(resolve => this.invokeWorker(this.indexUrl, { action: 'DEL', data: { idx } }, resolve))))
+
+            await Dir.releaseLock(collection, id)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.delDoc -> ${e.message}`)
