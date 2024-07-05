@@ -2,10 +2,11 @@ import { test, expect, describe } from 'bun:test'
 import Silo from '../src/Stawrij'
 import {  _comment, comments, users, _user } from './data'
 import { mkdirSync, rmSync } from 'node:fs'
+import { _storeCursor, _uuid } from '../src/types/schema'
 
-rmSync(process.env.DATA_PREFIX!, {recursive:true})
+//rmSync(process.env.DATA_PREFIX!, {recursive:true})
 
-mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
+//mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
 
 describe("NO-SQL", async () => {
 
@@ -13,17 +14,17 @@ describe("NO-SQL", async () => {
 
     await Silo.bulkPutDocs<_comment>(COMMENTS, comments.slice(0, 25))
 
-    let results = await Silo.findDocs<_comment>(COMMENTS, {}).next(1) as _comment[]
+    let results = await Silo.findDocs<_comment>(COMMENTS, {}).next(1) as Map<_uuid, _comment>
 
     test("DELETE ONE", async () => {
 
-        const id = results[0]._id!
+        const id = Array.from(results.keys())[0]
 
         await Silo.delDoc(COMMENTS, id)
 
-        results = await Silo.findDocs<_comment>(COMMENTS, {}).next() as _comment[]
+        results = await Silo.findDocs<_comment>(COMMENTS, {}).next() as Map<_uuid, _comment>
 
-        const idx = results.findIndex(com => com._id === id)
+        const idx = Object.keys(results).findIndex(_id => _id === id)
 
         expect(idx).toEqual(-1)
 
@@ -33,9 +34,9 @@ describe("NO-SQL", async () => {
 
         await Silo.delDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] })
 
-        results = await Silo.findDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] }).next() as _comment[]
+        results = await Silo.findDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] }).next() as Map<_uuid, _comment>
 
-        expect(results.length).toEqual(0)
+        expect(results.size).toEqual(0)
 
     }, 60 * 60 * 1000)
 
@@ -43,9 +44,9 @@ describe("NO-SQL", async () => {
 
         await Silo.delDocs<_comment>(COMMENTS, {})
 
-        results = await Silo.findDocs<_comment>(COMMENTS, {}).next() as _comment[]
+        results = await Silo.findDocs<_comment>(COMMENTS, {}).next() as Map<_uuid, _comment>
 
-        expect(results.length).toBe(0)
+        expect(results.size).toBe(0)
 
     }, 60 * 60 * 1000)
 })
@@ -56,36 +57,53 @@ describe("SQL", async () => {
     const USERS = 'users'
 
     for(const user of users.slice(0, 25)) {
+
         const keys = Object.keys(user)
-        const values = Object.values(user).map((val: any) => { 
-            if(typeof val === 'string') return `'${val}'` 
-            else if(typeof val === 'object') return JSON.stringify(val)
-            else return val
+            
+        const params: any[] = []
+        const values: any[] = []
+
+        let count = 0
+
+        Object.values(user).forEach(val => {
+            if(typeof val === 'object') {
+                params.push(val)
+                values.push(`$${++count}`)
+            } else if(typeof val === 'string') {
+                values.push(`'${val}'`)
+            } else values.push(val)
         })
-        await Silo.putDocSQL(`INSERT INTO ${USERS} (${keys.join(',')}) VALUES (${values.join(',')})`)
+
+        await Silo.executeSQL(`INSERT INTO ${USERS} (${keys.join(',')}) VALUES (${values.join(',')})`, ...params)
     }
 
-    let results = await Silo.findDocsSQL<_user>(`SELECT * FROM users`).next(1) as _user[]
+    let cursor = await Silo.executeSQL<_user>(`SELECT * FROM users`) as _storeCursor<_user>
+
+    let results = await cursor.next(1) as Map<_uuid, _user>
 
     test("DELETE CLAUSE", async () => {
 
-        const name = results[0].name!
+        const name = Array.from(results.values())[0].name
 
-        await Silo.delDocsSQL<_user>(`DELETE from users WHERE name = '${name}'`)
+        await Silo.executeSQL<_user>(`DELETE from users WHERE name = '${name}'`)
 
-        results = await Silo.findDocsSQL<_user>(`SELECT * FROM users WHERE name = '${name}'`).next() as _user[]
+        cursor = await Silo.executeSQL<_user>(`SELECT * FROM users WHERE name = '${name}'`) as _storeCursor<_user>
 
-        const idx = results.findIndex(com => com.name === name)
+        results = await cursor.next() as Map<_uuid, _user>
+        
+        const idx = Object.values(results).findIndex(com => com.name === name)
 
         expect(idx).toBe(-1)
     })
 
     test("DELETE ALL", async () => {
 
-        await Silo.delDocsSQL<_user>(`DELETE from users`)
+        await Silo.executeSQL<_user>(`DELETE from users`)
 
-        results = await Silo.findDocsSQL<_user>(`SELECT * FROM users`).next() as _user[]
+        cursor = await Silo.executeSQL<_user>(`SELECT * FROM users`) as _storeCursor<_user>
 
-        expect(results.length).toBe(0)
+        results = await cursor.next() as Map<_uuid, _user>
+
+        expect(results.size).toBe(0)
     })
 })

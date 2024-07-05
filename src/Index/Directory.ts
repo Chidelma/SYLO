@@ -1,14 +1,12 @@
 import { mkdirSync, rmSync, existsSync } from "fs"
 import { glob, Glob } from "glob"
 import { watch } from "chokidar"
-import { _schema } from "../types/schema"
+import { _fullMerge, _partialMerge, _uuid } from '../types/schema'
 import { _keyval } from "../types/general"
 
 export default class {
 
     static readonly DATA_PATH = process.env.DATA_PREFIX || `${process.cwd()}/db`
-
-    private static readonly ID_KEY = "_id"
 
     private static readonly CHAR_LIMIT = 255
 
@@ -19,7 +17,7 @@ export default class {
         return segs.length >= 5 && /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(segs[segs.length - 2])
     }
 
-    static async aquireLock(collection: string, id: string) {
+    static async aquireLock(collection: string, id: _uuid) {
 
         try {
 
@@ -58,7 +56,7 @@ export default class {
         yield path.value
     }
 
-    static async releaseLock(collection: string, id: string) {
+    static async releaseLock(collection: string, id: _uuid) {
 
         try {
 
@@ -75,18 +73,18 @@ export default class {
         }
     }
 
-    private static async isLocked(collection: string, id: string) {
+    private static async isLocked(collection: string, id: _uuid) {
 
         const results = await glob(`${collection}/${id}/**/`, { cwd: this.DATA_PATH })
 
-        return results.length > 0
+        return results.filter(p => p.split('/').length === 3).length > 0
     }
 
-    private static queueProcess(collection: string, id: string) {
+    private static queueProcess(collection: string, id: _uuid) {
         mkdirSync(`${this.DATA_PATH}/${collection}/${id}/${process.pid}`, { recursive: true })
     }
 
-    static async reconstructDoc<T extends _schema<T>>(collection: string, id: string) {
+    static async reconstructDoc<T>(collection: string, id: _uuid) {
 
         const indexes = [...await this.searchIndexes(`${collection}/**/${id}/*`, true), ...await this.searchIndexes(`${collection}/**/${id}/*/`)]
         
@@ -101,7 +99,7 @@ export default class {
             keyVal = { ...keyVal, [key]: val }
         })
         
-        return this.constructDoc(keyVal, id) as T
+        return this.constructDoc<T>(keyVal)
     }
 
     static async reArrangeIndexes(indexes: string[]) {
@@ -133,7 +131,7 @@ export default class {
         const queue: Record<string, Set<string>> = {}
         const hasUUID = this.hasUUID
 
-        const isComplete = (path: string, id: string, size: number) => {
+        const isComplete = (path: string, id: _uuid, size: number) => {
 
             if(queue[id]) {
 
@@ -173,7 +171,7 @@ export default class {
             if(hasUUID(path)) {
                 const segs = path.split('/')
                 const size = Number(segs.pop()!)
-                const id = segs.pop()!
+                const id = segs.pop()! as _uuid
                 if(isComplete(path, id, size) || isPartialChange()) {
                     controller.enqueue(id)
                 }
@@ -213,14 +211,14 @@ export default class {
                     new Promise<{ done: boolean, value: undefined }>(resolve =>
                         setTimeout(() => resolve({ done: true, value: undefined }), lowestLatency)
                     )
-                ]);
+                ])
                 const elapsed = Date.now() - startTime
                 if(elapsed < lowestLatency) lowestLatency = elapsed + 1
             }
 
             if(res.done || (data && data.limit === data.count)) break
             
-            data = yield res.value as string
+            data = yield res.value as _uuid
         }
     }
 
@@ -254,13 +252,11 @@ export default class {
         if(existsSync(`${this.DATA_PATH}/${index}`)) rmSync(`${this.DATA_PATH}/${index}`, { recursive: true })
     }
 
-    static deconstructDoc<T extends _schema<T>>(collection: string, id: string, doc: Record<string, any>, parentKey?: string) {
+    static deconstructDoc<T>(collection: string, id: _uuid, doc: T, parentKey?: string) {
 
         const indexes: string[] = []
 
         const obj = {...doc}
-
-        delete obj[this.ID_KEY]
 
         for(const key in obj) {
 
@@ -278,7 +274,7 @@ export default class {
         return indexes
     }
 
-    static constructDoc(keyVal: Record<string, string>, id: string) {
+    static constructDoc<T>(keyVal: Record<string, string>) {
 
         const doc: Record<string, any> = {}
 
@@ -307,9 +303,7 @@ export default class {
             else curr[lastKey] = this.parseValue(keyVal[fullKey].replaceAll(this.SLASH_ASCII, '/'))
         }
 
-        doc[this.ID_KEY] = id
-
-        return doc
+        return doc as T
     }
 
     private static parseValue(value: string) {

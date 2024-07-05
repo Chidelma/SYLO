@@ -1,25 +1,21 @@
 export type _comment = {
-    _id: string | null
     name: string
     email: string
     body: string
 }
 
 export type _post = {
-    _id: string | null
     userId: number
     title: string
     body: string
 }
 
 export type _album = {
-    _id: string | null
     userId: number
     title: string
 }
 
 export type _photo = {
-    _id: string | null
     albumId: number
     title: string
     url: string
@@ -27,13 +23,11 @@ export type _photo = {
 }
 
 export type _todo = {
-    _id: string | null
     title: string
     completed: boolean
 }
 
 export type _user = {
-    _id: string | null
     name: string
     username: string
     email: string

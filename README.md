@@ -1,15 +1,16 @@
-# trahydnt
+# BYOS
 
-To install dependencies:
+## Getting Started
 
-```bash
-bun install
-```
+To install dependencies:    
+`npm install`
 
-To run:
+To run the server:    
+`npm run start`
 
-```bash
-bun run index.ts
-```
+To run the client:    
+`npm run client`
 
-This project was created using `bun init` in bun v1.0.18. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+## License
+
+This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details                      

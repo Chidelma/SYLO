@@ -2,10 +2,10 @@ import { test, expect, describe } from 'bun:test'
 import Silo from '../src/Stawrij'
 import { _album, _post, albums, posts } from './data'
 import { mkdirSync, rmSync } from 'fs'
+import { _storeCursor, _uuid } from '../src/types/schema'
 
-rmSync(process.env.DATA_PREFIX!, {recursive:true})
-
-mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
+//rmSync(process.env.DATA_PREFIX!, {recursive:true})
+//mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
 
 describe("NO-SQL", () => {
 
@@ -13,9 +13,9 @@ describe("NO-SQL", () => {
 
         await Silo.bulkPutDocs<_post>('posts', posts.slice(0, 25))
 
-        const results = await Silo.findDocs<_post>('posts', {}).next() as _post[]
+        const results = await Silo.findDocs('posts', {}).next() as Map<_uuid, _post>
 
-        expect(results.length).toEqual(25)
+        expect(results.size).toEqual(25)
 
     }, 60 * 60 * 1000)
 })
@@ -27,14 +27,31 @@ describe("SQL", () => {
     test("INSERT", async () => {
 
         for(const album of albums.slice(0, 25)) {
+
             const keys = Object.keys(album)
-            const values = Object.values(album).map(val => { if(typeof val === 'string') { return `'${val}'` } else return val })
-            await Silo.putDocSQL(`INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join(',')})`)
+            
+            const params: any[] = []
+            const values: any[] = []
+
+            let count = 0
+
+            Object.values(album).forEach(val => {
+                if(typeof val === 'object') {
+                    params.push(val)
+                    values.push(`$${++count}`)
+                } else if(typeof val === 'string') {
+                    values.push(`'${val}'`)
+                } else values.push(val)
+            })
+
+            await Silo.executeSQL(`INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join(',')})`, ...params)
         }
 
-        const results = await Silo.findDocsSQL<_post>(`SELECT * FROM ${ALBUMS}`).next() as _album[]
+        const cursor = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as _storeCursor<_album>
 
-        expect(results.length).toEqual(25)
+        const results = await cursor.next() as Map<_uuid, _album>
+
+        expect(results.size).toEqual(25)
 
     }, 60 * 60 * 1000)
 })

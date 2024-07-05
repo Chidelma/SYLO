@@ -1,6 +1,7 @@
 import { _storeDelete, _storeQuery, _storeUpdate } from "./types/query";
 import Query from './Kweeree'
-import { _schema } from './types/schema'
+import Paser from './Paza'
+import { _fullMerge, _partialMerge, _storeCursor, _uuid } from './types/schema'
 import { _keyval } from "./types/general";
 import Dir from "./Index/Directory";
 
@@ -31,7 +32,40 @@ export default class Stawrij {
         worker.postMessage(message)
     }
 
-    static getDoc<T extends _schema<T>>(collection: string, id: string, onlyId: boolean = false) {
+    static async executeSQL<T>(SQL: string, ...params: any[]) {
+
+        const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE)/i)
+
+        if(!op) throw new Error("MIssing SQL Operation")
+
+        switch(op[0]) {
+
+            case "SELECT":
+                const query = Paser.convertSelect<T>(SQL)
+                const selCol = query.$collection
+                delete query.$collection
+                return Stawrij.findDocs(selCol!, query)
+            case "INSERT":
+                const insert = Paser.convertInsert<T>(SQL, ...params)
+                const insCol = insert.$collection
+                delete insert.$collection
+                return await Stawrij.putDoc(insCol!, insert)
+            case "UPDATE":
+                const update = Paser.convertUpdate<T>(SQL, ...params)
+                const updateCol = update.$collection
+                delete update.$collection
+                return await Stawrij.patchDocs(updateCol!, update)
+            case "DELETE":
+                const del = Paser.convertDelete<T>(SQL)
+                const delCol = del.$collection
+                delete del.$collection
+                return await Stawrij.delDocs(delCol!, del)
+            default:
+                throw new Error("Invalid Operation")
+        }
+    }
+
+    static getDoc<T>(collection: string, id: _uuid, onlyId: boolean = false) {
 
         return {
 
@@ -40,20 +74,19 @@ export default class Stawrij {
                 for await (const _ of Dir.onChange(`${collection}/**/${id}/*`, "addDir", true)) {
                     if(onlyId) yield id
                     else {
-                        yield await Dir.reconstructDoc<T>(collection, id)
+                        const doc = await Dir.reconstructDoc(collection, id)
+                        yield new Map([[id, doc]]) as Map<_uuid, T>
                     }
                 }
             },
 
             async once() {
 
-                let doc: T = {} as T
-
                 await Dir.onChange(`${collection}/**/${id}/*`, "addDir").next({ count: 1, limit: 1 })
 
-                doc = await Dir.reconstructDoc<T>(collection, id)
-                
-                return doc
+                const doc = await Dir.reconstructDoc(collection, id)
+
+                return new Map([[id, doc]]) as Map<_uuid, T>
             },
 
             async *onDelete() {
@@ -62,24 +95,24 @@ export default class Stawrij {
         }
     }
 
-    static async bulkPutDocs<T extends _schema<T>>(collection: string, docs: T[]) {
+    static async bulkPutDocs<T>(collection: string, docs: T[]) {
 
         await Promise.all(docs.map(doc => new Promise<void>(resolve => Stawrij.invokeWorker(Stawrij.storeUrl, { action: "PUT", data: { collection, doc }}, resolve))))
     }
 
-    static async putDoc<T extends _schema<T>>(collection: string, doc: T) {
+    static async putDoc<T extends object>(collection: string, data: _fullMerge<T>) {
 
-        const _id = doc._id ?? crypto.randomUUID()
+        const _id = data instanceof Map ? Array.from((data as Map<_uuid, T>).keys())[0] : crypto.randomUUID() 
         
         try {
 
+            console.log(`Writing ${_id}`)
+
             await Dir.aquireLock(collection, _id)
+            
+            const doc = data instanceof Map ? (data as Map<_uuid, T>).get(_id)! : data as T
 
-            doc._id = _id
-
-            console.log(`Writing ${doc._id}`)
-
-            const indexes = Dir.deconstructDoc(collection, doc._id, doc).map(idx => `${idx}/${Object.keys(doc).length}`)
+            const indexes = Dir.deconstructDoc(collection, _id, doc).map(idx => `${idx}/${Object.keys(doc).length}`)
 
             await Promise.all(indexes.map(idx => new Promise<void>(resolve => this.invokeWorker(this.indexUrl, { action: 'PUT', data: { idx } }, resolve))))
 
@@ -92,44 +125,24 @@ export default class Stawrij {
         return _id
     }
 
-    static async putDocSQL<T extends _schema<T>>(sql: string, collection?: string) {
-
-        let _id: any
-
-        try {
-
-            const insertSchema = Query.convertInsert<T>(sql)
-
-            const doc: T = {} as T
-
-            const keys = Object.keys(insertSchema).filter(key => !key.startsWith('$'))
-
-            for(const key of keys) {
-                doc[key as keyof Omit<T, '_id'>] = (insertSchema as T)[key as keyof Omit<T, '_id'>]
-            }
-
-            _id = await Stawrij.putDoc(collection ?? insertSchema.$collection!, doc)
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrji.putDocsSQL-> ${e.message}`)
-        }
-
-        return _id
-    }
-
-    static async patchDoc<T extends _schema<T>>(collection: string, doc: Partial<T>) {
+    static async patchDoc<T>(collection: string, data: Map<_uuid, Partial<T>>) {
         
         try {
 
-            if(!doc._id) throw new Error("Stawrij document does not contain an _id")
+            const _id = Array.from(data.keys())[0] as _uuid
 
-            console.log(`Updating ${doc._id}`)
+            if(!_id) throw new Error("Stawrij document does not contain an UUID")
 
-            const currDoc = await Dir.reconstructDoc<T>(collection, doc._id as string)
+            console.log(`Updating ${_id}`)
 
+            const currDoc = await Dir.reconstructDoc<T>(collection, _id)
+
+            const doc = data.get(_id)!
+
+            // @ts-ignore
             for(const key in doc) currDoc[key] = doc[key]!
 
-            await this.putDoc(collection, currDoc)
+            await this.putDoc(collection, new Map([[_id, currDoc]]) as Map<_uuid, T>)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.patchDoc -> ${e.message}`)
@@ -137,7 +150,7 @@ export default class Stawrij {
     }
 
 
-    static async patchDocs<T extends _schema<T>>(collection: string, updateSchema: _storeUpdate<T>) {
+    static async patchDocs<T>(collection: string, updateSchema: _storeUpdate<T>) {
 
         let count = 0
         
@@ -157,11 +170,11 @@ export default class Stawrij {
 
             await Promise.all(ids.map(id => {
 
-                const partialDoc: Record<string, any> = { _id: id }
+                const partialDoc: Record<string, any> = { }
 
-                for(const key of keys) partialDoc[key] = updateSchema[key as keyof Omit<T, '_id'>]
+                for(const key of keys) partialDoc[key] = updateSchema[key as keyof T]
                 
-                return new Promise<void>(resolve => Stawrij.invokeWorker(Stawrij.storeUrl, { action: 'PATCH', data: { collection, doc: partialDoc } }, resolve))
+                return new Promise<void>(resolve => Stawrij.invokeWorker(Stawrij.storeUrl, { action: 'PATCH', data: { collection, doc: new Map([[id, partialDoc]]) } }, resolve))
             }))
 
             count = ids.length
@@ -173,25 +186,7 @@ export default class Stawrij {
         return count
     }
 
-
-    static async patchDocsSQL<T extends _schema<T>>(sql: string, collection?: string) {
-
-        let count = 0
-
-        try {
-
-            const updateSchema = Query.convertUpdate<T>(sql)
-
-            count = await Stawrij.patchDocs(collection ?? updateSchema.$collection!, updateSchema)
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.patchDocSQL -> ${e.message}`)
-        }
-
-        return count
-    }
-
-    static async delDoc(collection: string, id: string) {
+    static async delDoc(collection: string, id: _uuid) {
 
         try {
 
@@ -210,7 +205,7 @@ export default class Stawrij {
         }
     }
 
-    static async delDocs<T extends _schema<T>>(collection: string, deleteSchema: _storeDelete<T>) {
+    static async delDocs<T>(collection: string, deleteSchema: _storeDelete<T>) {
 
         let count = 0
 
@@ -237,36 +232,11 @@ export default class Stawrij {
         return count
     }
 
-    static async delDocsSQL<T extends _schema<T>>(sql: string, collection?: string) {
-
-        let count = 0
-
-        try {
-
-            const deleteSchema = Query.convertDelete<T>(sql)
-
-            count = await Stawrij.delDocs(collection ?? deleteSchema.$collection!, deleteSchema)
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.delDocsSQL -> ${e.message}`)
-        }
-
-        return count
-    }
-    
-
-    static findDocsSQL<T extends _schema<T>>(sql: string, onlyIds: boolean = false, collection?: string) {
-
-        const query = Query.convertQuery<T>(sql)
-
-        return Stawrij.findDocs(collection ?? query.$collection!, query, onlyIds)
-    }
-
-    static findDocs<T extends _schema<T>>(collection: string, query: _storeQuery<T>, onlyIds: boolean = false) {
+    static findDocs<T>(collection: string, query: _storeQuery<T>, onlyIds: boolean = false) {
 
         return {
 
-            async *[Symbol.asyncIterator]() {
+            async *[Symbol.asyncIterator](): AsyncGenerator<Map<_uuid, T> | Map<_uuid, Partial<T>> | _uuid, void, unknown> {
 
                 const expressions = await Query.getExprs(query, collection)
 
@@ -278,25 +248,25 @@ export default class Stawrij {
                         const doc = await Dir.reconstructDoc<T>(collection, id)
 
                         if(query.$select && query.$select.length > 0) {
-
+                            
                             const result = {...doc}
 
                             for(const col in result) {
                                 if(!query.$select.includes(col as keyof T)) delete result[col]
                             }
 
-                            yield result as T
+                            yield new Map([[id, result]]) as Map<_uuid, Partial<T>>
                         
-                        } else yield doc
+                        } else yield new Map([[id, doc]]) as Map<_uuid, T>
                     }
                 }
             },
             
-            async next(limit?: number) {
+            async next(limit?: number): Promise<Map<_uuid, T> | Map<_uuid, Partial<T>> | _uuid[]> {
                 
-                const results: T[] = []
+                const results: Map<_uuid, T> | Map<_uuid, Partial<T>> = new Map<_uuid, T>()
 
-                const ids: string[] = []
+                const ids: _uuid[] = []
 
                 const expressions = await Query.getExprs(query, collection)
 
@@ -323,9 +293,9 @@ export default class Stawrij {
                                 if(!query.$select.includes(col as keyof T)) delete subRes[col]
                             }
 
-                            results.push(subRes)
-                        
-                        } else results.push(doc)
+                            results.set(res.value, subRes)
+
+                        } else results.set(res.value, doc)
                     }
 
                     if(limit) count++
@@ -334,7 +304,7 @@ export default class Stawrij {
                 return onlyIds ? ids : results
             },
 
-            async *onDelete() {
+            async *onDelete(): AsyncGenerator<_uuid, void, unknown> {
 
                 const expressions = await Query.getExprs(query, collection)
 
