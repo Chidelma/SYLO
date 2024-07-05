@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync, existsSync } from "fs"
 import { glob, Glob } from "glob"
 import { watch } from "chokidar"
-import { _uuid } from '../types/general'
+import { _uuid } from './types/general'
 
 export default class {
 

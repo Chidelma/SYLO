@@ -1,4 +1,4 @@
-import Dir from '../Index/Directory'
+import Dir from '../Directory'
 
 self.onmessage = async (ev) => {
 

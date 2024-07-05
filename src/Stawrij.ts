@@ -2,7 +2,7 @@ import { _storeDelete, _storeQuery, _storeUpdate } from "./types/query";
 import Query from './Kweeree'
 import Paser from './Paza'
 import { _uuid, _storeCursor } from './types/general'
-import Dir from "./Index/Directory";
+import Dir from "./Directory";
 
 export default class Stawrij {
 
