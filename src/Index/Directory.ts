@@ -1,8 +1,7 @@
 import { mkdirSync, rmSync, existsSync } from "fs"
 import { glob, Glob } from "glob"
 import { watch } from "chokidar"
-import { _fullMerge, _partialMerge, _uuid } from '../types/schema'
-import { _keyval } from "../types/general"
+import { _fullMerge, _uuid } from '../types/schema'
 
 export default class {
 

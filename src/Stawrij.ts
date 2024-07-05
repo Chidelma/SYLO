@@ -1,8 +1,7 @@
 import { _storeDelete, _storeQuery, _storeUpdate } from "./types/query";
 import Query from './Kweeree'
 import Paser from './Paza'
-import { _fullMerge, _partialMerge, _storeCursor, _uuid } from './types/schema'
-import { _keyval } from "./types/general";
+import { _fullMerge, _storeCursor, _uuid } from './types/schema'
 import Dir from "./Index/Directory";
 
 export default class Stawrij {
@@ -32,7 +31,7 @@ export default class Stawrij {
         worker.postMessage(message)
     }
 
-    static async executeSQL<T>(SQL: string, ...params: any[]) {
+    static async executeSQL<T>(SQL: string, params?: Map<keyof T, any>) {
 
         const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE)/i)
 
@@ -44,14 +43,14 @@ export default class Stawrij {
                 const query = Paser.convertSelect<T>(SQL)
                 const selCol = query.$collection
                 delete query.$collection
-                return Stawrij.findDocs(selCol!, query)
+                return Stawrij.findDocs(selCol!, query) as _storeCursor<T>
             case "INSERT":
-                const insert = Paser.convertInsert<T>(SQL, ...params)
+                const insert = Paser.convertInsert<T>(SQL, params)
                 const insCol = insert.$collection
                 delete insert.$collection
                 return await Stawrij.putDoc(insCol!, insert)
             case "UPDATE":
-                const update = Paser.convertUpdate<T>(SQL, ...params)
+                const update = Paser.convertUpdate<T>(SQL, params)
                 const updateCol = update.$collection
                 delete update.$collection
                 return await Stawrij.patchDocs(updateCol!, update)

@@ -54,21 +54,19 @@ describe("SQL", async () => {
 
         const keys = Object.keys(todo)
             
-        const params: any[] = []
+        const params: Map<keyof _todo, any> = new Map()
         const values: any[] = []
 
-        let count = 0
-
-        Object.values(todo).forEach(val => {
+        Object.values(todo).forEach((val, idx) => {
             if(typeof val === 'object') {
-                params.push(val)
-                values.push(`$${++count}`)
+                params.set(keys[idx] as keyof _todo, val)
+                values.push(keys[idx])
             } else if(typeof val === 'string') {
                 values.push(`'${val}'`)
             } else values.push(val)
         })
 
-        await Silo.executeSQL<_todo>(`INSERT INTO ${TODOS} (${keys.join(',')}) VALUES (${values.join(',')})`, ...params)
+        await Silo.executeSQL<_todo>(`INSERT INTO ${TODOS} (${keys.join(',')}) VALUES (${values.join(',')})`, params)
     }
 
     test("UPDATE CLAUSE", async () => {

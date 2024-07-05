@@ -60,21 +60,19 @@ describe("SQL", async () => {
 
         const keys = Object.keys(user)
             
-        const params: any[] = []
+        const params: Map<keyof _user, any> = new Map()
         const values: any[] = []
 
-        let count = 0
-
-        Object.values(user).forEach(val => {
+        Object.values(user).forEach((val, idx) => {
             if(typeof val === 'object') {
-                params.push(val)
-                values.push(`$${++count}`)
+                params.set(keys[idx] as keyof _user, val)
+                values.push(keys[idx])
             } else if(typeof val === 'string') {
                 values.push(`'${val}'`)
             } else values.push(val)
         })
 
-        await Silo.executeSQL(`INSERT INTO ${USERS} (${keys.join(',')}) VALUES (${values.join(',')})`, ...params)
+        await Silo.executeSQL<_user>(`INSERT INTO ${USERS} (${keys.join(',')}) VALUES (${values.join(',')})`, params)
     }
 
     let cursor = await Silo.executeSQL<_user>(`SELECT * FROM users`) as _storeCursor<_user>

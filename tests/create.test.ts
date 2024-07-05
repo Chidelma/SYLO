@@ -30,21 +30,19 @@ describe("SQL", () => {
 
             const keys = Object.keys(album)
             
-            const params: any[] = []
+            const params: Map<keyof _album, any> = new Map()
             const values: any[] = []
 
-            let count = 0
-
-            Object.values(album).forEach(val => {
+            Object.values(album).forEach((val, idx) => {
                 if(typeof val === 'object') {
-                    params.push(val)
-                    values.push(`$${++count}`)
+                    params.set(keys[idx] as keyof _album, val)
+                    values.push(keys[idx])
                 } else if(typeof val === 'string') {
                     values.push(`'${val}'`)
                 } else values.push(val)
             })
 
-            await Silo.executeSQL(`INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join(',')})`, ...params)
+            await Silo.executeSQL<_album>(`INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join(',')})`, params)
         }
 
         const cursor = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as _storeCursor<_album>

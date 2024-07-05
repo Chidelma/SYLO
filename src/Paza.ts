@@ -29,7 +29,7 @@ export default class {
         return query
     }
 
-    static convertInsert<T>(SQL: string, ...params: any[]) {
+    static convertInsert<T>(SQL: string, params?: Map<keyof T, any>) {
 
         const insert: _storeInsert<T> = {} as _storeInsert<T>
 
@@ -51,10 +51,8 @@ export default class {
 
             if(columns.length !== values.length) throw new Error("Length of Columns and Values don't match")
 
-            let count = 0
-
             for(let i = 0; i < values.length; i++) {
-                insert[columns[i] as keyof T] = values[i].includes('$') ? params[count++] : this.parseValue(values[i]) as any
+                insert[columns[i] as keyof T] = values[i] === columns[i] ? params?.get(columns[i] as keyof T) : this.parseValue(values[i]) as any
             }
 
         } catch(e) {
@@ -64,7 +62,7 @@ export default class {
         return insert
     }
 
-    static convertUpdate<T>(SQL: string, ...params: any[]) {
+    static convertUpdate<T>(SQL: string, params?: Map<keyof T, any>) {
 
         const update: _storeUpdate<Partial<T>> = {} as _storeUpdate<Partial<T>>
 
@@ -82,13 +80,11 @@ export default class {
 
             const setConditions = setClause.split(',').map((cond) => cond.trim())
 
-            let count = 0
-
             for(let i = 0; i < setConditions.length; i++) {
 
                 const [col, val] = setConditions[i].split('=').map(s => s.trim())
 
-                update[col as keyof T] = val.includes('$') ? params[count++] : this.parseValue(val) as any
+                update[col as keyof T] = val === col ? params?.get(col as keyof T) : this.parseValue(val) as any
             }
 
             update.$where = whereClause ? this.parseWherClause(whereClause) : {}
