@@ -1,7 +1,10 @@
 {
-  "name": "@vyckr/byos",
+  "name": "@vyckr/byosits",
   "version": "0.1.0",
-  "exports": "./src/Stawrij.ts",
+  "exports": { 
+    "." :"./src/Stawrij.ts",
+    "./types": "./src/types/general.ts"
+  },
   "devDependencies": {
     "@types/node": "^16",
     "bun-types": "latest"

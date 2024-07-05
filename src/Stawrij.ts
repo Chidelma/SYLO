@@ -1,7 +1,7 @@
 import { _storeDelete, _storeQuery, _storeUpdate } from "./types/query";
 import Query from './Kweeree'
 import Paser from './Paza'
-import { _fullMerge, _storeCursor, _uuid } from './types/schema'
+import { _uuid, _storeCursor } from './types/general'
 import Dir from "./Index/Directory";
 
 export default class Stawrij {
@@ -99,7 +99,7 @@ export default class Stawrij {
         await Promise.all(docs.map(doc => new Promise<void>(resolve => Stawrij.invokeWorker(Stawrij.storeUrl, { action: "PUT", data: { collection, doc }}, resolve))))
     }
 
-    static async putDoc<T extends object>(collection: string, data: _fullMerge<T>) {
+    static async putDoc<T extends object>(collection: string, data: Map<_uuid, T> | T) {
 
         const _id = data instanceof Map ? Array.from((data as Map<_uuid, T>).keys())[0] : crypto.randomUUID() 
         

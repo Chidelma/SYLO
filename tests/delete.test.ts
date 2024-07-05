@@ -2,7 +2,7 @@ import { test, expect, describe } from 'bun:test'
 import Silo from '../src/Stawrij'
 import {  _comment, comments, users, _user } from './data'
 import { mkdirSync, rmSync } from 'node:fs'
-import { _storeCursor, _uuid } from '../src/types/schema'
+import { _uuid, _storeCursor } from '../src/types/general'  
 
 //rmSync(process.env.DATA_PREFIX!, {recursive:true})
 
