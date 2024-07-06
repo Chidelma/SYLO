@@ -24,7 +24,7 @@ describe("NO-SQL", async () => {
 
         results = await Silo.findDocs<_comment>(COMMENTS, {}).next() as Map<_uuid, _comment>
 
-        const idx = Object.keys(results).findIndex(_id => _id === id)
+        const idx = Array.from(results.keys()).findIndex(_id => _id === id)
 
         expect(idx).toEqual(-1)
 
@@ -89,7 +89,7 @@ describe("SQL", async () => {
 
         results = await cursor.next() as Map<_uuid, _user>
         
-        const idx = Object.values(results).findIndex(com => com.name === name)
+        const idx = Array.from(results.values()).findIndex(com => com.name === name)
 
         expect(idx).toBe(-1)
     })
