@@ -2,7 +2,7 @@ import { _op, _storeQuery, _operand, _condition, _storeUpdate, _storeDelete, _st
 
 export default class {
 
-    static async getExprs<T>(query: _storeQuery<T>, collection?: string) {
+    static getExprs<T>(query: _storeQuery<T>, collection?: string) {
 
         let exprs = new Set<string>()
 

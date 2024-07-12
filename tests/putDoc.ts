@@ -2,8 +2,8 @@ import Silo from '../src/Stawrij'
 import { posts, _post } from './data'
 import { mkdirSync, rmSync } from 'node:fs'
 
-rmSync(process.env.DATA_PREFIX!, {recursive:true})
-mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
+//rmSync(process.env.DATA_PREFIX!, {recursive:true})
+//mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
 
 const POSTS = 'posts'
 

@@ -1,7 +1,7 @@
-import { mkdirSync, rmSync, existsSync } from "fs"
-import { glob, Glob } from "glob"
-import { watch } from "chokidar"
-import { _uuid } from './types/general'
+import { rmSync, existsSync } from "node:fs"
+import { _metadata, _uuid } from './types/general'
+import Walker from "./Walker"
+import { invokeWorker } from "./utils/general"
 
 export default class {
 
@@ -11,9 +11,10 @@ export default class {
 
     private static readonly SLASH_ASCII = "%2F"
 
-    static hasUUID(idx: string) {
-        const segs = idx.split('/')
-        return segs.length >= 5 && /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(segs[segs.length - 2])
+    private static walkerUrl = new URL('./workers/Walker.ts', import.meta.url).href
+
+    static isUUID(id: string) {
+        return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)
     }
 
     static async aquireLock(collection: string, id: _uuid) {
@@ -22,37 +23,18 @@ export default class {
 
             if(await this.isLocked(collection, id)) {
 
-                this.queueProcess(collection, id)
+                await this.queueProcess(collection, id)
     
-                for await (const _ of this.onUnlock(`${collection}/${id}/${process.pid}`)) {
-                    break
+                for await (const event of Walker.listen(`${collection}/${id}/${process.pid}`)) {
+                    if(event.action === "delete") break
                 }
             }
     
-            this.queueProcess(collection, id)
+            await this.queueProcess(collection, id)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.aquireLock -> ${e.message}`)
         }
-    }
-
-    private static async *onUnlock(pattern: string) {
-
-        const cwd = this.DATA_PATH
-
-        const stream = new ReadableStream<string>({
-            start(controller) {
-                watch(pattern, { cwd }).on("unlinkDir", path => {
-                    controller.enqueue(path)
-                })
-            }
-        })
-
-        const reader = stream.getReader()
-
-        const path = await reader.read()
-
-        yield path.value
     }
 
     static async releaseLock(collection: string, id: _uuid) {
@@ -61,9 +43,13 @@ export default class {
 
             rmSync(`${this.DATA_PATH}/${collection}/${id}/${process.pid}`, { recursive: true })
 
-            const results = await glob(`${collection}/${id}/**/`, { withFileTypes: true, stat: true, cwd: this.DATA_PATH })
-            
-            const timeSortedDir = results.sort((a, b) => a.birthtimeMs! - b.birthtimeMs!).map(p => p.relative()).filter(p => p.split('/').length === 3)
+            const results = await this.searchIndexes(`${collection}/${id}/**`)
+
+            const timeSortedDir = results.sort((a, b) => {
+                const aTime = Bun.file(`${this.DATA_PATH}/${a}`).lastModified
+                const bTime = Bun.file(`${this.DATA_PATH}/${b}`).lastModified
+                return aTime - bTime
+            })
 
             if(timeSortedDir.length > 0) rmSync(`${this.DATA_PATH}/${timeSortedDir[0]}`, { recursive: true })
 
@@ -74,18 +60,19 @@ export default class {
 
     private static async isLocked(collection: string, id: _uuid) {
 
-        const results = await glob(`${collection}/${id}/**/`, { cwd: this.DATA_PATH })
+        const results = await this.searchIndexes(`${collection}/${id}/**`)
 
         return results.filter(p => p.split('/').length === 3).length > 0
     }
 
-    private static queueProcess(collection: string, id: _uuid) {
-        mkdirSync(`${this.DATA_PATH}/${collection}/${id}/${process.pid}`, { recursive: true })
+    private static async queueProcess(collection: string, id: _uuid) {
+
+        await Bun.write(Bun.file(`${this.DATA_PATH}/${collection}/${id}/${process.pid}`, { type: JSON.stringify({ created: Date.now() }) }), '.')
     }
 
     static async reconstructDoc<T>(collection: string, id: _uuid) {
 
-        const indexes = [...await this.searchIndexes(`${collection}/**/${id}/*`, true), ...await this.searchIndexes(`${collection}/**/${id}/*/`)]
+        const indexes = await this.searchIndexes(`${collection}/**/${id}`)
         
         const keyVals = await this.reArrangeIndexes(indexes)
 
@@ -107,12 +94,17 @@ export default class {
 
         for(const index of indexes) {
 
-            const segments = [...index.split('/')]
+            let val: string
 
-            segments.pop()!
-            const id = segments.pop()!
             const file = Bun.file(`${this.DATA_PATH}/${index}`)
-            const val = await file.exists() ? await file.text() : segments.pop()!
+
+            const segments = index.split('/')
+
+            const id = segments.pop()!
+
+            if(file.size > this.CHAR_LIMIT) val = await file.text()
+            else val = segments.pop()!
+
             const collection = segments.shift()! 
 
             segments.unshift(id)
@@ -124,108 +116,39 @@ export default class {
         return keyVals
     }
 
-    static async *onChange(pattern: string | string[], action: "addDir" | "unlinkDir", listen: boolean = false) {
-        
-        const cwd = this.DATA_PATH
-        const queue: Record<string, Set<string>> = {}
-        const hasUUID = this.hasUUID
+    private static async *listen(pattern: string | string[], action: "upsert" | "delete") {
 
-        const isComplete = (path: string, id: _uuid, size: number) => {
+        const eventIds = new Set<string>()
 
-            if(queue[id]) {
+        for await (const event of Walker.listen(pattern)) {
 
-                queue[id].add(path)
-
-                if(size === (queue[id].size + 1)) {
-                    queue[id].clear()
-                    return true
-                }
-
-            } else queue[id] = new Set([path])
-
-            return false
-        }
-
-        const isPartialChange = () => {
-
-            if(Array.isArray(pattern)) {
-
-                const firstPattern = pattern[0]
-
-                const segs = firstPattern.split('/')
-
-                if(!segs.slice(1, -1).every((elem) => elem.includes('*'))) return true
-
-            } else {
-
-                const segs = pattern.split('/')
-
-                if(!segs.slice(1, -1).every((elem) => elem.includes('*'))) return true
+            if(event.action !== action && eventIds.has(event.id))  {
+                eventIds.delete(event.id)
+            } else if(event.action === action && !eventIds.has(event.id) && this.isUUID(event.id)) {
+                eventIds.add(event.id)
+                yield event.id as _uuid
             }
-
-            return false
-        }
-
-        const enqueueID = (controller: ReadableStreamDefaultController, path: string) => {
-            if(hasUUID(path)) {
-                const segs = path.split('/')
-                const size = Number(segs.pop()!)
-                const id = segs.pop()! as _uuid
-                if(isComplete(path, id, size) || isPartialChange()) {
-                    controller.enqueue(id)
-                }
-            }
-        }
-
-        const stream = new ReadableStream<string>({
-            start(controller) {
-                if(listen) {
-                    watch(pattern, { cwd }).on(action, path => {
-                        enqueueID(controller, path)
-                    })
-                } else {
-                    new Glob(pattern, { cwd }).stream().on("data", path => {
-                        enqueueID(controller, path)
-                    })
-                }
-            }
-        })
-
-        const reader = stream.getReader()
-
-        let data: { limit?: number, count: number } | undefined
-
-        let lowestLatency = 500
-
-        while(true) {
-
-            let res: { done: boolean, value: string | undefined };
-
-            if(listen) res = await reader.read() as { done: boolean, value: string | undefined }
-            else {
-
-                const startTime = Date.now()
-                res = await Promise.race([
-                    reader.read() as Promise<{ done: boolean, value: string | undefined }>,
-                    new Promise<{ done: boolean, value: undefined }>(resolve =>
-                        setTimeout(() => resolve({ done: true, value: undefined }), lowestLatency)
-                    )
-                ])
-                const elapsed = Date.now() - startTime
-                if(elapsed < lowestLatency) lowestLatency = elapsed + 1
-            }
-
-            if(res.done || (data && data.limit === data.count)) break
-            
-            data = yield res.value as _uuid
         }
     }
 
-    static async searchIndexes(pattern: string | string[], nodir: boolean = false) {
+    static async *onDelete(pattern: string | string[]) {
+        
+        for await (const id of this.listen(pattern, "delete")) yield id
+    }
 
-        const indexes = await glob(pattern, { cwd: this.DATA_PATH, nodir })
+    static async *onChange(pattern: string | string[]) {
+        
+        for await (const id of this.listen(pattern, "upsert")) yield id
+    }
 
-        return indexes.filter(this.hasUUID)
+    static async searchIndexes(pattern: string | string[]) {
+
+        const indexes: string[] = []
+
+        if(Array.isArray(pattern)) await Promise.all(pattern.map(p => new Promise<void>(resolve => invokeWorker(this.walkerUrl, { action: 'GET', data: { pattern: p } }, resolve, indexes))))
+        else indexes.push(...Walker.search(pattern))
+
+        return indexes.flat()
     }
 
     static async updateIndex(index: string) {
@@ -235,15 +158,18 @@ export default class {
         const collection = segements.shift()!
         const key = segements.shift()!
 
-        const size = segements.pop()!
         const id = segements.pop()!
         const val = segements.pop()!
 
-        const currIndexes = await this.searchIndexes(`${collection}/${key}/**/${id}/*`)
+        const currIndexes = await this.searchIndexes(`${collection}/${key}/**/${id}`)
 
         currIndexes.forEach(idx => rmSync(`${this.DATA_PATH}/${idx}`, { recursive: true }))
 
-        val.length > this.CHAR_LIMIT ? await Bun.write(`${this.DATA_PATH}/${collection}/${key}/${segements.join('/')}/${id}/${size}`, val) : mkdirSync(`${this.DATA_PATH}/${index}`, { recursive: true })
+        if(val.length > this.CHAR_LIMIT) {
+            await Bun.write(Bun.file(`${this.DATA_PATH}/${collection}/${key}/${segements.join('/')}/${id}`), val)
+        } else {
+            await Bun.write(Bun.file(`${this.DATA_PATH}/${index}`), '.')
+        }
     }
 
     static deleteIndex(index: string) {

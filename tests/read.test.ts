@@ -33,15 +33,13 @@ describe("NO-SQL", async () => {
 
     test("GET ONE", async () => {
 
-        const results = await Silo.findDocs(ALBUMS, {}).next(1) as Map<_uuid, _album>
+        const ids = await Silo.findDocs(ALBUMS, {}, true).next(1) as _uuid[]
 
-        const _id = Array.from(results.keys())[0]
-
-        const result = await Silo.getDoc<_album>(ALBUMS, _id).once()
+        const result = await Silo.getDoc<_album>(ALBUMS, ids[0]).once()
 
         const id = Array.from(result.keys())[0]
 
-        expect(_id).toEqual(id)
+        expect(ids[0]).toEqual(id)
     })
 
     test("SELECT CLAUSE", async () => {

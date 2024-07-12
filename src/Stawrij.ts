@@ -3,39 +3,18 @@ import Query from './Kweeree'
 import Paser from './Paza'
 import { _uuid, _storeCursor } from './types/general'
 import Dir from "./Directory";
+import { invokeWorker } from "./utils/general";
 
 export default class Stawrij {
 
     private static indexUrl = new URL('./workers/Directory.ts', import.meta.url).href
     private static storeUrl = new URL('./workers/Stawrij.ts', import.meta.url).href
 
-    private static invokeWorker(url: string, message: any, resolve: () => void, result?: any) {
-
-        const worker = new Worker(url)
-
-        worker.onmessage = ev => {
-            if(result) {
-                if(Array.isArray(result)) result.push(ev.data)
-                else result = ev.data
-            } 
-            worker.terminate()
-            resolve()
-        }
-
-        worker.onerror = ev => {
-            console.error(ev.message)
-            worker.terminate()
-            resolve()
-        }
-        
-        worker.postMessage(message)
-    }
-
     static async executeSQL<T>(SQL: string, params?: Map<keyof T, any>) {
 
         const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE)/i)
 
-        if(!op) throw new Error("MIssing SQL Operation")
+        if(!op) throw new Error("Missing SQL Operation")
 
         switch(op[0]) {
 
@@ -70,7 +49,7 @@ export default class Stawrij {
 
             async *[Symbol.asyncIterator]() {
 
-                for await (const _ of Dir.onChange(`${collection}/**/${id}/*`, "addDir", true)) {
+                for await (const _ of Dir.onChange(`${collection}/**/${id}`)) {
                     if(onlyId) yield id
                     else {
                         const doc = await Dir.reconstructDoc(collection, id)
@@ -80,23 +59,18 @@ export default class Stawrij {
             },
 
             async once() {
-
-                await Dir.onChange(`${collection}/**/${id}/*`, "addDir").next({ count: 1, limit: 1 })
-
-                const doc = await Dir.reconstructDoc(collection, id)
-
-                return new Map([[id, doc]]) as Map<_uuid, T>
+                return new Map([[id, await Dir.reconstructDoc<T>(collection, id)]]) as Map<_uuid, T>
             },
 
             async *onDelete() {
-                for await (const _ of Dir.onChange(`${collection}/**/${id}/*`, "unlinkDir", true)) yield id
+                for await (const _ of Dir.onDelete(`${collection}/**/${id}`)) yield id
             }
         }
     }
 
     static async bulkPutDocs<T>(collection: string, docs: T[]) {
 
-        await Promise.all(docs.map(doc => new Promise<void>(resolve => Stawrij.invokeWorker(Stawrij.storeUrl, { action: "PUT", data: { collection, doc }}, resolve))))
+        await Promise.all(docs.map(doc => new Promise<void>(resolve => invokeWorker(Stawrij.storeUrl, { action: "PUT", data: { collection, doc }}, resolve))))
     }
 
     static async putDoc<T extends object>(collection: string, data: Map<_uuid, T> | T) {
@@ -111,9 +85,9 @@ export default class Stawrij {
             
             const doc = data instanceof Map ? (data as Map<_uuid, T>).get(_id)! : data as T
 
-            const indexes = Dir.deconstructDoc(collection, _id, doc).map(idx => `${idx}/${Object.keys(doc).length}`)
+            const indexes = Dir.deconstructDoc(collection, _id, doc)
 
-            await Promise.all(indexes.map(idx => new Promise<void>(resolve => this.invokeWorker(this.indexUrl, { action: 'PUT', data: { idx } }, resolve))))
+            await Promise.all(indexes.map(idx => new Promise<void>(resolve => invokeWorker(this.indexUrl, { action: 'PUT', data: { idx, num_keys: Object.keys(doc).length } }, resolve))))
 
             await Dir.releaseLock(collection, _id)
 
@@ -155,17 +129,11 @@ export default class Stawrij {
         
         try {
 
-            const expressions = await Query.getExprs(updateSchema.$where!, collection)
-
-            const indexes = await Dir.searchIndexes(expressions)
+            const indexes = await Dir.searchIndexes(Query.getExprs(updateSchema.$where!, collection))
 
             const keys = Object.keys(updateSchema).filter(key => !key.startsWith('$'))
 
-            const ids = Array.from(new Set(indexes.filter(Dir.hasUUID).map(idx => {
-                const segs = idx.split('/')
-                segs.pop()!
-                return segs.pop()!
-            })))
+            const ids = Array.from(new Set(indexes.map(idx => idx.split('/').pop()!)))
 
             await Promise.all(ids.map(id => {
 
@@ -173,7 +141,7 @@ export default class Stawrij {
 
                 for(const key of keys) partialDoc[key] = updateSchema[key as keyof T]
                 
-                return new Promise<void>(resolve => Stawrij.invokeWorker(Stawrij.storeUrl, { action: 'PATCH', data: { collection, doc: new Map([[id, partialDoc]]) } }, resolve))
+                return new Promise<void>(resolve => invokeWorker(Stawrij.storeUrl, { action: 'PATCH', data: { collection, doc: new Map([[id, partialDoc]]) } }, resolve))
             }))
 
             count = ids.length
@@ -193,9 +161,9 @@ export default class Stawrij {
 
             console.log(`Deleting ${id}`)
 
-            const indexes = [...await Dir.searchIndexes(`${collection}/**/${id}/*`, true), ...await Dir.searchIndexes(`${collection}/**/${id}/*/`)]
+            const indexes = await Dir.searchIndexes(`${collection}/**/${id}`)
 
-            await Promise.all(indexes.map(idx => new Promise<void>(resolve => this.invokeWorker(this.indexUrl, { action: 'DEL', data: { idx } }, resolve))))
+            await Promise.all(indexes.map(idx => new Promise<void>(resolve => invokeWorker(this.indexUrl, { action: 'DEL', data: { idx } }, resolve))))
 
             await Dir.releaseLock(collection, id)
 
@@ -210,17 +178,11 @@ export default class Stawrij {
 
         try {
 
-            const expressions = await Query.getExprs(deleteSchema, collection)
+            const indexes = await Dir.searchIndexes(Query.getExprs(deleteSchema, collection))
 
-            const indexes = [...await Dir.searchIndexes(expressions, true), ...await Dir.searchIndexes(expressions)]
+            const ids = Array.from(new Set(indexes.map(idx => idx.split('/').pop()!)))
 
-            const ids = Array.from(new Set(indexes.filter(Dir.hasUUID).map(idx => {
-                const segs = idx.split('/')
-                segs.pop()!
-                return segs.pop()!
-            })))
-
-            await Promise.all(ids.map(id => new Promise<void>(resolve => Stawrij.invokeWorker(Stawrij.storeUrl, { action: 'DEL', data: { collection, id }}, resolve))))
+            await Promise.all(ids.map(id => new Promise<void>(resolve => invokeWorker(Stawrij.storeUrl, { action: 'DEL', data: { collection, id }}, resolve))))
             
             count = ids.length
 
@@ -237,9 +199,7 @@ export default class Stawrij {
 
             async *[Symbol.asyncIterator](): AsyncGenerator<Map<_uuid, T> | Map<_uuid, Partial<T>> | _uuid, void, unknown> {
 
-                const expressions = await Query.getExprs(query, collection)
-
-                for await (const id of Dir.onChange(expressions, "addDir", true)) {
+                for await (const id of Dir.onChange(Query.getExprs(query, collection))) {
 
                     if(onlyIds) yield id
                     else {
@@ -265,49 +225,40 @@ export default class Stawrij {
                 
                 const results: Map<_uuid, T> | Map<_uuid, Partial<T>> = new Map<_uuid, T>()
 
-                const ids: _uuid[] = []
+                const ids = new Set<_uuid>()
 
-                const expressions = await Query.getExprs(query, collection)
+                const indexes = await Dir.searchIndexes(Query.getExprs(query, collection))
 
-                const iter = Dir.onChange(expressions, "addDir")
-
-                let count = 0
-                
-                while(true) {
-
-                    const res = await iter.next({ count, limit })
-                    
-                    if(res.done || count === limit) break
-
-                    if(onlyIds) ids.push(res.value)
-                    else {
-
-                        const doc = await Dir.reconstructDoc<T>(collection, res.value)
-
-                        if(query.$select && query.$select.length > 0) {
-
-                            const subRes = {...doc}
-
-                            for(const col in subRes) {
-                                if(!query.$select.includes(col as keyof T)) delete subRes[col]
-                            }
-
-                            results.set(res.value, subRes)
-
-                        } else results.set(res.value, doc)
-                    }
-
-                    if(limit) count++
+                for(let i = 0; i < indexes.length; i++) {
+                    ids.add(indexes[i].split('/').pop()! as _uuid)
+                    if(limit && ids.size === limit) break
                 }
 
-                return onlyIds ? ids : results
+                if(onlyIds) return Array.from(ids)
+
+                for(const id of ids) {
+
+                    const doc = await Dir.reconstructDoc<T>(collection, id)
+
+                    if(query.$select && query.$select.length > 0) {
+                        
+                        const result = {...doc}
+
+                        for(const col in result) {
+                            if(!query.$select.includes(col as keyof T)) delete result[col]
+                        }
+
+                        results.set(id, result)
+
+                    } else results.set(id, doc)
+                }
+
+                return results
             },
 
             async *onDelete(): AsyncGenerator<_uuid, void, unknown> {
 
-                const expressions = await Query.getExprs(query, collection)
-
-                for await (const id of Dir.onChange(expressions, "unlinkDir", true)) yield id
+                for await (const id of Dir.onDelete(Query.getExprs(query, collection))) yield id
             }
         }
     }

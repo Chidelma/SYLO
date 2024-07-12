@@ -16,13 +16,11 @@ describe("NO-SQL", async () => {
 
     test("UPDATE ONE", async () => {
 
-        let results = await Silo.findDocs<_photo>(PHOTOS, {}).next(1) as Map<_uuid, _photo>
+        const ids = await Silo.findDocs<_photo>(PHOTOS, {}, true).next(1) as _uuid[]
 
-        const id = Array.from(results.keys())[0]
+        await Silo.patchDoc<_photo>(PHOTOS, new Map([[ids[0], { title: "All Mighty" }]]))
 
-        await Silo.patchDoc<_photo>(PHOTOS, new Map([[id, { title: "All Mighty" }]]))
-
-        results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [{ title: { $eq: "All Mighty" } }]}).next() as Map<_uuid, _photo>
+        const results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [{ title: { $eq: "All Mighty" } }]}).next() as Map<_uuid, _photo>
         
         expect(results.size).toBe(1)
     })

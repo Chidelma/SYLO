@@ -5,3 +5,7 @@ export type _storeCursor<T> = {
     next(limit?: number): Promise<Map<_uuid, T> | Map<_uuid, Partial<T>> | _uuid[]>
     onDelete(): AsyncGenerator<_uuid, void, unknown>
 }
+
+export type _metadata = {
+    num_keys: number
+}
