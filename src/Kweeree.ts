@@ -1,5 +1,3 @@
-import { _op, _storeQuery, _operand, _condition, _storeUpdate, _storeDelete, _storeInsert } from "./types/query"
-
 export default class {
 
     static getExprs<T>(query: _storeQuery<T>, collection?: string) {

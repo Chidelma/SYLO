@@ -2,10 +2,9 @@ import { test, expect, describe } from 'bun:test'
 import Silo from '../src/Stawrij'
 import { _album, _post, albums, posts } from './data'
 import { mkdirSync, rmSync } from 'fs'
-import { _uuid, _storeCursor } from '../src/types/general'  
 
-//rmSync(process.env.DATA_PREFIX!, {recursive:true})
-//mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
+rmSync(process.env.DATA_PREFIX!, {recursive:true})
+mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
 
 describe("NO-SQL", () => {
 

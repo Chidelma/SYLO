@@ -1,5 +1,4 @@
 import { rmSync, existsSync } from "node:fs"
-import { _metadata, _uuid } from './types/general'
 import Walker from "./Walker"
 import { invokeWorker } from "./utils/general"
 
@@ -67,7 +66,7 @@ export default class {
 
     private static async queueProcess(collection: string, id: _uuid) {
 
-        await Bun.write(Bun.file(`${this.DATA_PATH}/${collection}/${id}/${process.pid}`, { type: JSON.stringify({ created: Date.now() }) }), '.')
+        await Bun.write(Bun.file(`${this.DATA_PATH}/${collection}/${id}/${process.pid}`), '.')
     }
 
     static async reconstructDoc<T>(collection: string, id: _uuid) {
