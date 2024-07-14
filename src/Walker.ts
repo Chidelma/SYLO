@@ -1,5 +1,4 @@
 import { FileChangeInfo, watch } from "node:fs/promises"
-import { Glob } from "bun"
 import { mkdirSync } from "node:fs"
 
 export default class {
@@ -9,14 +8,14 @@ export default class {
     static readonly DB_PATH = process.env.DATA_PREFIX || `${process.cwd()}/db`
 
     static search(pattern: string) {
-        return Array.from(new Glob(pattern).scanSync({ cwd: this.DB_PATH }))
+        return Array.from(new Bun.Glob(pattern).scanSync({ cwd: this.DB_PATH }))
     }
 
     private static async *streamPattern(pattern: string) {
 
         let lowestLatency = 500
 
-        const glob = new Glob(pattern)
+        const glob = new Bun.Glob(pattern)
 
         const iter = glob.scan({ cwd: this.DB_PATH })
 
@@ -95,7 +94,7 @@ export default class {
 
             const path = `${table}/${event.filename}`
             
-            if(event.filename && new Glob(pattern).match(path) && event.eventType !== 'change') {
+            if(event.filename && new Bun.Glob(pattern).match(path) && event.eventType !== 'change') {
 
                 const id = path.split('/').pop()!
 
