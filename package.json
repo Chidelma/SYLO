@@ -2,9 +2,11 @@
   "name": "@delma/byos",
   "version": "0.1.0",
   "exports": { 
-    "." :"./src/Stawrij.ts"
+    "." : {
+      "import": "./src/Stawrij.ts",
+      "types": "./types/index.d.ts"
+    }
   },
-  "types": "./types/index.d.ts",
   "devDependencies": {
     "@types/node": "^16",
     "bun-types": "latest"
