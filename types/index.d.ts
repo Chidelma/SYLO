@@ -1,12 +1,12 @@
 type _uuid = `${string}-${string}-${string}-${string}-${string}`
 
-type _storeCursor<T> = {
+interface _storeCursor<T> {
     [Symbol.asyncIterator](): AsyncGenerator<Map<_uuid, T> | Map<_uuid, Partial<T>> | _uuid, void, unknown>
     next(limit?: number): Promise<Map<_uuid, T> | Map<_uuid, Partial<T>> | _uuid[]>
     onDelete(): AsyncGenerator<_uuid, void, unknown>
 }
 
-type _treeItem<T> = {
+interface _treeItem<T> {
     field: keyof T
     type?: 'string' | 'number' | 'boolean' | 'string | null' | 'number | null',
     default?: string | number | boolean | null
@@ -25,13 +25,13 @@ interface _operand {
 
 type _op<T> = Partial<Record<keyof T, _operand>>
 
-type _storeQuery<T> = {
+interface _storeQuery<T> {
     $select?: Array<keyof T>
     $collection?: string
     $ops?: Array<_op<T>>
 }
 
-type _condition = { column: string, operator: string, value: string | number| boolean | null }
+interface _condition { column: string, operator: string, value: string | number| boolean | null }
 
 type _storeUpdate<T> = {
     [K in keyof Partial<T>]: T[K]
@@ -48,17 +48,17 @@ type _storeInsert<T> = {
     $collection?: string
 }
 
-type _rmField<T> = {
+interface _rmField<T> {
     field: keyof T,
     force?: boolean
 }
 
-type _modField<T> = {
+interface _modField<T> {
     from: string
     to: keyof T
 }
 
-type _colSchema<T> = {
+interface _colSchema<T> {
     collection?: string
     add?: Set<keyof T>
     change?: Array<_modField<T>>
