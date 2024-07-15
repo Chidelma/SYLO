@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test'
-import Silo from '../src/Stawrij'
+import Silo from '../../src/Stawrij'
 import {  _comment, comments, users, _user } from './data'
 import { mkdirSync, rmSync } from 'node:fs'
 
@@ -57,20 +57,9 @@ describe("SQL", async () => {
     for(const user of users.slice(0, 25)) {
 
         const keys = Object.keys(user)
-            
-        const params: Map<keyof _user, any> = new Map()
-        const values: any[] = []
+        const values = Object.values(user).map(val => JSON.stringify(val))
 
-        Object.values(user).forEach((val, idx) => {
-            if(typeof val === 'object') {
-                params.set(keys[idx] as keyof _user, val)
-                values.push(keys[idx])
-            } else if(typeof val === 'string') {
-                values.push(`'${val}'`)
-            } else values.push(val)
-        })
-
-        await Silo.executeSQL<_user>(`INSERT INTO ${USERS} (${keys.join(',')}) VALUES (${values.join(',')})`, params)
+        await Silo.executeSQL<_user>(`INSERT INTO ${USERS} (${keys.join(',')}) VALUES (${values.join('\\')})`)
     }
 
     let cursor = await Silo.executeSQL<_user>(`SELECT * FROM users`) as _storeCursor<_user>

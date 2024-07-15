@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test'
-import Silo from '../src/Stawrij'
+import Silo from '../../src/Stawrij'
 import { _photo, photos, _todo, todos } from './data'
 import { mkdirSync, rmSync } from 'node:fs' 
 
@@ -49,20 +49,9 @@ describe("SQL", async () => {
     for(const todo of todos.slice(0, 25)) {
 
         const keys = Object.keys(todo)
-            
-        const params: Map<keyof _todo, any> = new Map()
-        const values: any[] = []
+        const values = Object.values(todo).map(val => JSON.stringify(val))
 
-        Object.values(todo).forEach((val, idx) => {
-            if(typeof val === 'object') {
-                params.set(keys[idx] as keyof _todo, val)
-                values.push(keys[idx])
-            } else if(typeof val === 'string') {
-                values.push(`'${val}'`)
-            } else values.push(val)
-        })
-
-        await Silo.executeSQL<_todo>(`INSERT INTO ${TODOS} (${keys.join(',')}) VALUES (${values.join(',')})`, params)
+        await Silo.executeSQL<_todo>(`INSERT INTO ${TODOS} (${keys.join(',')}) VALUES (${values.join('\\')})`)
     }
 
     test("UPDATE CLAUSE", async () => {

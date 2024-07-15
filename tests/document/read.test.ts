@@ -1,5 +1,5 @@
 import { test, expect, describe } from 'bun:test'
-import Silo from '../src/Stawrij'
+import Silo from '../../src/Stawrij'
 import { _album, _user, albums } from './data'
 import { mkdirSync, rmSync } from 'node:fs'
 

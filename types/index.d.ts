@@ -6,6 +6,9 @@ type _storeCursor<T> = {
     onDelete(): AsyncGenerator<_uuid, void, unknown>
 }
 
-type _metadata = {
-    num_keys: number
+type _treeItem<T> = {
+    field: keyof T
+    type?: 'string' | 'number' | 'boolean' | 'string | null' | 'number | null',
+    default?: string | number | boolean | null
+    children?: _treeItem<T>[]
 }

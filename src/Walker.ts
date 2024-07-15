@@ -1,11 +1,11 @@
 import { FileChangeInfo, watch } from "node:fs/promises"
-import { mkdirSync } from "node:fs"
+import { mkdirSync, existsSync } from "node:fs"
 
 export default class {
 
-    static listeners: Map<string, AsyncIterable<FileChangeInfo<string>>> = new Map()
+    private static listeners: Map<string, AsyncIterable<FileChangeInfo<string>>> = new Map()
 
-    static readonly DB_PATH = process.env.DATA_PREFIX || `${process.cwd()}/db`
+    private static readonly DB_PATH = process.env.DATA_PREFIX || `${process.cwd()}/db`
 
     static search(pattern: string) {
         return Array.from(new Bun.Glob(pattern).scanSync({ cwd: this.DB_PATH }))
@@ -83,7 +83,7 @@ export default class {
 
         if(!this.listeners.has(table)) {
 
-            if(!await Bun.file(`${this.DB_PATH}/${table}`).exists()) mkdirSync(`${this.DB_PATH}/${table}`, { recursive: true })
+            if(!existsSync(`${this.DB_PATH}/${table}`)) mkdirSync(`${this.DB_PATH}/${table}`, { recursive: true })
             
             this.listeners.set(table, watch(`${this.DB_PATH}/${table}`, { recursive: true }))
         }
@@ -98,7 +98,7 @@ export default class {
 
                 const id = path.split('/').pop()!
 
-                yield await Bun.file(`${this.DB_PATH}/${path}`).exists() ? { id, action: "upsert" } :{ id, action: "delete" }
+                yield existsSync(`${this.DB_PATH}/${path}`) ? { id, action: "upsert" } : { id, action: "delete" }
             }
         }
     }

@@ -32,3 +32,20 @@ type _storeInsert<T> = {
 } & {
     $collection?: string
 }
+
+type _rmField<T> = {
+    field: keyof T,
+    force?: boolean
+}
+
+type _modField<T> = {
+    from: string
+    to: keyof T
+}
+
+type _colSchema<T> = {
+    collection?: string
+    add?: Set<keyof T>
+    change?: Array<_modField<T>>
+    drop?: Array<_rmField<T>>
+}

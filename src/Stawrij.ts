@@ -8,26 +8,37 @@ export default class Stawrij {
     private static indexUrl = new URL('./workers/Directory.ts', import.meta.url).href
     private static storeUrl = new URL('./workers/Stawrij.ts', import.meta.url).href
 
-    static async executeSQL<T>(SQL: string, params?: Map<keyof T, any>) {
+    private static SCHEMA: string = process.env.SCHEMA || 'STRICT'
 
-        const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE)/i)
+    static async executeSQL<T>(SQL: string) {
+
+        const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)/i)
 
         if(!op) throw new Error("Missing SQL Operation")
 
         switch(op[0]) {
 
+            case "CREATE":
+                const create = Paser.convertCreate<T>(SQL)
+                return await Stawrij.createSchema<T>(create.collection!, create.schema)
+            case "ALTER":   
+                const alter = Paser.convertAlter<T>(SQL)    
+                return await Stawrij.modifySchema<T>(alter.collection!, alter)
+            case "DROP":
+                const drop = Paser.convertDrop(SQL)
+                return await Stawrij.dropSchema(drop.collection!, drop.force)
             case "SELECT":
                 const query = Paser.convertSelect<T>(SQL)
                 const selCol = query.$collection
                 delete query.$collection
                 return Stawrij.findDocs(selCol!, query) as _storeCursor<T>
             case "INSERT":
-                const insert = Paser.convertInsert<T>(SQL, params)
+                const insert = Paser.convertInsert<T>(SQL)
                 const insCol = insert.$collection
                 delete insert.$collection
                 return await Stawrij.putDoc(insCol!, insert)
             case "UPDATE":
-                const update = Paser.convertUpdate<T>(SQL, params)
+                const update = Paser.convertUpdate<T>(SQL)
                 const updateCol = update.$collection
                 delete update.$collection
                 return await Stawrij.patchDocs(updateCol!, update)
@@ -38,6 +49,30 @@ export default class Stawrij {
                 return await Stawrij.delDocs(delCol!, del)
             default:
                 throw new Error("Invalid Operation")
+        }
+    }
+
+    static async createSchema<T>(collection: string, schema: _treeItem<T>[], overwrite: boolean = false) {
+        try {
+            await Dir.createSchema(collection, schema, overwrite)
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Stawrij.createSchema -> ${e.message}`)
+        }
+    }
+
+    static async modifySchema<T>(collection: string, schema: _colSchema<T>) {
+        try {
+            await Dir.modifySchema(collection, schema)
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Stawrij.modifySchema -> ${e.message}`)
+        }
+    }
+
+    static async dropSchema(collection: string, force: boolean = false) {
+        try {
+            await Dir.dropSchema(collection, force)
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Stawrij.dropSchema -> ${e.message}`)
         }
     }
 
@@ -71,13 +106,15 @@ export default class Stawrij {
         await Promise.all(docs.map(doc => new Promise<void>(resolve => invokeWorker(Stawrij.storeUrl, { action: "PUT", data: { collection, doc }}, resolve))))
     }
 
-    static async putDoc<T extends object>(collection: string, data: Map<_uuid, T> | T) {
+    static async putDoc<T extends object>(collection: string, data: Map<_uuid, T> | T, validate: boolean = false) {
 
         const _id = data instanceof Map ? Array.from((data as Map<_uuid, T>).keys())[0] : crypto.randomUUID() 
         
         try {
 
             console.log(`Writing ${_id}`)
+
+            if(validate && !Dir.validateDoc(collection, data)) throw new Error(`Document does not match table schema`)
 
             await Dir.aquireLock(collection, _id)
             

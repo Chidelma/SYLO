@@ -2,9 +2,9 @@
   "name": "@vyckr/byosits",
   "version": "0.1.0",
   "exports": { 
-    "." :"./src/Stawrij.ts",
-    "./types": "./src/types/general.ts"
+    "." :"./src/Stawrij.ts"
   },
+  "types": "./src/types/index.d.ts",
   "devDependencies": {
     "@types/node": "^16",
     "bun-types": "latest"
