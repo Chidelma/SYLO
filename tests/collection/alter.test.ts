@@ -18,11 +18,11 @@ describe("NO-SQL", async () => {
 
     test("ADD", async () => {
 
-        const ids = await Silo.findDocs<_photo>(PHOTOS, {}, true).next(1) as _uuid[]
+        const ids = await Silo.findDocs<_photo>(PHOTOS, { $limit: 1, $onlyIds: true }).collect() as _uuid[]
 
         await Silo.patchDoc<_photo>(PHOTOS, new Map([[ids[0], { title: "All Mighty" }]]))
 
-        const results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [{ title: { $eq: "All Mighty" } }]}).next() as Map<_uuid, _photo>
+        const results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [{ title: { $eq: "All Mighty" } }]}).collect() as Map<_uuid, _photo>
         
         expect(results.size).toBe(1)
     })
@@ -31,7 +31,7 @@ describe("NO-SQL", async () => {
 
         const count = await Silo.patchDocs<_photo>(PHOTOS, { title: "All Mighti", $where: { $ops: [{ title: { $like: "%est%" } }] } })
 
-        const results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighti" } } ] }).next() as Map<_uuid, _photo>
+        const results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighti" } } ] }).collect() as Map<_uuid, _photo>
         
         expect(results.size).toBe(count)
     })
@@ -40,7 +40,7 @@ describe("NO-SQL", async () => {
 
         const count = await Silo.patchDocs<_photo>(PHOTOS, { title: "All Mighter", $where: {} })
 
-        const results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighter" } } ] }).next() as Map<_uuid, _photo>
+        const results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighter" } } ] }).collect() as Map<_uuid, _photo>
         
         expect(results.size).toBe(count)
         

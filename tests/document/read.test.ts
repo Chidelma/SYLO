@@ -14,14 +14,14 @@ describe("NO-SQL", async () => {
 
     test("SELECT ALL", async () => {
 
-        const results = await Silo.findDocs<_album>(ALBUMS, {}).next() as Map<_uuid, _album>
+        const results = await Silo.findDocs<_album>(ALBUMS, {}).collect() as Map<_uuid, _album>
 
         expect(results.size).toBe(25)
     })
 
     test("SELECT PARTIAL", async () => {
 
-        const results = await Silo.findDocs<_album>(ALBUMS, { $select: ["title"] }).next() as Map<_uuid, _album>
+        const results = await Silo.findDocs<_album>(ALBUMS, { $select: ["title"] }).collect() as Map<_uuid, _album>
 
         const allAlbums = Array.from(results.values())
 
@@ -32,7 +32,7 @@ describe("NO-SQL", async () => {
 
     test("GET ONE", async () => {
 
-        const ids = await Silo.findDocs(ALBUMS, {}, true).next(1) as _uuid[]
+        const ids = await Silo.findDocs(ALBUMS, { $limit: 1, $onlyIds: true }).collect() as _uuid[]
 
         const result = await Silo.getDoc<_album>(ALBUMS, ids[0]).once()
 
@@ -43,7 +43,7 @@ describe("NO-SQL", async () => {
 
     test("SELECT CLAUSE", async () => {
 
-        const results = await Silo.findDocs(ALBUMS, { $ops: [{ userId: { $eq: 2 } }] }).next() as Map<_uuid, _album>
+        const results = await Silo.findDocs(ALBUMS, { $ops: [{ userId: { $eq: 2 } }] }).collect() as Map<_uuid, _album>
         
         const allAlbums = Array.from(results.values())
         
@@ -54,7 +54,7 @@ describe("NO-SQL", async () => {
 
     test("SELECT LIMIT", async () => {
 
-        const results = await Silo.findDocs(ALBUMS, {}).next(5) as Map<_uuid, _album>
+        const results = await Silo.findDocs(ALBUMS, { $limit: 5 }).collect() as Map<_uuid, _album>
 
         expect(results.size).toBe(5)
     })
@@ -66,7 +66,7 @@ describe("SQL", () => {
 
         const cursor = await Silo.executeSQL<_album>(`SELECT title FROM ${ALBUMS}`) as _storeCursor<_album>
 
-        const results = await cursor.next() as Map<_uuid, _album>
+        const results = await cursor.collect() as Map<_uuid, _album>
 
         const allAlbums = Array.from(results.values())
         
@@ -79,7 +79,7 @@ describe("SQL", () => {
 
         const cursor = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} WHERE userId = 2`) as _storeCursor<_album>
 
-        const results = await cursor.next() as Map<_uuid, _album>
+        const results = await cursor.collect() as Map<_uuid, _album>
         
         const allAlbums = Array.from(results.values())
         
@@ -92,7 +92,7 @@ describe("SQL", () => {
 
         const cursor = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as _storeCursor<_album>
 
-        const results = await cursor.next() as Map<_uuid, _album>
+        const results = await cursor.collect() as Map<_uuid, _album>
 
         expect(results.size).toBe(25)
     })

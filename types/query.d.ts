@@ -14,6 +14,8 @@ interface _storeQuery<T> {
     $select?: Array<keyof T>
     $collection?: string
     $ops?: Array<_op<T>>
+    $limit?: number
+    $onlyIds?: boolean
 }
 
 interface _condition { column: string, operator: string, value: string | number| boolean | null }

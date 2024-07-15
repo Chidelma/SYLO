@@ -228,7 +228,7 @@ export default class Stawrij {
         return count
     }
 
-    static findDocs<T>(collection: string, query: _storeQuery<T>, onlyIds: boolean = false) {
+    static findDocs<T>(collection: string, query: _storeQuery<T>) {
 
         return {
 
@@ -236,7 +236,7 @@ export default class Stawrij {
 
                 for await (const id of Dir.onChange(Query.getExprs(query, collection))) {
 
-                    if(onlyIds) yield id
+                    if(query.$onlyIds) yield id
                     else {
                         
                         const doc = await Dir.reconstructDoc<T>(collection, id)
@@ -256,7 +256,7 @@ export default class Stawrij {
                 }
             },
             
-            async next(limit?: number): Promise<Map<_uuid, T> | Map<_uuid, Partial<T>> | _uuid[]> {
+            async collect(): Promise<Map<_uuid, T> | Map<_uuid, Partial<T>> | _uuid[]> {
                 
                 const results: Map<_uuid, T> | Map<_uuid, Partial<T>> = new Map<_uuid, T>()
 
@@ -266,10 +266,10 @@ export default class Stawrij {
 
                 for(let i = 0; i < indexes.length; i++) {
                     ids.add(indexes[i].split('/').pop()! as _uuid)
-                    if(limit && ids.size === limit) break
+                    if(query.$limit && ids.size === query.$limit) break
                 }
 
-                if(onlyIds) return Array.from(ids)
+                if(query.$onlyIds) return Array.from(ids)
 
                 for(const id of ids) {
 

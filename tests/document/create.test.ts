@@ -12,7 +12,7 @@ describe("NO-SQL", () => {
 
         await Silo.bulkPutDocs<_post>('posts', posts.slice(0, 25))
 
-        const results = await Silo.findDocs('posts', {}).next() as Map<_uuid, _post>
+        const results = await Silo.findDocs('posts', {}).collect() as Map<_uuid, _post>
 
         expect(results.size).toEqual(25)
 
@@ -35,7 +35,7 @@ describe("SQL", () => {
 
         const cursor = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as _storeCursor<_album>
 
-        const results = await cursor.next() as Map<_uuid, _album>
+        const results = await cursor.collect() as Map<_uuid, _album>
 
         expect(results.size).toEqual(25)
 
