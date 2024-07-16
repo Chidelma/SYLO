@@ -54,9 +54,32 @@ export default class {
         return alter
     }
 
+    static convertTruncate<T>(SQL: string) {
+
+        const truncate: { collection: string } = {} as { collection: string }
+
+        try {
+
+            SQL = SQL.toLowerCase()
+
+            const truncateMatch = SQL.match(/truncate\s+table\s+(\w+)/i)
+
+            if(!truncateMatch) throw new Error("Invalid SQL TRUNCATE statement")
+
+            const [_, table] = truncateMatch
+
+            truncate.collection = table.trim()
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Paser.convertTruncate -> ${e.message}`)
+        }   
+
+        return truncate
+    }
+
     static convertDrop(SQL: string) {
 
-        const drop: { collection: string, force: boolean } = {} as { collection: string, force: boolean }
+        const drop: { collection: string } = {} as { collection: string }
 
         try {
 
@@ -69,8 +92,6 @@ export default class {
             const [_, table] = dropMatch
 
             drop.collection = table.trim()
-
-            drop.force = true
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Paser.convertDrop -> ${e.message}`)
@@ -87,17 +108,21 @@ export default class {
 
             SQL = SQL.toLowerCase()
 
-            const selectMatch = SQL.match(/select\s+(.*?)\s+from\s+(\w+)\s*(?:where\s+(.+?))?$/i)
+            const selectMatch = SQL.match(/select\s+(.*?)\s+from\s+(\w+)\s*(?:where\s+(.+?))?(?:\s+limit\s+(\d+))?$/i)
 
             if(!selectMatch) throw new Error("Invalid SQL SELECT statement")
 
-            const [_, columns, collection, whereClause] = selectMatch
+            const [_, columns, collection, whereClause, limit] = selectMatch
 
             if(whereClause) query = this.parseWhereClause(whereClause)
+
+            if(limit) query.$limit = Number(limit)
 
             query.$collection = collection
 
             if(columns !== '*') query.$select = columns.split(',').map(col => col.trim()) as Array<keyof T>
+
+            if(query.$select && query.$select.length === 1 && query.$select[0] === '_id') query.$onlyIds = true
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Paser.convertSelect -> ${e.message}`)

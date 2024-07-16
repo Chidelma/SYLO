@@ -56,17 +56,24 @@ export default class {
         }
     }
 
-    static async createSchema<T>(collection: string, fields: _treeItem<T>[], overwrite: boolean = false) {
+    static async createSchema<T>(collection: string, fields: _treeItem<T>[]) {
 
         try {
 
-            if(existsSync(`${this.DB_PATH}/${collection}`) && !overwrite) throw new Error(`Cannot create schema for ${collection} without overwrite flag`)
+            const columns = this.decontructTree(collection, fields)
 
-            if(existsSync(`${this.DB_PATH}/${collection}`) && overwrite) await this.dropSchema(collection)
+            for(const col of columns) {
+                if(existsSync(`${this.DB_PATH}/${col.dir}`) && !col.overwrite) throw new Error(`Cannot create schema for ${col.dir} without overwrite flag`)
+            }
 
-            const dirs = new Set(this.decontructTree(collection, fields))
+            for(const col of columns) {
 
-            for(const dir of dirs) mkdirSync(`${this.DB_PATH}/${dir}`, { recursive: true })
+                if(existsSync(`${this.DB_PATH}/${col.dir}`) && col.overwrite) rmdirSync(`${this.DB_PATH}/${col.dir}`, { recursive: true })
+                
+                mkdirSync(`${this.DB_PATH}/${col.dir}`, { recursive: true })
+            }
+
+            await Bun.write(Bun.file(`${this.DB_PATH}/${collection}/.schema.json`), JSON.stringify(fields))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.createSchema -> ${e.message}`)
@@ -75,17 +82,17 @@ export default class {
 
     private static decontructTree<T>(collection: string, tree: _treeItem<T>[], parentKey?: string) {
 
-        const dir: string[] = []
+        const fields: { dir: string, overwrite?: boolean }[] = []
 
         for(const item of tree) {
 
             const newKey = parentKey ? `${parentKey}/${String(item.field)}` : String(item.field)
 
-            if(item.children) dir.push(...this.decontructTree(collection, item.children, newKey))
-            else dir.push(`${collection}/${newKey}/${String(item.field)}`)
+            if(item.children) fields.push(...this.decontructTree(collection, item.children, newKey))
+            else fields.push({ dir: `${collection}/${newKey}/${String(item.field)}`, overwrite: item.overwrite })
         }
 
-        return dir
+        return fields
     }
 
     static async modifySchema<T>(collection: string, schema: _colSchema<T>) {
@@ -95,7 +102,6 @@ export default class {
             await this.validateModifications(collection, schema)
 
             if(schema.drop) {
-
                 for(const rm of schema.drop) rmdirSync(`${this.DB_PATH}/${collection}/${String(rm.field)}`, { recursive: true })
             } 
 
@@ -128,15 +134,26 @@ export default class {
         }
     }
 
-    static async dropSchema(collection: string, force: boolean = false) {
+    static async truncateSchema(collection: string) { 
 
         try {
 
             const indexes = await this.searchIndexes(`${collection}/**`)
 
-            if(indexes.length > 0 && !force) throw new Error(`Cannot drop schema for ${collection} without force flag`)
+            for(const idx of indexes) rmSync(`${this.DB_PATH}/${idx}`)
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Dir.truncateSchema -> ${e.message}`)
+        }
+    }
+
+    static dropSchema(collection: string) {
+
+        try {
 
             rmdirSync(`${this.DB_PATH}/${collection}`, { recursive: true })
+
+            rmSync(`${this.DB_PATH}/${collection}/.schema.json`)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.dropSchema -> ${e.message}`)
@@ -144,12 +161,10 @@ export default class {
     }
 
     static validateDoc<T extends object>(collection: string, doc: T) {
-        
-        const docKeys = Object.keys(doc)
 
         const tableKeys = readdirSync(`${this.DB_PATH}/${collection}`)
 
-        return docKeys.every(key => tableKeys.includes(key))
+        return Object.keys(doc).every(key => tableKeys.includes(key))
     }
 
     static async aquireLock(collection: string, id: _uuid) {

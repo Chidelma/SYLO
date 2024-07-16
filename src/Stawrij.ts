@@ -12,7 +12,7 @@ export default class Stawrij {
 
     static async executeSQL<T>(SQL: string) {
 
-        const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)/i)
+        const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|TRUNCATE|DROP)/i)
 
         if(!op) throw new Error("Missing SQL Operation")
 
@@ -24,9 +24,12 @@ export default class Stawrij {
             case "ALTER":   
                 const alter = Paser.convertAlter<T>(SQL)    
                 return await Stawrij.modifySchema<T>(alter.collection!, alter)
+            case "TRUNCATE":
+                const truncate = Paser.convertTruncate<T>(SQL)
+                return await Stawrij.truncateSchema(truncate.collection!)
             case "DROP":
                 const drop = Paser.convertDrop(SQL)
-                return await Stawrij.dropSchema(drop.collection!, drop.force)
+                return await Stawrij.dropSchema(drop.collection!)
             case "SELECT":
                 const query = Paser.convertSelect<T>(SQL)
                 const selCol = query.$collection
@@ -52,9 +55,9 @@ export default class Stawrij {
         }
     }
 
-    static async createSchema<T>(collection: string, schema: _treeItem<T>[], overwrite: boolean = false) {
+    static async createSchema<T>(collection: string, schema: _treeItem<T>[]) {
         try {
-            await Dir.createSchema(collection, schema, overwrite)
+            await Dir.createSchema(collection, schema)
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.createSchema -> ${e.message}`)
         }
@@ -68,9 +71,17 @@ export default class Stawrij {
         }
     }
 
-    static async dropSchema(collection: string, force: boolean = false) {
+    static async truncateSchema(collection: string) {
         try {
-            await Dir.dropSchema(collection, force)
+            await Dir.truncateSchema(collection)
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Stawrij.truncateSchema -> ${e.message}`)
+        }
+    }
+
+    static dropSchema(collection: string) {
+        try {
+            Dir.dropSchema(collection)
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.dropSchema -> ${e.message}`)
         }

@@ -8,7 +8,6 @@ interface _storeCursor<T> {
 
 interface _treeItem<T> {
     field: keyof T
-    type?: 'string' | 'number' | 'boolean' | 'string | null' | 'number | null',
-    default?: string | number | boolean | null
+    overwrite?: boolean
     children?: _treeItem<T>[]
 }
