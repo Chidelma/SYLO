@@ -7,6 +7,9 @@
       "types": "./types/index.d.ts"
     }
   },
+  "bin": {
+    "byos": "./src/CLI.ts"
+  },
   "devDependencies": {
     "@types/node": "^16",
     "bun-types": "latest"
