@@ -1,6 +1,6 @@
 import { test, expect, describe } from 'bun:test'
 import Silo from '../../src/Stawrij'
-import { _photo, photos, _todo, todos } from './data'
+import { photos, todos } from '../data'
 import { mkdirSync, rmSync } from 'node:fs' 
 
 rmSync(process.env.DATA_PREFIX!, {recursive:true})
@@ -10,7 +10,9 @@ describe("NO-SQL", async () => {
 
     const PHOTOS = 'photos'
 
-    await Silo.bulkPutDocs<_photo>(PHOTOS, photos.slice(0, 25))
+    await Silo.createSchema(PHOTOS)
+
+    await Silo.bulkDataPut<_photo>(PHOTOS, photos.slice(0, 25))
 
     test("UPDATE ONE", async () => {
 
@@ -39,12 +41,14 @@ describe("NO-SQL", async () => {
         const results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighter" } } ] }).collect() as Map<_uuid, _photo>
         
         expect(results.size).toBe(count)
-    }, 60 * 60 * 1000)
+    })
 })
 
 describe("SQL", async () => {
 
     const TODOS = 'todos'
+
+    await Silo.executeSQL<_todo>(`CREATE TABLE ${TODOS}`)
 
     for(const todo of todos.slice(0, 25)) {
 
@@ -74,5 +78,5 @@ describe("SQL", async () => {
         const results = await cursor.collect() as Map<_uuid, _todo>
         
         expect(results.size).toBe(count)
-    }, 60 * 60 * 1000)
+    })
 })

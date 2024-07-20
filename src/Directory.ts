@@ -1,4 +1,4 @@
-import { rmSync, existsSync, readdirSync, mkdirSync, rmdirSync, renameSync } from "node:fs"
+import { rmSync, existsSync, mkdirSync, rmdirSync } from "node:fs"
 import Walker from "./Walker"
 import { invokeWorker } from "./utils/general"
 
@@ -11,123 +11,77 @@ export default class {
     private static readonly SLASH_ASCII = "%2F"
 
     private static walkerUrl = new URL('./workers/Walker.ts', import.meta.url).href
+    private static indexUrl = new URL('./workers/Directory.ts', import.meta.url).href
 
-    static isUUID(id: string) {
+    private static SCHEMA_PATH = process.env.SCHEMA_PATH || `${process.cwd()}/schemas`
+
+    private static ALL_SCHEMAS = new Map<string, Map<string, string[]>>()
+ 
+    private static isUUID(id: string) {
         return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)
     }
 
-    private static async validateModifications<T>(collection: string, schema: _colSchema<T>) {
+    static async createSchema(collection: string) {
 
         try {
 
-            if(!existsSync(`${this.DB_PATH}/${collection}`)) throw new Error(`Cannot modify schema for ${collection} as it does not exist`)
+            const savedSchema = Bun.file(`${this.DB_PATH}/${collection}/.schema.json`)
 
-            if(schema.drop) {
+            if(await savedSchema.exists()) throw new Error(`Cannot create schema for '${collection}' as it already exists`)
 
-                for(const rm of schema.drop) {
-                    
-                    const indexes = await this.searchIndexes(`${collection}/${String(rm.field)}/**`)
+            const schemaFile = Bun.file(`${this.SCHEMA_PATH}/${collection}.d.ts`)
 
-                    if(indexes.length > 0 && !rm.force) throw new Error(`Cannot remove field ${String(rm.field)} from ${collection} without force flag`)
-                }
-            } 
+            if(!await schemaFile.exists()) throw new Error(`Cannot finddeclaration file for '${collection}'`)
 
-            if(schema.change) {
+            const newSchema = this.getSchema(collection, await schemaFile.text())
+            
+            await Bun.write(savedSchema, JSON.stringify(Object.fromEntries(newSchema)))
 
-                const nonExistent = schema.change.filter(change => !existsSync(`${this.DB_PATH}/${collection}/${String(change.from)}`))
+            this.ALL_SCHEMAS.set(collection, newSchema)
 
-                const existing = schema.change.filter(change => existsSync(`${this.DB_PATH}/${collection}/${String(change.to)}`))
-
-                if(nonExistent.length > 0) throw new Error(`field(s) ${nonExistent.map(change => change.from).join(', ')} from ${collection} do(es) not exist`)
-
-                if(existing.length > 0) throw new Error(`field(s) ${existing.map(change => change.to).join(', ')} from ${collection} already exist`)
-            }
-
-            if(schema.add) {
-
-                for(const add of schema.add) {
-
-                    if(existsSync(`${this.DB_PATH}/${collection}/${String(add)}`)) throw new Error(`field ${String(add)} from ${collection} already exist`)
-                }
-            }
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Dir.validateModifications -> ${e.message}`)
-        }
-    }
-
-    static async createSchema<T>(collection: string, fields: _treeItem<T>[]) {
-
-        try {
-
-            const columns = this.decontructTree(collection, fields)
-
-            for(const col of columns) {
-                if(existsSync(`${this.DB_PATH}/${col.dir}`) && !col.overwrite) throw new Error(`Cannot create schema for ${col.dir} without overwrite flag`)
-            }
-
-            for(const col of columns) {
-
-                if(existsSync(`${this.DB_PATH}/${col.dir}`) && col.overwrite) rmdirSync(`${this.DB_PATH}/${col.dir}`, { recursive: true })
-                
-                mkdirSync(`${this.DB_PATH}/${col.dir}`, { recursive: true })
-            }
-
-            await Bun.write(Bun.file(`${this.DB_PATH}/${collection}/.schema.json`), JSON.stringify(fields))
+            for(const field of newSchema.keys()) mkdirSync(`${this.DB_PATH}/${collection}/${field}`, { recursive: true })
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.createSchema -> ${e.message}`)
         }
     }
 
-    private static decontructTree<T>(collection: string, tree: _treeItem<T>[], parentKey?: string) {
-
-        const fields: { dir: string, overwrite?: boolean }[] = []
-
-        for(const item of tree) {
-
-            const newKey = parentKey ? `${parentKey}/${String(item.field)}` : String(item.field)
-
-            if(item.children) fields.push(...this.decontructTree(collection, item.children, newKey))
-            else fields.push({ dir: `${collection}/${newKey}/${String(item.field)}`, overwrite: item.overwrite })
-        }
-
-        return fields
-    }
-
-    static async modifySchema<T>(collection: string, schema: _colSchema<T>) {
+    static async modifySchema(collection: string) {
 
         try {
 
-            await this.validateModifications(collection, schema)
+            const schemaFile = Bun.file(`${this.SCHEMA_PATH}/${collection}.d.ts`)
 
-            if(schema.drop) {
-                for(const rm of schema.drop) rmdirSync(`${this.DB_PATH}/${collection}/${String(rm.field)}`, { recursive: true })
-            } 
+            if(!await schemaFile.exists()) throw new Error(`Cannot find declaration file for '${collection}'`)
 
-            if(schema.change) {
+            const savedSchemaFile = Bun.file(`${this.DB_PATH}/${collection}/.schema.json`)
 
-                for(const change of schema.change) {
+            if(!await savedSchemaFile.exists()) throw new Error(`Cannot find saved schema for '${collection}'`)
 
-                    mkdirSync(`${this.DB_PATH}/${collection}/${String(change.to)}`, { recursive: true })
+            const savedSchemaData: Record<string, string[]> = await savedSchemaFile.json()
 
-                    const indexes = await this.searchIndexes(`${collection}/${String(change.from)}/**`)
+            if(schemaFile.lastModified > savedSchemaFile.lastModified) {
 
-                    for(const idx of indexes) {
-                        const segments = idx.split('/')
-                        segments.shift()
-                        segments.shift()
-                        renameSync(`${this.DB_PATH}/${idx}`, `${this.DB_PATH}/${collection}/${String(change.to)}/${segments.join('/')}`)
-                    }
+                const newSchemaData = this.getSchema(collection, await savedSchemaFile.text())
 
-                    rmdirSync(`${this.DB_PATH}/${collection}/${String(change.from)}`, { recursive: true })
-                }
+                const newSchemaFields = new Set(Object.keys(newSchemaData))
+
+                const savedSchemaFields = new Set(Object.keys(savedSchemaData))
+
+                const removedFields = savedSchemaFields.difference(newSchemaFields)
+
+                const addedFields = newSchemaFields.difference(savedSchemaFields)
+
+                for(const field of removedFields) rmSync(`${this.DB_PATH}/${collection}/${field}`, { recursive: true })
+
+                for(const field of addedFields) mkdirSync(`${this.DB_PATH}/${collection}/${field}`, { recursive: true })
+
+                await Bun.write(savedSchemaFile, JSON.stringify(Object.fromEntries(newSchemaData)))
+                
+                this.ALL_SCHEMAS.set(collection, newSchemaData)
             }
 
-            if(schema.add) {
-
-                for(const add of schema.add) mkdirSync(`${this.DB_PATH}/${collection}/${String(add)}`, { recursive: true })
-            }
+            if(!this.ALL_SCHEMAS.has(collection)) this.ALL_SCHEMAS.set(collection, new Map(Object.entries(savedSchemaData)))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.modifySchema -> ${e.message}`)
@@ -140,7 +94,7 @@ export default class {
 
             const indexes = await this.searchIndexes(`${collection}/**`)
 
-            for(const idx of indexes) rmSync(`${this.DB_PATH}/${idx}`)
+            await Promise.all(indexes.map(idx => new Promise<void>(resolve => invokeWorker(this.indexUrl, { action: 'DEL', data: { idx } }, resolve))))
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.truncateSchema -> ${e.message}`)
@@ -153,18 +107,122 @@ export default class {
 
             rmdirSync(`${this.DB_PATH}/${collection}`, { recursive: true })
 
-            rmSync(`${this.DB_PATH}/${collection}/.schema.json`)
-
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.dropSchema -> ${e.message}`)
         }
     }
 
-    static validateDoc<T extends object>(collection: string, doc: T) {
+    private static parseLines(lines: string[], startIndex: number = 0): [Record<string, any>, number] {
+    
+        const obj: Record<string, any> = {}
+        let i = startIndex
+    
+        while (i < lines.length) {
+            const current = lines[i].trim()
+            
+            if (current === '}') return [obj, i]
+            
+            const colonIndex = current.indexOf(':')
+            if (colonIndex === -1) {
+                i++
+                continue
+            }
+            
+            const field = current.slice(0, colonIndex).trim();
+            const type = current.slice(colonIndex + 1).trim();
+            
+            if (type === '{') {
+                const [children, newIndex] = this.parseLines(lines, i + 1)
+                obj[field] = children
+                i = newIndex
+            } else obj[field] = type
+            
+            i++
+        }
+        
+        return [obj, i]
+    }
+    
+    private static constructSchema(tree: Record<string, any>, parentBranch?: string) {
+    
+        const schema = new Map<string, string[]>()
+    
+        function recursiveHelper(tree: Record<string, any>, parentBranch?: string) {
 
-        const tableKeys = readdirSync(`${this.DB_PATH}/${collection}`)
+            for (const branch in tree) {
 
-        return Object.keys(doc).every(key => tableKeys.includes(key))
+                const newKey = parentBranch ? `${parentBranch}/${branch}` : branch
+                
+                if (typeof tree[branch] === 'string') {
+                    const types = (tree[branch] as string).split('|').map(type => type.trim() === 'null' ? 'object' : type.trim())
+                    schema.set(newKey, types)
+                } else if (typeof tree[branch] === 'object') {
+                    recursiveHelper(tree[branch], newKey)
+                }
+            }
+        }
+    
+        recursiveHelper(tree, parentBranch)
+        
+        return schema
+    }
+
+    private static retrieveSchema<T extends Record<string, any>>(doc: T, parentBranch?: string) {
+
+        const schema = new Map<string, string>()
+    
+        function recursiveHelper(tree: Record<string, any>, parentBranch?: string) {
+
+            for (const branch in tree) {
+
+                const newKey = parentBranch ? `${parentBranch}/${branch}` : branch
+
+                if(typeof tree[branch] === "object" && !Array.isArray(tree[branch])) {
+                    recursiveHelper(tree[branch], newKey)
+                } else schema.set(newKey, typeof tree[branch])
+            }
+        }
+    
+        recursiveHelper(doc, parentBranch)
+        
+        return schema
+    }
+    
+    private static getSchema(collection: string, schemaData: string) {
+
+        const match = schemaData.match(/{([\s\S]*)}/)
+
+        if(!match) throw new Error(`declaration file for '${collection}' not formatted correctly`)
+
+        const [__, yaml] = match
+
+        const lines = yaml.replaceAll(',', '').split('\n').map(line => line.trim()).filter(line => line.length > 0)
+
+        const [tree, _] = this.parseLines(lines)
+
+        return this.constructSchema(tree)
+    }
+
+    static async validateData<T extends Record<string, any>>(collection: string, data: T) {
+
+        try {
+
+            await this.modifySchema(collection)
+
+            const savedSchema = this.ALL_SCHEMAS.get(collection)!
+
+            const dataSchema = this.retrieveSchema(data)
+
+            for(const [field, type] of dataSchema) {
+
+                if(!savedSchema.has(field)) throw new Error(`Field '${field.split('/').pop()}' does not exist in '${collection}'`)
+
+                if(!savedSchema.get(field)!.includes(type)) throw new Error(`Field '${field.split('/').pop()}' is not of type '${type}' in '${collection}'`)
+            }
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Dir.validateDoc -> ${e.message}`)
+        }
     }
 
     static async aquireLock(collection: string, id: _uuid) {
@@ -175,7 +233,7 @@ export default class {
 
                 await this.queueProcess(collection, id)
     
-                for await (const event of Walker.listen(`${collection}/${id}/${process.pid}`)) {
+                for await (const event of Walker.listen(`${collection}/.${id}/${process.pid}`)) {
                     if(event.action === "delete") break
                 }
             }
@@ -191,9 +249,9 @@ export default class {
 
         try {
 
-            rmSync(`${this.DB_PATH}/${collection}/${id}/${process.pid}`, { recursive: true })
+            rmSync(`${this.DB_PATH}/${collection}/.${id}/${process.pid}`, { recursive: true })
 
-            const results = await this.searchIndexes(`${collection}/${id}/**`)
+            const results = await this.searchIndexes(`${collection}/.${id}/**`)
 
             const timeSortedDir = results.sort((a, b) => {
                 const aTime = Bun.file(`${this.DB_PATH}/${a}`).lastModified
@@ -210,32 +268,32 @@ export default class {
 
     private static async isLocked(collection: string, id: _uuid) {
 
-        const results = await this.searchIndexes(`${collection}/${id}/**`)
+        const results = await this.searchIndexes(`${collection}/.${id}/**`)
 
         return results.filter(p => p.split('/').length === 3).length > 0
     }
 
     private static async queueProcess(collection: string, id: _uuid) {
 
-        await Bun.write(Bun.file(`${this.DB_PATH}/${collection}/${id}/${process.pid}`), '.')
+        await Bun.write(Bun.file(`${this.DB_PATH}/${collection}/.${id}/${process.pid}`), '.')
     }
 
-    static async reconstructDoc<T>(collection: string, id: _uuid) {
+    static async reconstructData<T>(collection: string, id: _uuid) {
 
         const indexes = await this.searchIndexes(`${collection}/**/${id}`)
         
-        const keyVals = await this.reArrangeIndexes(indexes)
+        const fieldVals = await this.reArrangeIndexes(indexes)
 
-        let keyVal: Record<string, string> = {}
+        let fieldVal: Record<string, string> = {}
 
-        keyVals.forEach(data => {
+        fieldVals.forEach(data => {
             const segs = data.split('/')
             const val = segs.pop()!
-            const key = segs.join('/')
-            keyVal = { ...keyVal, [key]: val }
+            const field = segs.join('/')
+            fieldVal = { ...fieldVal, [field]: val }
         })
         
-        return this.constructDoc<T>(keyVal)
+        return this.constructData<T>(fieldVal)
     }
 
     static async reArrangeIndexes(indexes: string[]) {
@@ -306,17 +364,17 @@ export default class {
         const segements = index.split('/')
 
         const collection = segements.shift()!
-        const key = segements.shift()!
+        const field = segements.shift()!
 
         const id = segements.pop()!
         const val = segements.pop()!
 
-        const currIndexes = await this.searchIndexes(`${collection}/${key}/**/${id}`)
+        const currIndexes = await this.searchIndexes(`${collection}/${field}/**/${id}`)
 
         currIndexes.forEach(idx => rmSync(`${this.DB_PATH}/${idx}`, { recursive: true }))
 
         if(val.length > this.CHAR_LIMIT) {
-            await Bun.write(Bun.file(`${this.DB_PATH}/${collection}/${key}/${segements.join('/')}/${id}`), val)
+            await Bun.write(Bun.file(`${this.DB_PATH}/${collection}/${field}/${segements.join('/')}/${id}`), val)
         } else {
             await Bun.write(Bun.file(`${this.DB_PATH}/${index}`), '.')
         }
@@ -326,58 +384,58 @@ export default class {
         if(existsSync(`${this.DB_PATH}/${index}`)) rmSync(`${this.DB_PATH}/${index}`, { recursive: true })
     }
 
-    static deconstructDoc<T>(collection: string, id: _uuid, doc: T, parentKey?: string) {
+    static deconstructData<T>(collection: string, id: _uuid, data: T, parentField?: string) {
 
         const indexes: string[] = []
 
-        const obj = {...doc}
+        const obj = {...data}
 
-        for(const key in obj) {
+        for(const field in obj) {
 
-            const newKey = parentKey ? `${parentKey}/${key}` : key
+            const newField = parentField ? `${parentField}/${field}` : field
 
-            if(typeof obj[key] === 'object' && !Array.isArray(obj[key])) {
-                indexes.push(...this.deconstructDoc(collection, id, obj[key], newKey))
-            } else if(typeof obj[key] === 'object' && Array.isArray(obj[key])) {
-                const items: (string | number | boolean)[] = obj[key]
+            if(typeof obj[field] === 'object' && !Array.isArray(obj[field])) {
+                indexes.push(...this.deconstructData(collection, id, obj[field], newField))
+            } else if(typeof obj[field] === 'object' && Array.isArray(obj[field])) {
+                const items: (string | number | boolean)[] = obj[field]
                 if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
-                items.forEach((item, idx) => indexes.push(`${collection}/${newKey}/${idx}/${String(item).replaceAll('/', this.SLASH_ASCII)}/${id}`))
-            } else indexes.push(`${collection}/${newKey}/${String(obj[key]).replaceAll('/', this.SLASH_ASCII)}/${id}`)
+                items.forEach((item, idx) => indexes.push(`${collection}/${newField}/${idx}/${String(item).replaceAll('/', this.SLASH_ASCII)}/${id}`))
+            } else indexes.push(`${collection}/${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}/${id}`)
         }
 
         return indexes
     }
 
-    static constructDoc<T>(keyVal: Record<string, string>) {
+    static constructData<T>(keyVal: Record<string, string>) {
 
-        const doc: Record<string, any> = {}
+        const data: Record<string, any> = {}
 
-        for(let fullKey in keyVal) {
+        for(let fullField in keyVal) {
 
-            const keys = fullKey.split('/').slice(2)
+            const fields = fullField.split('/').slice(2)
 
-            let curr = doc
+            let curr = data
 
-            while(keys.length > 1) {
+            while(fields.length > 1) {
 
-                const key = keys.shift()!
+                const field = fields.shift()!
 
-                if(keys[0].match(/^\d+$/)) {
-                    if(!Array.isArray(curr[key])) curr[key] = []
+                if(fields[0].match(/^\d+$/)) {
+                    if(!Array.isArray(curr[field])) curr[field] = []
                 } else {
-                    if(typeof curr[key] !== 'object' || curr[key] === null) curr[key] = {}
+                    if(typeof curr[field] !== 'object' || curr[field] === null) curr[field] = {}
                 }
 
-                curr = curr[key]
+                curr = curr[field]
             }
 
-            const lastKey = keys.shift()!
+            const lastKey = fields.shift()!
 
-            if(lastKey.match(/^\d+$/)) curr[parseInt(lastKey, 10)] = this.parseValue(keyVal[fullKey].replaceAll(this.SLASH_ASCII, '/'))
-            else curr[lastKey] = this.parseValue(keyVal[fullKey].replaceAll(this.SLASH_ASCII, '/'))
+            if(lastKey.match(/^\d+$/)) curr[parseInt(lastKey, 10)] = this.parseValue(keyVal[fullField].replaceAll(this.SLASH_ASCII, '/'))
+            else curr[lastKey] = this.parseValue(keyVal[fullField].replaceAll(this.SLASH_ASCII, '/'))
         }
 
-        return doc as T
+        return data as T
     }
 
     private static parseValue(value: string) {

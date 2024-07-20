@@ -1,6 +1,6 @@
 import { test, expect, describe } from 'bun:test'
 import Silo from '../../src/Stawrij'
-import { _album, _user, albums } from './data'
+import { albums } from '../data'
 import { mkdirSync, rmSync } from 'node:fs'
 
 rmSync(process.env.DATA_PREFIX!, {recursive:true})
@@ -8,13 +8,15 @@ mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
 
 const ALBUMS = 'albums'
 
-await Silo.bulkPutDocs<_album>(ALBUMS, albums.slice(0, 25))
+await Silo.createSchema(ALBUMS)
+
+await Silo.bulkDataPut<_album>(ALBUMS, albums.slice(0, 25))
 
 describe("NO-SQL", async () => {
 
     test("SELECT ALL", async () => {
 
-        const results = await Silo.findDocs<_album>(ALBUMS, {}).collect() as Map<_uuid, _album>
+        const results = await Silo.findDocs<_album>(ALBUMS).collect() as Map<_uuid, _album>
 
         expect(results.size).toBe(25)
     })

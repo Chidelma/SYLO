@@ -1,7 +1,7 @@
 import { test, expect, describe } from 'bun:test'
 import Silo from '../../src/Stawrij'
 import { posts, albums } from '../data'
-import { mkdirSync, rmdirSync, existsSync } from 'node:fs'
+import { mkdirSync, rmdirSync } from 'node:fs'
 
 rmdirSync(process.env.DATA_PREFIX!, {recursive:true})
 mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
@@ -16,9 +16,11 @@ describe("NO-SQL", () => {
 
         await Silo.bulkDataPut<_post>('posts', posts.slice(0, 25))
 
-        Silo.dropSchema(POSTS)
+        await Silo.truncateSchema(POSTS)
 
-        expect(existsSync(`${process.env.DATA_PREFIX}/${POSTS}`)).toBe(false)
+        const ids = await Silo.findDocs(POSTS, { $limit: 1, $onlyIds: true }).collect() as _uuid[]
+
+        expect(ids.length).toBe(0)
 
     })
 })
@@ -39,9 +41,13 @@ describe("SQL", () => {
             await Silo.executeSQL<_album>(`INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join('\\')})`)
         }
 
-        await Silo.executeSQL<_album>(`DROP TABLE ${ALBUMS}`)
+        await Silo.executeSQL<_album>(`TRUNCATE TABLE ${ALBUMS}`)
 
-        expect(existsSync(`${process.env.DATA_PREFIX}/${ALBUMS}`)).toBe(false)
+        const cursor = await Silo.executeSQL<_album>(`SELECT _id FROM ${ALBUMS} LIMIT 1`) as _storeCursor<_album>
+
+        const ids = await cursor.collect() as _uuid[]
+
+        expect(ids.length).toBe(0)
 
     })
 })

@@ -1,103 +1,41 @@
 export default class {
 
-    static convertCreate<T>(SQL: string) {        
+    static convertUse(SQL: string) {
+
+        try {
+
+            const useMatch = SQL.match(/(?:use|USE)\s+(\w+)/i)
+
+            if(!useMatch) throw new Error("Invalid SQL USE statement")
+
+            const [_, database] = useMatch
+
+            process.env.DATA_PREFIX = database
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Parser.convertUse -> ${e.message}`)
+        }
+    }
+
+    static convertTableCRUD(SQL: string) {
         
-        const create: { collection: string, schema: _treeItem<T>[] } = {} as { collection: string, schema: _treeItem<T>[] }
+        const crud: { collection: string } = {} as { collection: string }
         
         try {
             
-            SQL = SQL.toLowerCase()
-            
-            const createMatch = SQL.match(/create\s+table\s+(\w+)\s*\(([^)]+)\)/i)
+            const createMatch = SQL.match(/(?:(?:create|CREATE)|(?:alter|ALTER)|(?:truncate|TRUNCATE)|(?:drop|DROP))\s+(?:table|TABLE)\s+(\w+)/i)
             
             if(!createMatch) throw new Error("Invalid SQL CREATE statement")
             
-            const [_, table, cols] = createMatch
-            
-            create.collection = table.trim()
-            
-            create.schema = JSON.parse(cols.trim()) as _treeItem<T>[]
-            
+            const [_, table] = createMatch
+
+            crud.collection = table.trim()
+
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Paser.convertCreate -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Parser.convertCreate -> ${e.message}`)
         }
         
-        return create
-    }
-
-    static convertAlter<T>(SQL: string) {
-
-        const alter: _colSchema<T> = {} as _colSchema<T>
-
-        try {
-
-            SQL = SQL.toLowerCase()
-
-            const alterMatch = SQL.match(/^alter\s+table\s+(\w+)\s+(add\s+column\s+(\w+)|drop\s+column\s+(\w+)|rename\s+column\s+(\w+)\s+to\s+(\w+))$/i)
-
-            if(!alterMatch) throw new Error("Invalid SQL ALTER statement")
-
-            const [_, table, add, drop, from, to] = alterMatch
-
-            alter.collection = table.trim()
-
-            if(add) alter.add = new Set([add.trim() as keyof T])
-
-            if(drop) alter.drop= [{ field: drop.trim() as keyof T }]
-
-            if(from && to) alter.change = [{ from: from.trim(), to: to.trim() as keyof T }]
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Paser.convertAlter -> ${e.message}`)
-        }   
-
-        return alter
-    }
-
-    static convertTruncate<T>(SQL: string) {
-
-        const truncate: { collection: string } = {} as { collection: string }
-
-        try {
-
-            SQL = SQL.toLowerCase()
-
-            const truncateMatch = SQL.match(/truncate\s+table\s+(\w+)/i)
-
-            if(!truncateMatch) throw new Error("Invalid SQL TRUNCATE statement")
-
-            const [_, table] = truncateMatch
-
-            truncate.collection = table.trim()
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Paser.convertTruncate -> ${e.message}`)
-        }   
-
-        return truncate
-    }
-
-    static convertDrop(SQL: string) {
-
-        const drop: { collection: string } = {} as { collection: string }
-
-        try {
-
-            SQL = SQL.toLowerCase()
-
-            const dropMatch = SQL.match(/drop\s+table\s+(\w+)/i)
-
-            if(!dropMatch) throw new Error("Invalid SQL DROP statement")
-
-            const [_, table] = dropMatch
-
-            drop.collection = table.trim()
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Paser.convertDrop -> ${e.message}`)
-        }   
-
-        return drop 
+        return crud
     }
 
     static convertSelect<T>(SQL: string) {
@@ -106,9 +44,7 @@ export default class {
 
         try {
 
-            SQL = SQL.toLowerCase()
-
-            const selectMatch = SQL.match(/select\s+(.*?)\s+from\s+(\w+)\s*(?:where\s+(.+?))?(?:\s+limit\s+(\d+))?$/i)
+            const selectMatch = SQL.match(/(?:select|SELECT)\s+(.*?)\s+(?:from|FROM)\s+(\w+)\s*(?:(?:where|WHERE)\s+(.+?))?(?:\s+(?:limit|LIMIT)\s+(\d+))?$/i)
 
             if(!selectMatch) throw new Error("Invalid SQL SELECT statement")
 
@@ -125,7 +61,7 @@ export default class {
             if(query.$select && query.$select.length === 1 && query.$select[0] === '_id') query.$onlyIds = true
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Paser.convertSelect -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Parser.convertSelect -> ${e.message}`)
         }
 
         return query
@@ -137,9 +73,7 @@ export default class {
 
         try {
 
-            SQL = SQL.toLowerCase()
-
-            const insertMatch = SQL.match(/insert\s+into\s+(\w+)\s*\(([^)]+)\)\s+values\s*\(([^)]+)\)/i)
+            const insertMatch = SQL.match(/(?:insert|INSERT)\s+(?:into|INTO)\s+(\w+)\s*\(([^)]+)\)\s+(?:values|VALUES)\s*\(([\s\S]*)\)/i)
 
             if(!insertMatch) throw new Error("Invalid SQL INSERT statement")
 
@@ -152,8 +86,8 @@ export default class {
             const values = vals.trim().split('\\')
 
             if(columns.length !== values.length) throw new Error("Length of Columns and Values don't match")
-
-            for(let i = 0; i < columns.length; i++) {
+            
+                for(let i = 0; i < columns.length; i++) {
 
                 try {
                     insert[columns[i] as keyof T] = JSON.parse(values[i])
@@ -163,7 +97,7 @@ export default class {
             }
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Paser.convertInsert -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Parser.convertInsert -> ${e.message}`)
         }
 
         return insert
@@ -175,9 +109,7 @@ export default class {
 
         try {
 
-            SQL = SQL.toLowerCase()
-
-            const updateMatch = SQL.match(/update\s+(\w+)\s+set\s+(.+?)(?:\s+where\s+(.+))?$/)
+            const updateMatch = SQL.match(/(?:update|UPDATE)\s+(\w+)\s+(?:set|SET)\s+(.+?)(?:\s+(?:where|WHERE)\s+(.+))?$/)
 
             if(!updateMatch) throw new Error("Invalid SQL UPDATE statement")
 
@@ -201,7 +133,7 @@ export default class {
             update.$where = whereClause ? this.parseWhereClause(whereClause) : {}
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Paser.convertUpdate -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Parser.convertUpdate -> ${e.message}`)
         }
 
         return update
@@ -213,9 +145,7 @@ export default class {
 
         try {
 
-            SQL = SQL.toLowerCase()
-
-            const deleteMatch = SQL.match(/delete\s+from\s+(\w+)(?:\s+where\s+(.+))?/i)
+            const deleteMatch = SQL.match(/(?:delete|DELETE)\s+(?:from|FROM)\s+(\w+)(?:\s+(?:where|WHERE)\s+(.+))?/i)
 
             if(!deleteMatch) throw new Error("Invalid SQL DELETE statement")
 
@@ -226,7 +156,7 @@ export default class {
             deleteStore.$collection = table
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Paser.convertDelete -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Parser.convertDelete -> ${e.message}`)
         }
 
         return deleteStore
@@ -258,6 +188,9 @@ export default class {
             case "like":
                 operand.$like = (condition.value as string).replaceAll('%', '*')
                 break
+            case "LIKE":
+                operand.$like = (condition.value as string).replaceAll('%', '*')
+                break
             default:
                 throw new Error(`Unsupported SQL operator: ${condition.operator}`)
         }
@@ -267,7 +200,7 @@ export default class {
 
     private static parseSQLCondition(condition: string) {
 
-        const match = condition.match(/(=|!=|>=|<=|>|<|like)/i)
+        const match = condition.match(/(=|!=|>=|<=|>|<|(?:like|LIKE))/i)
 
         if(!match) throw new Error(`Unsupported SQL operator in condition ${condition}`)
 
@@ -287,12 +220,12 @@ export default class {
 
             const orConditions: Array<_op<T>> = []
 
-            const orGroups = whereClause.split(/\s+or\s+/i)
+            const orGroups = whereClause.split(/\s+(?:or|OR)\s+/i)
 
             orGroups.forEach((orGroup) => {
 
                 const andGroupConditions: _op<T> = {}
-                const andConditionsArray = orGroup.split(/\s+and\s+/i).map(cond => cond.trim())
+                const andConditionsArray = orGroup.split(/\s+(?:and|AND)\s+/i).map(cond => cond.trim())
 
                 andConditionsArray.forEach((cond) => {
                     const condition = this.parseSQLCondition(cond)
@@ -305,7 +238,7 @@ export default class {
             result.$ops = orConditions
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Paser.parseWherClause -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Parser.parseWherClause -> ${e.message}`)
         }
 
         return result

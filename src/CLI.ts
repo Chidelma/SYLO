@@ -5,18 +5,24 @@ try {
 
     const SQL = process.argv.slice(1)[0]
 
-    const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)/i)
+    const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|TRUNCATE|DROP|USE)/i)
 
     if(!op) throw new Error("Missing SQL Operation")
 
     const res = await Silo.executeSQL(SQL)
 
     switch(op[0]) {
+        case "USE":
+            console.log("Successfully changed database")
+            break
         case "CREATE":
             console.log("Successfully created schema")
             break
         case "ALTER":   
             console.log("Successfully modified schema")
+            break
+        case "TRUNCATE":
+            console.log("Successfully truncated schema")
             break
         case "DROP":
             console.log("Successfully dropped schema")
@@ -34,7 +40,7 @@ try {
             console.log(`Successfully deleted ${res} document(s)`)
             break
         default:
-            throw new Error("Invalid Operation")
+            throw new Error("Invalid Operation: " + op[0])
     }
 
 } catch (e) {

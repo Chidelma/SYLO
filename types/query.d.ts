@@ -16,6 +16,7 @@ interface _storeQuery<T> {
     $ops?: Array<_op<T>>
     $limit?: number
     $onlyIds?: boolean
+    $groupby?: keyof T
 }
 
 interface _condition { column: string, operator: string, value: string | number| boolean | null }
@@ -35,19 +36,3 @@ type _storeInsert<T> = {
     $collection?: string
 }
 
-interface _rmField<T> {
-    field: keyof T,
-    force?: boolean
-}
-
-interface _modField<T> {
-    from: string
-    to: keyof T
-}
-
-interface _colSchema<T> {
-    collection?: string
-    add?: Set<keyof T>
-    change?: Array<_modField<T>>
-    drop?: Array<_rmField<T>>
-}

@@ -7,13 +7,13 @@ self.onmessage = async (ev) => {
     switch(action) {
 
         case 'PUT':
-            self.postMessage(await Silo.putDoc(data.collection, data.doc))
+            self.postMessage(await Silo.putData(data.collection, data.doc))
             break
         case 'PATCH':
             self.postMessage(await Silo.patchDoc(data.collection, data.doc))
             break
         case 'DEL':
-            self.postMessage(await Silo.delDoc(data.collection, data.id))
+            self.postMessage(await Silo.delDoc(data.collection, data._id))
             break
         default:
             console.log(`Action ${action} not implemented`)

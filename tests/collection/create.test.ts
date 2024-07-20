@@ -1,7 +1,6 @@
 import { test, expect, describe } from 'bun:test'
 import Silo from '../../src/Stawrij'
-import { _album, _post } from './data'
-import { mkdirSync, rmdirSync, readdirSync } from 'node:fs'
+import { mkdirSync, readdirSync, rmdirSync } from 'node:fs'
 
 rmdirSync(process.env.DATA_PREFIX!, {recursive:true})
 mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
@@ -12,17 +11,18 @@ describe("NO-SQL", () => {
 
     test("CREATE", async () => {
 
-        const treeItems: _treeItem<_post>[] = [{ field: 'userId' }, { field: 'title' }, { field: 'body' }]
+        await Silo.createSchema(POSTS)
 
-        await Silo.createSchema<_post>(POSTS, treeItems)
+        const file = Bun.file(`${process.env.DATA_PREFIX}/${POSTS}/.schema.json`)
 
-        const fields = readdirSync(`${process.env.DATA_PREFIX}/${POSTS}`)
+        const savedSchema = await file.json()
 
-        const allFieldsExist = fields.every(field => treeItems.map(item => item.field).includes(field as keyof _post))
+        const dirKeys = readdirSync(`${process.env.DATA_PREFIX}/${POSTS}`)
 
-        expect(allFieldsExist).toBe(true)
+        const testPassed = Object.keys(savedSchema).every(key => dirKeys.includes(key))
 
-    }, 60 * 60 * 1000)
+        expect(testPassed).toBe(true)
+    })
 })
 
 describe("SQL", () => {
@@ -31,15 +31,16 @@ describe("SQL", () => {
 
     test("CREATE", async () => {
 
-        const treeItems: _treeItem<_album>[] = [{ field: 'userId' }, { field: 'title' }]
+        await Silo.executeSQL<_album>(`CREATE TABLE ${ALBUMS}`)
 
-        await Silo.executeSQL<_album>(`CREATE TABLE ${ALBUMS} (${JSON.stringify(treeItems)})`)
+        const file = Bun.file(`${process.env.DATA_PREFIX}/${ALBUMS}/.schema.json`)
 
-        const fields = readdirSync(`${process.env.DATA_PREFIX}/${ALBUMS}`)
+        const savedSchema = await file.json()
 
-        const allFieldsExist = fields.every(field => treeItems.map(item => item.field).includes(field as keyof _album))
+        const dirKeys = readdirSync(`${process.env.DATA_PREFIX}/${ALBUMS}`)
 
-        expect(allFieldsExist).toBe(true)
+        const testPassed = Object.keys(savedSchema).every(key => dirKeys.includes(key))
 
-    }, 60 * 60 * 1000)
+        expect(testPassed).toBe(true)
+    })
 })

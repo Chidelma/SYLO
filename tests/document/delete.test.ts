@@ -1,6 +1,6 @@
 import { test, expect, describe } from 'bun:test'
 import Silo from '../../src/Stawrij'
-import {  _comment, comments, users, _user } from './data'
+import { comments, users } from '../data'
 import { mkdirSync, rmSync } from 'node:fs'
 
 rmSync(process.env.DATA_PREFIX!, {recursive:true})
@@ -10,7 +10,9 @@ describe("NO-SQL", async () => {
 
     const COMMENTS = 'comments'
 
-    await Silo.bulkPutDocs<_comment>(COMMENTS, comments.slice(0, 25))
+    await Silo.createSchema(COMMENTS)
+
+    await Silo.bulkDataPut<_comment>(COMMENTS, comments.slice(0, 25))
 
     let results = await Silo.findDocs<_comment>(COMMENTS, { $limit: 1 }).collect() as Map<_uuid, _comment>
 
@@ -20,13 +22,13 @@ describe("NO-SQL", async () => {
 
         await Silo.delDoc(COMMENTS, id)
 
-        results = await Silo.findDocs<_comment>(COMMENTS, {}).collect() as Map<_uuid, _comment>
+        results = await Silo.findDocs<_comment>(COMMENTS).collect() as Map<_uuid, _comment>
 
         const idx = Array.from(results.keys()).findIndex(_id => _id === id)
 
         expect(idx).toEqual(-1)
 
-    }, 60 * 60 * 1000)
+    })
 
     test("DELETE CLAUSE", async () => {
 
@@ -36,23 +38,25 @@ describe("NO-SQL", async () => {
 
         expect(results.size).toEqual(0)
 
-    }, 60 * 60 * 1000)
+    })
 
     test("DELETE ALL", async () => {
 
-        await Silo.delDocs<_comment>(COMMENTS, {})
+        await Silo.delDocs<_comment>(COMMENTS)
 
-        results = await Silo.findDocs<_comment>(COMMENTS, {}).collect() as Map<_uuid, _comment>
+        results = await Silo.findDocs<_comment>(COMMENTS).collect() as Map<_uuid, _comment>
 
         expect(results.size).toBe(0)
 
-    }, 60 * 60 * 1000)
+    })
 })
 
 
 describe("SQL", async () => {
 
     const USERS = 'users'
+
+    await Silo.executeSQL<_user>(`CREATE TABLE ${USERS}`)
 
     for(const user of users.slice(0, 25)) {
 
@@ -70,7 +74,7 @@ describe("SQL", async () => {
 
         const name = Array.from(results.values())[0].name
 
-        await Silo.executeSQL<_user>(`DELETE from users WHERE name = '${name}'`)
+        await Silo.executeSQL<_user>(`DELETE FROM users WHERE name = '${name}'`)
 
         cursor = await Silo.executeSQL<_user>(`SELECT * FROM users WHERE name = '${name}'`) as _storeCursor<_user>
 
@@ -83,7 +87,7 @@ describe("SQL", async () => {
 
     test("DELETE ALL", async () => {
 
-        await Silo.executeSQL<_user>(`DELETE from users`)
+        await Silo.executeSQL<_user>(`DELETE FROM users`)
 
         cursor = await Silo.executeSQL<_user>(`SELECT * FROM users`) as _storeCursor<_user>
 
