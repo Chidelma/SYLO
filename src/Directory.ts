@@ -225,33 +225,33 @@ export default class {
         }
     }
 
-    static async aquireLock(collection: string, id: _uuid) {
+    static async aquireLock(collection: string, _id: _uuid) {
 
         try {
 
-            if(await this.isLocked(collection, id)) {
+            if(await this.isLocked(collection, _id)) {
 
-                await this.queueProcess(collection, id)
+                await this.queueProcess(collection, _id)
     
-                for await (const event of Walker.listen(`${collection}/.${id}/${process.pid}`)) {
+                for await (const event of Walker.listen(`${collection}/.${_id}/${process.pid}`)) {
                     if(event.action === "delete") break
                 }
             }
     
-            await this.queueProcess(collection, id)
+            await this.queueProcess(collection, _id)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.aquireLock -> ${e.message}`)
         }
     }
 
-    static async releaseLock(collection: string, id: _uuid) {
+    static async releaseLock(collection: string, _id: _uuid) {
 
         try {
 
-            rmSync(`${this.DB_PATH}/${collection}/.${id}/${process.pid}`, { recursive: true })
+            rmSync(`${this.DB_PATH}/${collection}/.${_id}/${process.pid}`, { recursive: true })
 
-            const results = await this.searchIndexes(`${collection}/.${id}/**`)
+            const results = await this.searchIndexes(`${collection}/.${_id}/**`)
 
             const timeSortedDir = results.sort((a, b) => {
                 const aTime = Bun.file(`${this.DB_PATH}/${a}`).lastModified
@@ -266,21 +266,21 @@ export default class {
         }
     }
 
-    private static async isLocked(collection: string, id: _uuid) {
+    private static async isLocked(collection: string, _id: _uuid) {
 
-        const results = await this.searchIndexes(`${collection}/.${id}/**`)
+        const results = await this.searchIndexes(`${collection}/.${_id}/**`)
 
         return results.filter(p => p.split('/').length === 3).length > 0
     }
 
-    private static async queueProcess(collection: string, id: _uuid) {
+    private static async queueProcess(collection: string, _id: _uuid) {
 
-        await Bun.write(Bun.file(`${this.DB_PATH}/${collection}/.${id}/${process.pid}`), '.')
+        await Bun.write(Bun.file(`${this.DB_PATH}/${collection}/.${_id}/${process.pid}`), '.')
     }
 
-    static async reconstructData<T>(collection: string, id: _uuid) {
+    static async reconstructData<T>(collection: string, _id: _uuid) {
 
-        const indexes = await this.searchIndexes(`${collection}/**/${id}`)
+        const indexes = await this.searchIndexes(`${collection}/**/${_id}`)
         
         const fieldVals = await this.reArrangeIndexes(indexes)
 
@@ -366,15 +366,15 @@ export default class {
         const collection = segements.shift()!
         const field = segements.shift()!
 
-        const id = segements.pop()!
+        const _id = segements.pop()!
         const val = segements.pop()!
 
-        const currIndexes = await this.searchIndexes(`${collection}/${field}/**/${id}`)
+        const currIndexes = await this.searchIndexes(`${collection}/${field}/**/${_id}`)
 
         currIndexes.forEach(idx => rmSync(`${this.DB_PATH}/${idx}`, { recursive: true }))
 
         if(val.length > this.CHAR_LIMIT) {
-            await Bun.write(Bun.file(`${this.DB_PATH}/${collection}/${field}/${segements.join('/')}/${id}`), val)
+            await Bun.write(Bun.file(`${this.DB_PATH}/${collection}/${field}/${segements.join('/')}/${_id}`), val)
         } else {
             await Bun.write(Bun.file(`${this.DB_PATH}/${index}`), '.')
         }
@@ -384,7 +384,7 @@ export default class {
         if(existsSync(`${this.DB_PATH}/${index}`)) rmSync(`${this.DB_PATH}/${index}`, { recursive: true })
     }
 
-    static deconstructData<T>(collection: string, id: _uuid, data: T, parentField?: string) {
+    static deconstructData<T>(collection: string, _id: _uuid, data: T, parentField?: string) {
 
         const indexes: string[] = []
 
@@ -395,22 +395,22 @@ export default class {
             const newField = parentField ? `${parentField}/${field}` : field
 
             if(typeof obj[field] === 'object' && !Array.isArray(obj[field])) {
-                indexes.push(...this.deconstructData(collection, id, obj[field], newField))
+                indexes.push(...this.deconstructData(collection, _id, obj[field], newField))
             } else if(typeof obj[field] === 'object' && Array.isArray(obj[field])) {
                 const items: (string | number | boolean)[] = obj[field]
                 if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
-                items.forEach((item, idx) => indexes.push(`${collection}/${newField}/${idx}/${String(item).replaceAll('/', this.SLASH_ASCII)}/${id}`))
-            } else indexes.push(`${collection}/${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}/${id}`)
+                items.forEach((item, idx) => indexes.push(`${collection}/${newField}/${idx}/${String(item).replaceAll('/', this.SLASH_ASCII)}/${_id}`))
+            } else indexes.push(`${collection}/${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
         }
 
         return indexes
     }
 
-    static constructData<T>(keyVal: Record<string, string>) {
+    static constructData<T>(fieldVal: Record<string, string>) {
 
         const data: Record<string, any> = {}
 
-        for(let fullField in keyVal) {
+        for(let fullField in fieldVal) {
 
             const fields = fullField.split('/').slice(2)
 
@@ -431,14 +431,14 @@ export default class {
 
             const lastKey = fields.shift()!
 
-            if(lastKey.match(/^\d+$/)) curr[parseInt(lastKey, 10)] = this.parseValue(keyVal[fullField].replaceAll(this.SLASH_ASCII, '/'))
-            else curr[lastKey] = this.parseValue(keyVal[fullField].replaceAll(this.SLASH_ASCII, '/'))
+            if(lastKey.match(/^\d+$/)) curr[parseInt(lastKey, 10)] = this.parseValue(fieldVal[fullField].replaceAll(this.SLASH_ASCII, '/'))
+            else curr[lastKey] = this.parseValue(fieldVal[fullField].replaceAll(this.SLASH_ASCII, '/'))
         }
 
         return data as T
     }
 
-    private static parseValue(value: string) {
+    static parseValue(value: string) {
 
         const num = Number(value) 
 

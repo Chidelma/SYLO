@@ -14,7 +14,7 @@ describe("NO-SQL", () => {
 
         await Silo.bulkDataPut<_post>('posts', posts.slice(0, 25))
 
-        const results = await Silo.findDocs('posts').collect() as Map<_uuid, _post>
+        const results = await Silo.findDocs<_post>('posts').collect() as Map<_uuid, _post>
 
         expect(results.size).toEqual(25)
 

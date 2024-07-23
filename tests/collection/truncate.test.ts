@@ -18,7 +18,7 @@ describe("NO-SQL", () => {
 
         await Silo.truncateSchema(POSTS)
 
-        const ids = await Silo.findDocs(POSTS, { $limit: 1, $onlyIds: true }).collect() as _uuid[]
+        const ids = await Silo.findDocs<_post>(POSTS, { $limit: 1, $onlyIds: true }).collect() as _uuid[]
 
         expect(ids.length).toBe(0)
 

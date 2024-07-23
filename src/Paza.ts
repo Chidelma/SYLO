@@ -38,27 +38,89 @@ export default class {
         return crud
     }
 
-    static convertSelect<T>(SQL: string) {
+    static convertSelect<T extends Record<string, any>, U extends Record<string, any> = {}>(SQL: string) {
 
         let query: _storeQuery<Partial<T>> = {} as _storeQuery<Partial<T>>
 
+        let join: _join<T, U> = {} as _join<T, U>
+
         try {
 
-            const selectMatch = SQL.match(/(?:select|SELECT)\s+(.*?)\s+(?:from|FROM)\s+(\w+)\s*(?:(?:where|WHERE)\s+(.+?))?(?:\s+(?:limit|LIMIT)\s+(\d+))?$/i)
+            const selectMatch = SQL.match(/(?:select|SELECT)\s+(.*?)\s+(?:from|FROM)\s+(\w+)(?:\s+(?:((?:INNER|inner)|(?:LEFT|left)|(?:right|RIGHT)|(?:OUTER|outer))\s+)?(?:join|JOIN)\s+(\w+)\s+(?:on|ON)\s+(.+?))?\s*(?:(?:where|WHERE)\s+(.+?))?(?:\s+(?:group by|GROUP BY)\s+(\w+))?(?:\s+(?:limit|LIMIT)\s+(\d+))?$/i)
 
             if(!selectMatch) throw new Error("Invalid SQL SELECT statement")
 
-            const [_, columns, collection, whereClause, limit] = selectMatch
+            const [_, columns, collection, mode, joinCollection, joinCondition, whereClause, groupBy, limit] = selectMatch
 
+            if(joinCollection && joinCondition) {
+
+                join = this.parseJoinClause<T, U>(joinCondition)
+
+                join.$leftColllection = collection
+                join.$rightColllection = joinCollection
+
+                if(limit) join.$limit = Number(limit)
+
+                if(groupBy) join.$groupby = groupBy.trim() as keyof T
+
+                join.$mode = mode ? mode.toLowerCase().trim() as "inner" | "left" | "right" | "outer" : "inner"
+
+                if(columns !== '*') {
+
+                    const selections = columns.split(',').map(col => col.trim())
+
+                    for(const select of selections) {
+
+                        if(select === '_id') {
+                            join.$onlyIds = true
+                            break
+                        }
+
+                        if(select.includes('AS')) {
+
+                            const [col, alias] = select.split('AS').map(s => s.trim())
+
+                            join.$rename = { ...join.$rename, [col]: alias } as Record<keyof T | keyof U, string>
+                        
+                            join.$select = [...join.$select ?? [], col]
+
+                        } else join.$select = [...join.$select ?? [], select]
+                    }
+                }
+
+                return join
+            }
+            
             if(whereClause) query = this.parseWhereClause(whereClause)
 
             if(limit) query.$limit = Number(limit)
 
+            if(groupBy) query.$groupby = groupBy.trim() as keyof T
+
             query.$collection = collection
 
-            if(columns !== '*') query.$select = columns.split(',').map(col => col.trim()) as Array<keyof T>
+            if(columns !== '*') {
 
-            if(query.$select && query.$select.length === 1 && query.$select[0] === '_id') query.$onlyIds = true
+                const selections = columns.split(',').map(col => col.trim())
+
+                for(const select of selections) {
+
+                    if(select === '_id') {
+                        query.$onlyIds = true
+                        break
+                    }
+
+                    if(select.includes('AS')) {
+
+                        const [col, alias] = select.split('AS').map(s => s.trim())
+
+                        query.$select = [...query.$select ?? [], col]
+
+                        query.$rename = { ...query.$rename, [col]: alias } as Record<keyof T, string>
+
+                    } else query.$select = [...query.$select ?? [], select]
+                }
+            }
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Parser.convertSelect -> ${e.message}`)
@@ -67,7 +129,7 @@ export default class {
         return query
     }
 
-    static convertInsert<T>(SQL: string) {
+    static convertInsert<T extends Record<string, any>>(SQL: string) {
 
         const insert: _storeInsert<T> = {} as _storeInsert<T>
 
@@ -103,7 +165,7 @@ export default class {
         return insert
     }
 
-    static convertUpdate<T>(SQL: string) {
+    static convertUpdate<T extends Record<string, any>>(SQL: string) {
 
         const update: _storeUpdate<Partial<T>> = {} as _storeUpdate<Partial<T>>
 
@@ -139,7 +201,7 @@ export default class {
         return update
     }
 
-    static convertDelete<T>(SQL: string) {
+    static convertDelete<T extends Record<string, any>>(SQL: string) {
 
         let deleteStore: _storeDelete<Partial<T>> = {} as _storeDelete<Partial<T>>
 
@@ -212,7 +274,30 @@ export default class {
     }
 
 
-    private static parseWhereClause<T>(whereClause: string) {
+    private static parseJoinClause<T extends Record<string, any>, U extends Record<string, any>>(joinClause: string) {
+
+        let result: _join<T, U> = {} as _join<T, U>
+
+        try {
+
+            const andGroups = joinClause.split(/\s+(?:and|AND)\s+/i).map(cond => cond.trim())
+
+            for(const cond of andGroups) {
+
+                const condition = this.parseSQLCondition(cond)
+                // @ts-ignore
+                result[condition.column as keyof T] = this.mapConditionToOperand(condition) as _joinOperand<U>
+            }
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Parser.parseJoinClause -> ${e.message}`)
+        }
+
+        return result
+    }
+
+
+    private static parseWhereClause<T extends Record<string, any>>(whereClause: string) {
 
         let result: _storeQuery<Partial<T>> = {} as _storeQuery<Partial<T>>
 
@@ -256,6 +341,6 @@ export default class {
 
         if(value === 'null') return null
     
-        return value.slice(1, -1)
+        return value.length === 2 ? value : value.slice(1, -1)
     }
 }

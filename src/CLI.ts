@@ -5,13 +5,13 @@ try {
 
     const SQL = process.argv.slice(1)[0]
 
-    const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|TRUNCATE|DROP|USE)/i)
+    const op = SQL.match(/^((?:SELECT|select)|(?:INSERT|insert)|(?:UPDATE|update)|(?:DELETE|delete)|(?:CREATE|create)|(?:ALTER|alter)|(?:TRUNCATE|truncate)|(?:DROP|drop)|(?:USE|use))/i)
 
     if(!op) throw new Error("Missing SQL Operation")
 
     const res = await Silo.executeSQL(SQL)
 
-    switch(op[0]) {
+    switch(op[0].toUpperCase()) {
         case "USE":
             console.log("Successfully changed database")
             break
@@ -28,7 +28,8 @@ try {
             console.log("Successfully dropped schema")
             break
         case "SELECT":
-            console.log(await (res as _storeCursor<Record<string, any>>).collect())
+            if(SQL.includes('JOIN')) console.log(res)
+            else console.log(await (res as _storeCursor<Record<string, any>>).collect())
             break
         case "INSERT":
             console.log(res as _uuid)
@@ -44,5 +45,5 @@ try {
     }
 
 } catch (e) {
-    if(e instanceof Error) console.log(e.message)
+    if(e instanceof Error) console.error(e.message)
 }

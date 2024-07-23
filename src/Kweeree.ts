@@ -1,6 +1,6 @@
 export default class {
 
-    static getExprs<T>(query: _storeQuery<T>, collection?: string) {
+    static getExprs<T extends Record<string, any>>(query: _storeQuery<T>, collection?: string) {
 
         let exprs = new Set<string>()
 
@@ -37,13 +37,14 @@ export default class {
                         if(col.$like) exprs = new Set([...exprs, `${prefix}/${col.$like.replaceAll('%', '*')}/**/*`])
                     }
                 }
+
             } else exprs = new Set([`${collection ?? query.$collection}/**/*`])
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Query.getExprs -> ${e.message}`)
         }
 
-        return Array.from<string>(exprs)
+        return Array.from(exprs)
     }
 
     private static getGtOp(numbers: number[], negate: boolean = false) {
