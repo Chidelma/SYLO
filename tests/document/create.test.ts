@@ -29,13 +29,13 @@ describe("SQL", () => {
 
         await Silo.createSchema(ALBUMS)
 
-        for(const album of albums.slice(0, 25)) {
+        await Promise.all(albums.slice(0, 25).map((album: _album) => {
 
             const keys = Object.keys(album)
             const values = Object.values(album).map(val => JSON.stringify(val))
 
-            await Silo.executeSQL<_album>(`INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join('\\')})`)
-        }
+            return Silo.executeSQL<_album>(`INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join('\\')})`)
+        }))
 
         const cursor = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as _storeCursor<_album>
 

@@ -10,13 +10,12 @@ const ALBUMS = 'albums'
 
 const POSTS = 'posts'
 
-await Silo.createSchema(ALBUMS)
+await Promise.all([Silo.createSchema(ALBUMS), Silo.createSchema(POSTS)])
 
-await Silo.createSchema(POSTS)
-
-await Silo.bulkDataPut<_album>(ALBUMS, albums.slice(0, 25))
-
-await Silo.bulkDataPut<_post>(POSTS, posts.slice(0, 25))
+await Promise.all([
+    Silo.bulkDataPut<_album>(ALBUMS, albums.slice(0, 25)),
+    Silo.bulkDataPut<_post>(POSTS, posts.slice(0, 25))
+])
 
 describe("NO-SQL", () => {
 

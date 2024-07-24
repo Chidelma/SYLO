@@ -95,7 +95,6 @@ export default class {
             const path = `${table}/${event.filename}`
             
             if(event.filename && new Bun.Glob(pattern).match(path) && event.eventType !== 'change') {
-
                 const id = path.split('/').pop()!
 
                 yield existsSync(`${this.DB_PATH}/${path}`) ? { id, action: "upsert" } : { id, action: "delete" }

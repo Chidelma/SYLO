@@ -33,13 +33,12 @@ describe("SQL", () => {
 
         await Silo.executeSQL<_album>(`CREATE TABLE ${ALBUMS}`)
 
-        for(const album of albums.slice(0, 25)) {
-
+        await Promise.all(albums.slice(0, 25).map((album: _album) => {  
             const keys = Object.keys(album)
-            const values = Object.values(album).map(v => JSON.stringify(v))
+            const values = Object.values(album).map(val => JSON.stringify(val)) 
 
-            await Silo.executeSQL<_album>(`INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join('\\')})`)
-        }
+            return Silo.executeSQL<_album>(`INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join('\\')})`)
+        }))
 
         await Silo.executeSQL<_album>(`TRUNCATE TABLE ${ALBUMS}`)
 

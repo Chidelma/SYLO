@@ -10,6 +10,8 @@ export default class Stawrij {
 
     private static SCHEMA = (process.env.SCHEMA || 'STRICT') as _schema
 
+    private static LOGGING = process.env.LOGGING === 'true'
+
     static async executeSQL<T extends Record<string, any>, U extends Record<string, any> = {}>(SQL: string) {
 
         const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|TRUNCATE|DROP|USE)/i)
@@ -125,7 +127,7 @@ export default class Stawrij {
         
         try {
 
-            console.log(`Writing ${_id}`)
+            if(this.LOGGING) console.log(`Writing ${_id}`)
 
             if(this.SCHEMA === 'STRICT') await Dir.validateData(collection, data)
 
@@ -154,7 +156,7 @@ export default class Stawrij {
 
             if(!_id) throw new Error("Stawrij document does not contain an UUID")
 
-            console.log(`Updating ${_id}`)
+            if(this.LOGGING) console.log(`Updating ${_id}`)
 
             const currData = await Dir.reconstructData<T>(collection, _id)
 
@@ -207,7 +209,7 @@ export default class Stawrij {
 
             await Dir.aquireLock(collection, _id)
 
-            console.log(`Deleting ${_id}`)
+            if(this.LOGGING) console.log(`Deleting ${_id}`)
 
             const indexes = await Dir.searchIndexes(`${collection}/**/${_id}`)
 
@@ -266,118 +268,132 @@ export default class Stawrij {
 
         const docs: Map<_uuid[], T | U | T & U | Partial<T> & Partial<U>> = new Map<_uuid[], T | U | T & U | Partial<T> & Partial<U>>()
 
-        const compareFields = async (leftField: keyof T, rightField: keyof U, compare: (leftVal: string, rightVal: string) => boolean) => {
+        try {
 
-            const [leftFieldIndexes, rightFieldIndexes] = await Promise.all([Dir.searchIndexes(`${join.$leftColllection}/${String(leftField)}/**`), Dir.searchIndexes(`${join.$rightColllection}/${String(rightField)}/**`)])
-            
-            for(const leftIdx of leftFieldIndexes) {
+            const compareFields = async (leftField: keyof T, rightField: keyof U, compare: (leftVal: string, rightVal: string) => boolean) => {
 
-                const leftSegs = leftIdx.split('/')
-                const left_id = leftSegs.pop()! as _uuid
-                const leftVal = leftSegs.pop()!
+                try {
 
-                const leftColllection = leftSegs.shift()!
+                    if(join.$leftColllection === join.$rightColllection) throw new Error("Left and right collections cannot be the same")
 
-                const allVals = new Set<string>()
-
-                for(const rightIdx of rightFieldIndexes) {
-
-                    const rightSegs = rightIdx.split('/')
-                    const right_id = rightSegs.pop()! as _uuid
-                    const rightVal = rightSegs.pop()!
-
-                    const rightColllection = rightSegs.shift()!
-
-                    if(compare(rightVal, leftVal) && !allVals.has(rightVal)) {
-
-                        allVals.add(rightVal)
-
-                        switch(join.$mode) {
-                            case "inner":
-                                docs.set([left_id, right_id], { [leftField]: Dir.parseValue(leftVal), [rightField]: Dir.parseValue(rightVal) } as Partial<T> & Partial<U>)
-                                break
-                            case "left":
-                                let leftData = await Dir.reconstructData<T>(leftColllection, left_id)
-                                if(join.$select) leftData = this.selectValues<T>(join.$select as Array<keyof T>, leftData)
-                                if(join.$rename) leftData = this.renameFields<T>(join.$rename, leftData)
-                                docs.set([left_id, right_id], leftData as T)
-                                break
-                            case "right":
-                                let rightData = await Dir.reconstructData<U>(rightColllection, right_id)
-                                if(join.$select) rightData = this.selectValues<U>(join.$select as Array<keyof U>, rightData)
-                                if(join.$rename) rightData = this.renameFields<U>(join.$rename, rightData)
-                                docs.set([left_id, right_id], rightData as U)
-                                break
-                            case "outer":
-                                let [leftFullData, rightFullData] = await Promise.all([Dir.reconstructData<T>(leftColllection, left_id), Dir.reconstructData<U>(rightColllection, right_id)])
-                                if(join.$select) {
-                                    leftFullData = this.selectValues<T>(join.$select as Array<keyof T>, leftFullData) as Awaited<T>
-                                    rightFullData = this.selectValues<U>(join.$select as Array<keyof U>, rightFullData) as Awaited<U>
+                    const [leftFieldIndexes, rightFieldIndexes] = await Promise.all([Dir.searchIndexes(`${join.$leftColllection}/${String(leftField)}/**`), Dir.searchIndexes(`${join.$rightColllection}/${String(rightField)}/**`)])
+                
+                    for(const leftIdx of leftFieldIndexes) {
+        
+                        const leftSegs = leftIdx.split('/')
+                        const left_id = leftSegs.pop()! as _uuid
+                        const leftVal = leftSegs.pop()!
+        
+                        const leftColllection = leftSegs.shift()!
+        
+                        const allVals = new Set<string>()
+        
+                        for(const rightIdx of rightFieldIndexes) {
+        
+                            const rightSegs = rightIdx.split('/')
+                            const right_id = rightSegs.pop()! as _uuid
+                            const rightVal = rightSegs.pop()!
+        
+                            const rightColllection = rightSegs.shift()!
+        
+                            if(compare(rightVal, leftVal) && !allVals.has(rightVal)) {
+        
+                                allVals.add(rightVal)
+        
+                                switch(join.$mode) {
+                                    case "inner":
+                                        docs.set([left_id, right_id], { [leftField]: Dir.parseValue(leftVal), [rightField]: Dir.parseValue(rightVal) } as Partial<T> & Partial<U>)
+                                        break
+                                    case "left":
+                                        let leftData = await Dir.reconstructData<T>(leftColllection, left_id)
+                                        if(join.$select) leftData = this.selectValues<T>(join.$select as Array<keyof T>, leftData)
+                                        if(join.$rename) leftData = this.renameFields<T>(join.$rename, leftData)
+                                        docs.set([left_id, right_id], leftData as T)
+                                        break
+                                    case "right":
+                                        let rightData = await Dir.reconstructData<U>(rightColllection, right_id)
+                                        if(join.$select) rightData = this.selectValues<U>(join.$select as Array<keyof U>, rightData)
+                                        if(join.$rename) rightData = this.renameFields<U>(join.$rename, rightData)
+                                        docs.set([left_id, right_id], rightData as U)
+                                        break
+                                    case "outer":
+                                        let [leftFullData, rightFullData] = await Promise.all([Dir.reconstructData<T>(leftColllection, left_id), Dir.reconstructData<U>(rightColllection, right_id)])
+                                        if(join.$select) {
+                                            leftFullData = this.selectValues<T>(join.$select as Array<keyof T>, leftFullData) as Awaited<T>
+                                            rightFullData = this.selectValues<U>(join.$select as Array<keyof U>, rightFullData) as Awaited<U>
+                                        }
+                                        if(join.$rename) {
+                                            leftFullData = this.renameFields<T>(join.$rename, leftFullData) as Awaited<T>
+                                            rightFullData = this.renameFields<U>(join.$rename, rightFullData) as Awaited<U>
+                                        }
+                                        docs.set([left_id, right_id], { ...leftFullData, ...rightFullData } as T & U)
+                                        break
                                 }
-                                if(join.$rename) {
-                                    leftFullData = this.renameFields<T>(join.$rename, leftFullData) as Awaited<T>
-                                    rightFullData = this.renameFields<U>(join.$rename, rightFullData) as Awaited<U>
-                                }
-                                docs.set([left_id, right_id], { ...leftFullData, ...rightFullData } as T & U)
-                                break
+        
+                                if(join.$limit && docs.size === join.$limit) break
+                            }
                         }
-
+        
                         if(join.$limit && docs.size === join.$limit) break
                     }
-                }
 
-                if(join.$limit && docs.size === join.$limit) break
-            }
-        }
-        
-        const leftFields: Array<keyof T> = Object.keys(join).filter(key => !key.startsWith('$'))
-
-        for(const field of leftFields) {
-
-            if(join[field]!.$eq) await compareFields(field, join[field]!.$eq, (leftVal, rightVal) => leftVal === rightVal)
-
-            if(join[field]!.$ne) await compareFields(field, join[field]!.$ne, (leftVal, rightVal) => leftVal !== rightVal)
-            
-            if(join[field]!.$gt) await compareFields(field, join[field]!.$gt, (leftVal, rightVal) => Number(leftVal) > Number(rightVal))
-            
-            if(join[field]!.$lt) await compareFields(field, join[field]!.$lt, (leftVal, rightVal) => Number(leftVal) < Number(rightVal))
-            
-            if(join[field]!.$gte) await compareFields(field, join[field]!.$gte, (leftVal, rightVal) => Number(leftVal) >= Number(rightVal))
-            
-            if(join[field]!.$lte) await compareFields(field, join[field]!.$lte, (leftVal, rightVal) => Number(leftVal) <= Number(rightVal))
-        }
-
-        if(join.$groupby) {
-
-            const groupedDocs: Map<T[keyof T] | U[keyof U], Map<_uuid[], Partial<T | U>>> = new Map<T[keyof T] | U[keyof U], Map<_uuid[], Partial<T | U>>>()
-
-            for(const [ids, data] of docs.entries()) {
-
-                // @ts-ignore
-                const grouping = Map.groupBy([data], elem => elem[join.$groupby!])
-
-                for(const [group] of grouping.entries()) {
-
-                    if(groupedDocs.has(group)) groupedDocs.get(group)!.set(ids, data)
-                    else groupedDocs.set(group, new Map([[ids, data]]))
+                } catch(e) {
+                    if(e instanceof Error) throw new Error(`Stawrij.joinDocs.compareFields -> ${e.message}`)
                 }
             }
-
-            if(join.$onlyIds) {
-
-                const groupedIds: Map<T[keyof T] | U[keyof U], _uuid[]> = new Map<T[keyof T] | U[keyof U], _uuid[]>()
-
-                for(const [group, doc] of groupedDocs.entries()) {
-                    groupedIds.set(group, Array.from(doc.keys()).flat())
-                }
-
-                return groupedIds
-            }
             
-            return groupedDocs
-        }
+            const leftFields: Array<keyof T> = Object.keys(join).filter(key => !key.startsWith('$'))
+    
+            for(const field of leftFields) {
+    
+                if(join[field]!.$eq) await compareFields(field, join[field]!.$eq, (leftVal, rightVal) => leftVal === rightVal)
+    
+                if(join[field]!.$ne) await compareFields(field, join[field]!.$ne, (leftVal, rightVal) => leftVal !== rightVal)
+                
+                if(join[field]!.$gt) await compareFields(field, join[field]!.$gt, (leftVal, rightVal) => Number(leftVal) > Number(rightVal))
+                
+                if(join[field]!.$lt) await compareFields(field, join[field]!.$lt, (leftVal, rightVal) => Number(leftVal) < Number(rightVal))
+                
+                if(join[field]!.$gte) await compareFields(field, join[field]!.$gte, (leftVal, rightVal) => Number(leftVal) >= Number(rightVal))
+                
+                if(join[field]!.$lte) await compareFields(field, join[field]!.$lte, (leftVal, rightVal) => Number(leftVal) <= Number(rightVal))
+            }
+    
+            if(join.$groupby) {
+    
+                const groupedDocs: Map<T[keyof T] | U[keyof U], Map<_uuid[], Partial<T | U>>> = new Map<T[keyof T] | U[keyof U], Map<_uuid[], Partial<T | U>>>()
+    
+                for(const [ids, data] of docs.entries()) {
+    
+                    // @ts-ignore
+                    const grouping = Map.groupBy([data], elem => elem[join.$groupby!])
+    
+                    for(const [group] of grouping.entries()) {
+    
+                        if(groupedDocs.has(group)) groupedDocs.get(group)!.set(ids, data)
+                        else groupedDocs.set(group, new Map([[ids, data]]))
+                    }
+                }
+    
+                if(join.$onlyIds) {
+    
+                    const groupedIds: Map<T[keyof T] | U[keyof U], _uuid[]> = new Map<T[keyof T] | U[keyof U], _uuid[]>()
+    
+                    for(const [group, doc] of groupedDocs.entries()) {
+                        groupedIds.set(group, Array.from(doc.keys()).flat())
+                    }
+    
+                    return groupedIds
+                }
+                
+                return groupedDocs
+            }
+    
+            if(join.$onlyIds) return Array.from(new Set(Array.from(docs.keys()).flat()))    
 
-        if(join.$onlyIds) return Array.from(new Set(Array.from(docs.keys()).flat()))
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Stawrij.joinDocs -> ${e.message}`)
+        }
 
         return docs
     }

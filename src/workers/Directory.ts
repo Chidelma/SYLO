@@ -7,7 +7,7 @@ self.onmessage = async (ev) => {
     switch(action) {
 
         case 'GET':
-            self.postMessage(await Dir.reconstructDoc(data.collection, data.id))
+            self.postMessage(await Dir.reconstructData(data.collection, data.id))
             break
         case 'PUT':
             self.postMessage(await Dir.updateIndex(data.idx))

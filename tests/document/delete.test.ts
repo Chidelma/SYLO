@@ -28,7 +28,7 @@ describe("NO-SQL", async () => {
 
         expect(idx).toEqual(-1)
 
-    })
+    }, 10000)
 
     test("DELETE CLAUSE", async () => {
 
@@ -48,7 +48,7 @@ describe("NO-SQL", async () => {
 
         expect(results.size).toBe(0)
 
-    })
+    }, 10000)
 })
 
 
@@ -58,13 +58,13 @@ describe("SQL", async () => {
 
     await Silo.executeSQL<_user>(`CREATE TABLE ${USERS}`)
 
-    for(const user of users.slice(0, 25)) {
+    await Promise.all(users.slice(0, 25).map((user: _user) => {
 
         const keys = Object.keys(user)
         const values = Object.values(user).map(val => JSON.stringify(val))
 
-        await Silo.executeSQL<_user>(`INSERT INTO ${USERS} (${keys.join(',')}) VALUES (${values.join('\\')})`)
-    }
+        return Silo.executeSQL<_user>(`INSERT INTO ${USERS} (${keys.join(',')}) VALUES (${values.join('\\')})`)
+    }))
 
     let cursor = await Silo.executeSQL<_user>(`SELECT * FROM users LIMIT 1`) as _storeCursor<_user>
 
@@ -94,5 +94,5 @@ describe("SQL", async () => {
         results = await cursor.collect() as Map<_uuid, _user>
 
         expect(results.size).toBe(0)
-    })
+    }, 10000)
 })

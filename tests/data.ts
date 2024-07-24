@@ -1,25 +1,5 @@
-let res = await fetch(`https://jsonplaceholder.typicode.com/comments`)
+const [albumResponse, postResponse, commentResponse, photoResponse, todoResponse, userResponse] = await Promise.all([fetch(`https://jsonplaceholder.typicode.com/albums`), fetch(`https://jsonplaceholder.typicode.com/posts`), fetch(`https://jsonplaceholder.typicode.com/comments`), fetch(`https://jsonplaceholder.typicode.com/photos`), fetch(`https://jsonplaceholder.typicode.com/todos`), fetch(`https://jsonplaceholder.typicode.com/users`)])
 
-export const comments: _comment[] = await res.json()
-
-res = await fetch(`https://jsonplaceholder.typicode.com/posts`)
-
-export const posts: _post[] = await res.json()
-
-res = await fetch(`https://jsonplaceholder.typicode.com/albums`)
-
-export const albums: _album[] = await res.json()
-
-res = await fetch(`https://jsonplaceholder.typicode.com/photos`)
-
-export const photos: _photo[] = await res.json()
-
-res = await fetch(`https://jsonplaceholder.typicode.com/todos`)
-
-export const todos: _todo[] = await res.json()
-
-res = await fetch(`https://jsonplaceholder.typicode.com/users`)
-
-export const users: _user[] = await res.json()
+export const [albums, posts, comments, photos, todos, users] = await Promise.all([albumResponse.json(), postResponse.json(), commentResponse.json(), photoResponse.json(), todoResponse.json(), userResponse.json()])
 
 export {}
