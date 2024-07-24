@@ -118,7 +118,11 @@ export default class Stawrij {
 
     static async bulkDataPut<T extends Record<string, any>>(collection: string, data: T[]) {
 
-        await Promise.all(data.map(doc => new Promise<void>(resolve => invokeWorker(Stawrij.storeUrl, { action: "PUT", data: { collection, doc }}, resolve))))
+        const ids: _uuid[] = []
+
+        await Promise.all(data.map(doc => new Promise<void>(resolve => invokeWorker(Stawrij.storeUrl, { action: "PUT", data: { collection, doc }}, resolve, ids))))
+    
+        return ids.flat()
     }
 
     static async putData<T extends Record<string, any>>(collection: string, data: Map<_uuid, T> | T) {

@@ -380,8 +380,7 @@ export default class {
         }
     }
 
-    static deleteIndex(index: string) {
-        //console.log(`Deleting ${index}`)    
+    static deleteIndex(index: string) { 
         if(existsSync(`${this.DB_PATH}/${index}`)) rmSync(`${this.DB_PATH}/${index}`, { recursive: true })
     }
 
