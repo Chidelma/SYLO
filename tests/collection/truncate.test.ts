@@ -10,13 +10,13 @@ describe("NO-SQL", () => {
 
     const POSTS = 'posts'
 
-    test("DROP", async () => {
+    test("TRUNCATE", async () => {
 
         await Silo.createSchema(POSTS)
 
         await Silo.bulkDataPut<_post>('posts', posts.slice(0, 25))
 
-        await Silo.truncateSchema(POSTS)
+        await Silo.delDocs(POSTS)
 
         const ids = await Silo.findDocs<_post>(POSTS, { $limit: 1, $onlyIds: true }).collect() as _uuid[]
 
@@ -29,7 +29,7 @@ describe("SQL", () => {
 
     const ALBUMS = 'albums'
 
-    test("DROP", async () => {
+    test("TRUNCATE", async () => {
 
         await Silo.executeSQL<_album>(`CREATE TABLE ${ALBUMS}`)
 
@@ -40,7 +40,7 @@ describe("SQL", () => {
             return Silo.executeSQL<_album>(`INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join('\\')})`)
         }))
 
-        await Silo.executeSQL<_album>(`TRUNCATE TABLE ${ALBUMS}`)
+        await Silo.executeSQL<_album>(`DELETE FROM ${ALBUMS}`)
 
         const cursor = await Silo.executeSQL<_album>(`SELECT _id FROM ${ALBUMS} LIMIT 1`) as _storeCursor<_album>
 

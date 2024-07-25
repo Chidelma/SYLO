@@ -88,19 +88,6 @@ export default class {
         }
     }
 
-    static async truncateSchema(collection: string) { 
-
-        try {
-
-            const indexes = await this.searchIndexes(`${collection}/**`)
-
-            await Promise.all(indexes.map(idx => new Promise<void>(resolve => invokeWorker(this.indexUrl, { action: 'DEL', data: { idx } }, resolve))))
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Dir.truncateSchema -> ${e.message}`)
-        }
-    }
-
     static dropSchema(collection: string) {
 
         try {

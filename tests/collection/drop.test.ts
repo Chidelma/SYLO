@@ -42,6 +42,5 @@ describe("SQL", () => {
         await Silo.executeSQL<_album>(`DROP TABLE ${ALBUMS}`)
 
         expect(existsSync(`${process.env.DATA_PREFIX}/${ALBUMS}`)).toBe(false)
-
     })
 })

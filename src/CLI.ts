@@ -5,7 +5,7 @@ try {
 
     const SQL = process.argv.slice(1)[0]
 
-    const op = SQL.match(/^((?:SELECT|select)|(?:INSERT|insert)|(?:UPDATE|update)|(?:DELETE|delete)|(?:CREATE|create)|(?:ALTER|alter)|(?:TRUNCATE|truncate)|(?:DROP|drop)|(?:USE|use))/i)
+    const op = SQL.match(/^((?:SELECT|select)|(?:INSERT|insert)|(?:UPDATE|update)|(?:DELETE|delete)|(?:CREATE|create)|(?:ALTER|alter)|(?:DROP|drop)|(?:USE|use))/i)
 
     if(!op) throw new Error("Missing SQL Operation")
 
@@ -20,9 +20,6 @@ try {
             break
         case "ALTER":   
             console.log("Successfully modified schema")
-            break
-        case "TRUNCATE":
-            console.log("Successfully truncated schema")
             break
         case "DROP":
             console.log("Successfully dropped schema")

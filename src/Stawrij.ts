@@ -14,7 +14,7 @@ export default class Stawrij {
 
     static async executeSQL<T extends Record<string, any>, U extends Record<string, any> = {}>(SQL: string) {
 
-        const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|TRUNCATE|DROP|USE)/i)
+        const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|USE)/i)
 
         if(!op) throw new Error("Missing SQL Operation")
 
@@ -25,8 +25,6 @@ export default class Stawrij {
                 return await Stawrij.createSchema(Paser.convertTableCRUD(SQL).collection!)
             case "ALTER":   
                 return await Stawrij.modifySchema(Paser.convertTableCRUD(SQL).collection!)
-            case "TRUNCATE":
-                return await Stawrij.truncateSchema(Paser.convertTableCRUD(SQL).collection!)
             case "DROP":
                 return Stawrij.dropSchema(Paser.convertTableCRUD(SQL).collection!)
             case "SELECT":
@@ -68,14 +66,6 @@ export default class Stawrij {
             await Dir.modifySchema(collection)
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.modifySchema -> ${e.message}`)
-        }
-    }
-
-    static async truncateSchema(collection: string) {
-        try {
-            await Dir.truncateSchema(collection)
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.truncateSchema -> ${e.message}`)
         }
     }
 
