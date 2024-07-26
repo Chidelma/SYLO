@@ -21,7 +21,7 @@ type _op<T> = Partial<Record<keyof T, _operand>>
 
 type _join<T, U> = {
     $select?: Array<keyof T | keyof U>
-    $leftColllection: string
+    $leftCollection: string
     $rightCollection: string
     $mode: "inner" | "left" | "right" | "outer"
     $limit?: number

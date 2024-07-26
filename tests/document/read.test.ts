@@ -75,7 +75,7 @@ describe("NO-SQL", () => {
 
     test("SELECT JOIN", async () => {
 
-        const results = await Silo.joinDocs<_album, _post>({ $leftColllection: ALBUMS, $rightCollection: POSTS, $mode: "inner", "userId": { $eq: "id" } }) as Map<_uuid[], _album | _post>
+        const results = await Silo.joinDocs<_album, _post>({ $leftCollection: ALBUMS, $rightCollection: POSTS, $mode: "inner", "userId": { $eq: "id" } }) as Map<_uuid[], _album | _post>
         
         expect(results.size).toBeGreaterThan(0)
     })

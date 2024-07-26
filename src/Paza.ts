@@ -56,7 +56,7 @@ export default class {
 
                 join = this.parseJoinClause<T, U>(joinCondition)
 
-                join.$leftColllection = collection
+                join.$leftCollection = collection
                 join.$rightCollection = joinCollection
 
                 if(limit) join.$limit = Number(limit)
