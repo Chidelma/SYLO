@@ -152,9 +152,9 @@ export default class {
                 for(let i = 0; i < columns.length; i++) {
 
                 try {
-                    insert[columns[i] as keyof T] = JSON.parse(values[i])
+                    insert.$values[columns[i] as keyof T] = JSON.parse(values[i])
                 } catch(e) {
-                    insert[columns[i] as keyof T] = this.parseValue(values[i]) as any
+                    insert.$values[columns[i] as keyof T] = this.parseValue(values[i]) as any
                 }
             }
 
@@ -186,9 +186,9 @@ export default class {
                 const [col, val] = setConditions[i].split('=').map(s => s.trim())
 
                 try {
-                    update[col as keyof T] = JSON.parse(val)
+                    update.$set[col as keyof T] = JSON.parse(val)
                 } catch(e) {
-                    update[col as keyof T] = this.parseValue(val) as any
+                    update.$set[col as keyof T] = this.parseValue(val) as any
                 }
             }
 

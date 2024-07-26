@@ -27,7 +27,7 @@ describe("NO-SQL", async () => {
 
     test("UPDATE CLAUSE", async () => {
 
-        const count = await Silo.patchDocs<_photo>(PHOTOS, { title: "All Mighti", $where: { $ops: [{ title: { $like: "%est%" } }] } })
+        const count = await Silo.patchDocs<_photo>(PHOTOS, { $set: { title: "All Mighti" }, $where: { $ops: [{ title: { $like: "%est%" } }] } })
 
         const results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighti" } } ] }).collect() as Map<_uuid, _photo>
         
@@ -36,7 +36,7 @@ describe("NO-SQL", async () => {
 
     test("UPDATE ALL", async () => {
 
-        const count = await Silo.patchDocs<_photo>(PHOTOS, { title: "All Mighter", $where: {} })
+        const count = await Silo.patchDocs<_photo>(PHOTOS, { $set: { title: "All Mighter" } })
 
         const results = await Silo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighter" } } ] }).collect() as Map<_uuid, _photo>
         

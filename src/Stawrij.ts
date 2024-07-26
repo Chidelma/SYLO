@@ -30,8 +30,8 @@ export default class Stawrij {
             case "SELECT":
                 const query = Paser.convertSelect<T>(SQL)
                 if(SQL.includes('JOIN')) return await Stawrij.joinDocs(query as _join<T, U>)
-                const selCol = query.$collection
-                delete query.$collection
+                const selCol = (query as _storeQuery<T>).$collection
+                delete (query as _storeQuery<T>).$collection
                 return Stawrij.findDocs(selCol! as string, query as _storeQuery<T>) as _storeCursor<T>
             case "INSERT":
                 const insert = Paser.convertInsert<T>(SQL)
@@ -180,7 +180,7 @@ export default class Stawrij {
         
         try {
 
-            const indexes = await Dir.searchIndexes(Query.getExprs(updateSchema.$where!, collection))
+            const indexes = await Dir.searchIndexes(Query.getExprs(updateSchema.$where ?? {}, collection))
 
             const fields = Object.keys(updateSchema).filter(key => !key.startsWith('$'))
 
@@ -190,7 +190,7 @@ export default class Stawrij {
 
                 const partialData: Record<string, any> = { }
 
-                for(const field of fields) partialData[field] = updateSchema[field as keyof T]
+                for(const field of fields) partialData[field] = updateSchema.$set[field as keyof T]
                 
                 return new Promise<void>(resolve => invokeWorker(Stawrij.storeUrl, { action: 'PATCH', data: { collection, doc: new Map([[_id, partialData]]) } }, resolve))
             }))
@@ -347,17 +347,17 @@ export default class Stawrij {
     
             for(const field of leftFields) {
     
-                if(join[field]!.$eq) await compareFields(field, join[field]!.$eq, (leftVal, rightVal) => leftVal === rightVal)
+                if(join.$on[field]!.$eq) await compareFields(field, join.$on[field]!.$eq, (leftVal, rightVal) => leftVal === rightVal)
     
-                if(join[field]!.$ne) await compareFields(field, join[field]!.$ne, (leftVal, rightVal) => leftVal !== rightVal)
+                if(join.$on[field]!.$ne) await compareFields(field, join.$on[field]!.$ne, (leftVal, rightVal) => leftVal !== rightVal)
                 
-                if(join[field]!.$gt) await compareFields(field, join[field]!.$gt, (leftVal, rightVal) => Number(leftVal) > Number(rightVal))
+                if(join.$on[field]!.$gt) await compareFields(field, join.$on[field]!.$gt, (leftVal, rightVal) => Number(leftVal) > Number(rightVal))
                 
-                if(join[field]!.$lt) await compareFields(field, join[field]!.$lt, (leftVal, rightVal) => Number(leftVal) < Number(rightVal))
+                if(join.$on[field]!.$lt) await compareFields(field, join.$on[field]!.$lt, (leftVal, rightVal) => Number(leftVal) < Number(rightVal))
                 
-                if(join[field]!.$gte) await compareFields(field, join[field]!.$gte, (leftVal, rightVal) => Number(leftVal) >= Number(rightVal))
+                if(join.$on[field]!.$gte) await compareFields(field, join.$on[field]!.$gte, (leftVal, rightVal) => Number(leftVal) >= Number(rightVal))
                 
-                if(join[field]!.$lte) await compareFields(field, join[field]!.$lte, (leftVal, rightVal) => Number(leftVal) <= Number(rightVal))
+                if(join.$on[field]!.$lte) await compareFields(field, join.$on[field]!.$lte, (leftVal, rightVal) => Number(leftVal) <= Number(rightVal))
             }
     
             if(join.$groupby) {
