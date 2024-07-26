@@ -37,7 +37,7 @@ export default class Stawrij {
                 const insert = Paser.convertInsert<T>(SQL)
                 const insCol = insert.$collection
                 delete insert.$collection
-                return await Stawrij.putData(insCol!, insert)
+                return await Stawrij.putData(insCol!, insert.$values)
             case "UPDATE":
                 const update = Paser.convertUpdate<T>(SQL)
                 const updateCol = update.$collection
@@ -126,7 +126,7 @@ export default class Stawrij {
 
         const _id = data instanceof Map ? Array.from((data as Map<_uuid, T>).keys())[0] : crypto.randomUUID() 
         
-        try {
+        try {   
 
             if(this.LOGGING) console.log(`Writing ${_id}`)
 
@@ -143,7 +143,7 @@ export default class Stawrij {
             await Dir.releaseLock(collection, _id)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.putDoc -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.putData -> ${e.message}`)
         }
 
         return _id
@@ -182,15 +182,13 @@ export default class Stawrij {
 
             const indexes = await Dir.searchIndexes(Query.getExprs(updateSchema.$where ?? {}, collection))
 
-            const fields = Object.keys(updateSchema).filter(key => !key.startsWith('$'))
-
             const ids = Array.from(new Set(indexes.map(idx => idx.split('/').pop()!)))
 
             await Promise.all(ids.map(_id => {
 
-                const partialData: Record<string, any> = { }
+                const partialData: Record<keyof Partial<T>, any> = { } as Record<keyof Partial<T>, any>
 
-                for(const field of fields) partialData[field] = updateSchema.$set[field as keyof T]
+                for(const field in updateSchema.$set) partialData[field as keyof T] = updateSchema.$set[field as keyof T]
                 
                 return new Promise<void>(resolve => invokeWorker(Stawrij.storeUrl, { action: 'PATCH', data: { collection, doc: new Map([[_id, partialData]]) } }, resolve))
             }))
@@ -266,7 +264,7 @@ export default class Stawrij {
     }
 
     static async joinDocs<T extends Record<string, any>, U extends Record<string, any>>(join: _join<T, U>) { 
-
+        
         const docs: Map<_uuid[], T | U | T & U | Partial<T> & Partial<U>> = new Map<_uuid[], T | U | T & U | Partial<T> & Partial<U>>()
 
         try {
@@ -342,10 +340,8 @@ export default class Stawrij {
                     if(e instanceof Error) throw new Error(`Stawrij.joinDocs.compareFields -> ${e.message}`)
                 }
             }
-            
-            const leftFields: Array<keyof T> = Object.keys(join).filter(key => !key.startsWith('$'))
     
-            for(const field of leftFields) {
+            for(const field in join.$on) {
     
                 if(join.$on[field]!.$eq) await compareFields(field, join.$on[field]!.$eq, (leftVal, rightVal) => leftVal === rightVal)
     

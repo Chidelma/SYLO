@@ -141,6 +141,8 @@ export default class {
 
             const [_, table, cols, vals] = insertMatch
 
+            insert.$values = {} as Record<keyof T, any>
+
             insert.$collection = table.trim()
 
             const columns = cols.trim().split(',')
@@ -176,6 +178,8 @@ export default class {
             if(!updateMatch) throw new Error("Invalid SQL UPDATE statement")
 
             const [_, table, setClause, whereClause] = updateMatch
+
+            update.$set = {} as Record<keyof T, any>
 
             update.$collection = table.trim()
 
@@ -282,11 +286,13 @@ export default class {
 
             const andGroups = joinClause.split(/\s+(?:and|AND)\s+/i).map(cond => cond.trim())
 
+            result.$on = {} as Record<keyof T, _joinOperand<U>>
+
             for(const cond of andGroups) {
 
                 const condition = this.parseSQLCondition(cond)
                 // @ts-ignore
-                result[condition.column as keyof T] = this.mapConditionToOperand(condition) as _joinOperand<U>
+                result.$on[condition.column as keyof T] = this.mapConditionToOperand(condition) as _joinOperand<U>
             }
 
         } catch(e) {

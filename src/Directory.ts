@@ -208,7 +208,7 @@ export default class {
             }
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Dir.validateDoc -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Dir.validateData -> ${e.message}`)
         }
     }
 
