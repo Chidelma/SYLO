@@ -97,7 +97,14 @@ export default class Stawrij {
             },
 
             async once() {
-                return new Map([[_id, await Dir.reconstructData<T>(collection, _id)]]) as Map<_uuid, T>
+
+                const data = await Dir.reconstructData<T>(collection, _id)
+
+                const doc = new Map<_uuid, T>()
+
+                if(Object.entries(data).length > 0) doc.set(_id, data)
+
+                return doc
             },
 
             async *onDelete() {
