@@ -275,9 +275,9 @@ export default class Stawrij {
 
                 try {
 
-                    if(join.$leftColllection === join.$rightColllection) throw new Error("Left and right collections cannot be the same")
+                    if(join.$leftCollection === join.$rightCollection) throw new Error("Left and right collections cannot be the same")
 
-                    const [leftFieldIndexes, rightFieldIndexes] = await Promise.all([Dir.searchIndexes(`${join.$leftColllection}/${String(leftField)}/**`), Dir.searchIndexes(`${join.$rightColllection}/${String(rightField)}/**`)])
+                    const [leftFieldIndexes, rightFieldIndexes] = await Promise.all([Dir.searchIndexes(`${join.$leftCollection}/${String(leftField)}/**`), Dir.searchIndexes(`${join.$rightCollection}/${String(rightField)}/**`)])
                 
                     for(const leftIdx of leftFieldIndexes) {
         
@@ -285,7 +285,7 @@ export default class Stawrij {
                         const left_id = leftSegs.pop()! as _uuid
                         const leftVal = leftSegs.pop()!
         
-                        const leftColllection = leftSegs.shift()!
+                        const leftCollection = leftSegs.shift()!
         
                         const allVals = new Set<string>()
         
@@ -295,7 +295,7 @@ export default class Stawrij {
                             const right_id = rightSegs.pop()! as _uuid
                             const rightVal = rightSegs.pop()!
         
-                            const rightColllection = rightSegs.shift()!
+                            const rightCollection = rightSegs.shift()!
         
                             if(compare(rightVal, leftVal) && !allVals.has(rightVal)) {
         
@@ -306,19 +306,19 @@ export default class Stawrij {
                                         docs.set([left_id, right_id], { [leftField]: Dir.parseValue(leftVal), [rightField]: Dir.parseValue(rightVal) } as Partial<T> & Partial<U>)
                                         break
                                     case "left":
-                                        let leftData = await Dir.reconstructData<T>(leftColllection, left_id)
+                                        let leftData = await Dir.reconstructData<T>(leftCollection, left_id)
                                         if(join.$select) leftData = this.selectValues<T>(join.$select as Array<keyof T>, leftData)
                                         if(join.$rename) leftData = this.renameFields<T>(join.$rename, leftData)
                                         docs.set([left_id, right_id], leftData as T)
                                         break
                                     case "right":
-                                        let rightData = await Dir.reconstructData<U>(rightColllection, right_id)
+                                        let rightData = await Dir.reconstructData<U>(rightCollection, right_id)
                                         if(join.$select) rightData = this.selectValues<U>(join.$select as Array<keyof U>, rightData)
                                         if(join.$rename) rightData = this.renameFields<U>(join.$rename, rightData)
                                         docs.set([left_id, right_id], rightData as U)
                                         break
                                     case "outer":
-                                        let [leftFullData, rightFullData] = await Promise.all([Dir.reconstructData<T>(leftColllection, left_id), Dir.reconstructData<U>(rightColllection, right_id)])
+                                        let [leftFullData, rightFullData] = await Promise.all([Dir.reconstructData<T>(leftCollection, left_id), Dir.reconstructData<U>(rightCollection, right_id)])
                                         if(join.$select) {
                                             leftFullData = this.selectValues<T>(join.$select as Array<keyof T>, leftFullData) as Awaited<T>
                                             rightFullData = this.selectValues<U>(join.$select as Array<keyof U>, rightFullData) as Awaited<U>
