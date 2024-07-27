@@ -85,7 +85,7 @@ export default class Stawrij {
 
                 const initRes = await this.once()
 
-                if(initRes.size > 0) {
+                if(initRes.size > 0 && !onlyId) {
                     await Bun.sleep(100)
                     yield initRes
                 }
