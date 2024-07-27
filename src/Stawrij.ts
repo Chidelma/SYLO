@@ -401,7 +401,14 @@ export default class Stawrij {
 
             async *[Symbol.asyncIterator]() {
 
-                yield await this.collect()
+                const data = await this.collect()
+
+                if(Array.isArray(data) && data.length > 0) {
+                    for(const _id of data) yield _id
+                }
+                else if(data instanceof Map && data.size > 0) {
+                    yield data
+                }
                 
                 for await (const _id of Dir.onChange(Query.getExprs(query ?? {}, collection))) {
 
