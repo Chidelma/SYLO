@@ -403,8 +403,14 @@ export default class Stawrij {
 
                 const initRes = await this.collect()
 
-                if((initRes instanceof Map && initRes.size > 0) || (Array.isArray(initRes) && initRes.length > 0)) {
-                    for(const doc of initRes) yield doc
+                if(initRes instanceof Map && initRes.size > 0) {
+                    for(const data of initRes.entries()) {
+                        yield new Map<any, any>([[data[0], data[1]]])
+                    }
+                }
+
+                if(Array.isArray(initRes) && initRes.length > 0) {
+                    for(const data of initRes) yield data
                 }
                 
                 for await (const _id of Dir.onChange(Query.getExprs(query ?? {}, collection))) {
