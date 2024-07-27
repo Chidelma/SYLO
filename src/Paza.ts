@@ -336,17 +336,11 @@ export default class {
     }
 
     private static parseValue(value: string) {
-    
-        const num = Number(value) 
 
-        if(!Number.isNaN(num)) return num
-
-        if(value === "true") return true
-
-        if(value === "false") return false
-
-        if(value === 'null') return null
-    
-        return value.length === 2 ? value : value.slice(1, -1)
+        try {
+            return JSON.parse(value)
+        } catch(e) {
+            return value.length === 2 ? value : value.slice(1, -1)
+        }
     }
 }

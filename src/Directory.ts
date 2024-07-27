@@ -334,13 +334,13 @@ export default class {
 
     static searchIndexes(pattern: string | string[]) {
 
-        const indexes: string[][] = []
+        const indexes = new Set<string>()
 
         if(Array.isArray(pattern)) {
-            for(const p of pattern) indexes.push(Walker.search(p))
-        } else indexes.push(Walker.search(pattern))
+            for(const p of pattern) Walker.search(p).forEach(idx => indexes.add(idx))
+        } else return Walker.search(pattern)
 
-        return Array.from(new Set(indexes.flat()))
+        return Array.from(indexes)
     }
 
     static async updateIndex(index: string) {
@@ -424,16 +424,10 @@ export default class {
 
     static parseValue(value: string) {
 
-        const num = Number(value) 
-
-        if(!Number.isNaN(num)) return num
-
-        if(value === "true") return true
-
-        if(value === "false") return false
-
-        if(value === 'null') return null
-    
-        return value
+        try {
+            return JSON.parse(value)
+        } catch(e) {
+            return value
+        }
     }
 }
