@@ -85,12 +85,19 @@ export default class Stawrij {
 
                 const initRes = await this.once()
 
-                if(initRes.size > 0) yield initRes
+                if(initRes.size > 0) {
+                    await Bun.sleep(100)
+                    yield initRes
+                }
 
                 for await (const _ of Dir.onChange(`${collection}/**/${_id}`)) {
-                    if(onlyId) yield _id
+                    if(onlyId) {
+                        await Bun.sleep(100)
+                        yield _id
+                    }
                     else {
                         const doc = await Dir.reconstructData(collection, _id)
+                        await Bun.sleep(100)
                         yield new Map([[_id, doc]]) as Map<_uuid, T>
                     }
                 }
@@ -403,11 +410,19 @@ export default class Stawrij {
 
                 const data = await this.collect()
 
-                if((Array.isArray(data) && data.length > 0) || (data instanceof Map && data.size > 0)) yield data
+                if((Array.isArray(data) && data.length > 0) || (data instanceof Map && data.size > 0)) {
+                    for (const doc of data) {
+                        await Bun.sleep(100)
+                        yield doc
+                    }
+                }
                 
                 for await (const _id of Dir.onChange(Query.getExprs(query ?? {}, collection))) {
 
-                    if(query && query.$onlyIds) yield _id
+                    if(query && query.$onlyIds) {
+                        await Bun.sleep(100)
+                        yield _id
+                    }
                     else {
                         
                         let data = await Dir.reconstructData<T>(collection, _id)
@@ -418,6 +433,8 @@ export default class Stawrij {
                         }
 
                         if(query && query.$rename) data = Stawrij.renameFields<T>(query.$rename, data)
+
+                        await Bun.sleep(100)
 
                         yield new Map([[_id, data]]) as Map<_uuid, T>
                     }
