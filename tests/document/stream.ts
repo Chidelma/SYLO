@@ -1,7 +1,9 @@
 import Silo from '../../src/Stawrij'
 
-const ALBUMS = 'albums'
+const PHOTOS = 'photos'
 
-for await(const data of Silo.findDocs(ALBUMS)) {
-    console.log(data)
+let count = 0
+
+for await(const data of Silo.findDocs(PHOTOS)) {
+    console.log(data, ++count)
 }

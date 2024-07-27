@@ -413,7 +413,8 @@ export default class Stawrij {
                 if((Array.isArray(data) && data.length > 0) || (data instanceof Map && data.size > 0)) {
                     for (const doc of data) {
                         await Bun.sleep(100)
-                        yield doc instanceof Array ? new Map([doc[0] as any, doc[1]]) : doc
+                        // @ts-ignore
+                        yield Array.isArray(doc) ? new Map([doc]) : doc
                     }
                 }
                 
