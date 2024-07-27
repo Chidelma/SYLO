@@ -147,7 +147,7 @@ export default class Stawrij {
 
             await Promise.all(indexes.map(idx => new Promise<void>(resolve => invokeWorker(this.indexUrl, { action: 'PUT', data: { idx } }, resolve))))
 
-            await Dir.releaseLock(collection, _id)
+            Dir.releaseLock(collection, _id)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.putData -> ${e.message}`)
@@ -170,7 +170,6 @@ export default class Stawrij {
 
             const data = doc.get(_id)!
 
-            // @ts-ignore
             for(const field in data) currData[field] = data[field]!
 
             await this.putData(collection, new Map([[_id, currData]]) as Map<_uuid, T>)
@@ -187,7 +186,7 @@ export default class Stawrij {
         
         try {
 
-            const indexes = await Dir.searchIndexes(Query.getExprs(updateSchema.$where ?? {}, collection))
+            const indexes = Dir.searchIndexes(Query.getExprs(updateSchema.$where ?? {}, collection))
 
             const ids = Array.from(new Set(indexes.map(idx => idx.split('/').pop()!)))
 
@@ -217,11 +216,11 @@ export default class Stawrij {
 
             if(this.LOGGING) console.log(`Deleting ${_id}`)
 
-            const indexes = await Dir.searchIndexes(`${collection}/**/${_id}`)
+            const indexes = Dir.searchIndexes(`${collection}/**/${_id}`)
 
-            await Promise.all(indexes.map(idx => new Promise<void>(resolve => invokeWorker(this.indexUrl, { action: 'DEL', data: { idx } }, resolve))))
+            indexes.map(idx => Dir.deleteIndex(idx))
 
-            await Dir.releaseLock(collection, _id)
+            Dir.releaseLock(collection, _id)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.delDoc -> ${e.message}`)
@@ -234,7 +233,7 @@ export default class Stawrij {
 
         try {
 
-            const indexes = await Dir.searchIndexes(Query.getExprs(deleteSchema ?? {}, collection))
+            const indexes = Dir.searchIndexes(Query.getExprs(deleteSchema ?? {}, collection))
 
             const ids = Array.from(new Set(indexes.map(idx => idx.split('/').pop()!)))
 
@@ -282,8 +281,9 @@ export default class Stawrij {
 
                     if(join.$leftCollection === join.$rightCollection) throw new Error("Left and right collections cannot be the same")
 
-                    const [leftFieldIndexes, rightFieldIndexes] = await Promise.all([Dir.searchIndexes(`${join.$leftCollection}/${String(leftField)}/**`), Dir.searchIndexes(`${join.$rightCollection}/${String(rightField)}/**`)])
-                
+                    const leftFieldIndexes = Dir.searchIndexes(`${join.$leftCollection}/${String(leftField)}/**`)
+                    const rightFieldIndexes = Dir.searchIndexes(`${join.$rightCollection}/${String(rightField)}/**`)
+
                     for(const leftIdx of leftFieldIndexes) {
         
                         const leftSegs = leftIdx.split('/')
@@ -448,7 +448,7 @@ export default class Stawrij {
 
                 const ids = new Set<_uuid>()
 
-                const indexes = await Dir.searchIndexes(Query.getExprs(query ?? {}, collection))
+                const indexes = Dir.searchIndexes(Query.getExprs(query ?? {}, collection))
 
                 for(let i = 0; i < indexes.length; i++) {
                     ids.add(indexes[i].split('/').pop()! as _uuid)

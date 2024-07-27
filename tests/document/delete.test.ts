@@ -35,7 +35,7 @@ describe("NO-SQL", async () => {
         await Silo.delDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] })
 
         results = await Silo.findDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] }).collect() as Map<_uuid, _comment>
-
+        
         expect(results.size).toEqual(0)
 
     })

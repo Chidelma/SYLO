@@ -1,6 +1,5 @@
 import { rmSync, existsSync, mkdirSync, rmdirSync } from "node:fs"
 import Walker from "./Walker"
-import { invokeWorker } from "./utils/general"
 
 export default class {
 
@@ -9,9 +8,6 @@ export default class {
     private static readonly CHAR_LIMIT = 255
 
     private static readonly SLASH_ASCII = "%2F"
-
-    private static walkerUrl = new URL('./workers/Walker.ts', import.meta.url).href
-    private static indexUrl = new URL('./workers/Directory.ts', import.meta.url).href
 
     private static SCHEMA_PATH = process.env.SCHEMA_PATH || `${process.cwd()}/schemas`
 
@@ -216,7 +212,7 @@ export default class {
 
         try {
 
-            if(await this.isLocked(collection, _id)) {
+            if(this.isLocked(collection, _id)) {
 
                 await this.queueProcess(collection, _id)
     
@@ -232,13 +228,13 @@ export default class {
         }
     }
 
-    static async releaseLock(collection: string, _id: _uuid) {
+    static releaseLock(collection: string, _id: _uuid) {
 
         try {
 
             rmSync(`${this.DB_PATH}/${collection}/.${_id}/${process.pid}`, { recursive: true })
 
-            const results = await this.searchIndexes(`${collection}/.${_id}/**`)
+            const results = this.searchIndexes(`${collection}/.${_id}/**`)
 
             const timeSortedDir = results.sort((a, b) => {
                 const aTime = Bun.file(`${this.DB_PATH}/${a}`).lastModified
@@ -253,9 +249,9 @@ export default class {
         }
     }
 
-    private static async isLocked(collection: string, _id: _uuid) {
+    private static isLocked(collection: string, _id: _uuid) {
 
-        const results = await this.searchIndexes(`${collection}/.${_id}/**`)
+        const results = this.searchIndexes(`${collection}/.${_id}/**`)
 
         return results.filter(p => p.split('/').length === 3).length > 0
     }
@@ -267,7 +263,7 @@ export default class {
 
     static async reconstructData<T>(collection: string, _id: _uuid) {
 
-        const indexes = await this.searchIndexes(`${collection}/**/${_id}`)
+        const indexes = this.searchIndexes(`${collection}/**/${_id}`)
         
         const fieldVals = await this.reArrangeIndexes(indexes)
 
@@ -336,14 +332,15 @@ export default class {
         for await (const id of this.listen(pattern, "upsert")) yield id
     }
 
-    static async searchIndexes(pattern: string | string[]) {
+    static searchIndexes(pattern: string | string[]) {
 
-        const indexes: string[] = []
+        const indexes: string[][] = []
 
-        if(Array.isArray(pattern)) await Promise.all(pattern.map(p => new Promise<void>(resolve => invokeWorker(this.walkerUrl, { action: 'GET', data: { pattern: p } }, resolve, indexes))))
-        else indexes.push(...Walker.search(pattern))
+        if(Array.isArray(pattern)) {
+            for(const p of pattern) indexes.push(Walker.search(p))
+        } else indexes.push(Walker.search(pattern))
 
-        return indexes.flat()
+        return Array.from(new Set(indexes.flat()))
     }
 
     static async updateIndex(index: string) {
@@ -356,7 +353,7 @@ export default class {
         const _id = segements.pop()!
         const val = segements.pop()!
 
-        const currIndexes = await this.searchIndexes(`${collection}/${field}/**/${_id}`)
+        const currIndexes = this.searchIndexes(`${collection}/${field}/**/${_id}`)
 
         currIndexes.forEach(idx => rmSync(`${this.DB_PATH}/${idx}`, { recursive: true }))
 
