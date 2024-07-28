@@ -317,28 +317,125 @@ export default class {
                 eventIds.delete(event.id)
             } else if(event.action === action && !eventIds.has(event.id) && this.isUUID(event.id)) {
                 eventIds.add(event.id)
-                yield event.id as _uuid
+                yield { id: event.id as _uuid, last_modified: event.last_modified }
             }
         }
     }
 
     static async *onDelete(pattern: string | string[]) {
         
-        for await (const id of this.listen(pattern, "delete")) yield id
+        for await (const event of this.listen(pattern, "delete")) yield event.id
     }
 
-    static async *onChange(pattern: string | string[]) {
+    static async *onChange(pattern: string | string[], updated?: _updated) {
         
-        for await (const id of this.listen(pattern, "upsert")) yield id
+        for await (const ev of this.listen(pattern, "upsert")) {
+
+            if(updated) {
+
+                if((updated.$gt || updated.$gte) && (updated.$lt || updated.$lte)) {
+
+                    if(updated.$gt && updated.$lt) {
+
+                        if(updated.$gt! > updated.$lt!) throw new Error("Invalid updated query")
+
+                        if(ev.last_modified! > updated.$gt! && ev.last_modified! < updated.$lt!) yield ev.id
+                    
+                    } else if(updated.$gt && updated.$lte) {
+
+                        if(updated.$gt! > updated.$lte!) throw new Error("Invalid updated query")
+
+                        if(ev.last_modified! > updated.$gt! && ev.last_modified! <= updated.$lte!) yield ev.id
+                    
+                    } else if(updated.$gte && updated.$lt) {
+    
+                        if(updated.$gte! > updated.$lt!) throw new Error("Invalid updated query")
+    
+                        if(ev.last_modified! >= updated.$gte! && ev.last_modified! < updated.$lt!) yield ev.id
+                    
+                    } else if(updated.$gte && updated.$lte) {
+    
+                        if(updated.$gte! > updated.$lte!) throw new Error("Invalid updated query")
+    
+                        if(ev.last_modified! >= updated.$gte! && ev.last_modified! <= updated.$lte!) yield ev.id
+                    }
+                
+                } else if((updated.$gt || updated.$gte) && !updated.$lt && !updated.$lte) {
+
+                    if(updated.$gt && ev.last_modified! > updated.$gt!) yield ev.id
+
+                    else if(updated.$gte && ev.last_modified! >= updated.$gte!) yield ev.id
+
+                } else if(!updated.$gt && !updated.$gte && (updated.$lt || updated.$lte)) {
+    
+                    if(updated.$lt && ev.last_modified! < updated.$lt!) yield ev.id
+    
+                    else if(updated.$lte && ev.last_modified! <= updated.$lte!) yield ev.id
+                }
+            }
+
+            yield ev.id
+        }
     }
 
-    static searchIndexes(pattern: string | string[]) {
+    static searchIndexes(pattern: string | string[], updated?: _updated) {
 
         const indexes = new Set<string>()
 
         if(Array.isArray(pattern)) {
             for(const p of pattern) Walker.search(p).forEach(idx => indexes.add(idx))
-        } else return Walker.search(pattern)
+        } else Walker.search(pattern).forEach(idx => indexes.add(idx))
+
+        if(updated) {
+
+            if((updated.$gt || updated.$gte) && (updated.$lt || updated.$lte)) {
+
+                if(updated.$gt && updated.$lt) {
+
+                    if(updated.$gt! > updated.$lt!) throw new Error("Invalid updated query")
+
+                    return Array.from(indexes).filter(idx => {
+                        return Bun.file(`${this.DB_PATH}/${idx}`).lastModified > updated.$gt! && Bun.file(`${this.DB_PATH}/${idx}`).lastModified < updated.$lt!
+                    })
+                
+                } else if(updated.$gt && updated.$lte) {
+
+                    if(updated.$gt! > updated.$lte!) throw new Error("Invalid updated query")
+
+                    return Array.from(indexes).filter(idx => {
+                        return Bun.file(`${this.DB_PATH}/${idx}`).lastModified > updated.$gt! && Bun.file(`${this.DB_PATH}/${idx}`).lastModified <= updated.$lte!
+                    })
+                
+                } else if(updated.$gte && updated.$lt) {
+
+                    if(updated.$gte! > updated.$lt!) throw new Error("Invalid updated query")
+
+                    return Array.from(indexes).filter(idx => {
+                        return Bun.file(`${this.DB_PATH}/${idx}`).lastModified >= updated.$gte! && Bun.file(`${this.DB_PATH}/${idx}`).lastModified < updated.$lt!
+                    })
+                
+                } else if(updated.$gte && updated.$lte) {
+
+                    if(updated.$gte! > updated.$lte!) throw new Error("Invalid updated query")
+
+                    return Array.from(indexes).filter(idx => {
+                        return Bun.file(`${this.DB_PATH}/${idx}`).lastModified >= updated.$gte! && Bun.file(`${this.DB_PATH}/${idx}`).lastModified <= updated.$lte!
+                    })
+                }
+
+            } else if((updated.$gt || updated.$gte) && !updated.$lt && !updated.$lte) {
+
+                return Array.from(indexes).filter(idx => {
+                    return updated.$gt ? Bun.file(`${this.DB_PATH}/${idx}`).lastModified > updated.$gt! : Bun.file(`${this.DB_PATH}/${idx}`).lastModified >= updated.$gte!
+                })
+            
+            } else if(!updated.$gt && !updated.$gte && (updated.$lt || updated.$lte)) {
+
+                return Array.from(indexes).filter(idx => {
+                    return updated.$lt ? Bun.file(`${this.DB_PATH}/${idx}`).lastModified < updated.$lt! : Bun.file(`${this.DB_PATH}/${idx}`).lastModified <= updated.$lte!
+                })
+            }
+        }
 
         return Array.from(indexes)
     }

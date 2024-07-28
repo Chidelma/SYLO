@@ -17,6 +17,13 @@ interface _joinOperand<U> {
     $lte?: keyof U
 }
 
+interface _updated {
+    $gt?: number
+    $lt?: number
+    $gte?: number
+    $lte?: number
+}
+
 type _op<T> = Partial<Record<keyof T, _operand>>
 
 type _on<T, U> = Partial<Record<keyof T, _joinOperand<U>>>
@@ -41,6 +48,7 @@ interface _storeQuery<T extends Record<string, any>> {
     $limit?: number
     $onlyIds?: boolean
     $groupby?: keyof T
+    $updated?: _updated
 }
 
 interface _condition { column: string, operator: string, value: string | number| boolean | null }

@@ -12,6 +12,8 @@ export default class Stawrij {
 
     private static LOGGING = process.env.LOGGING === 'true'
 
+    private static CACHE_URL = process.env.CACHE_URL
+
     static async executeSQL<T extends Record<string, any>, U extends Record<string, any> = {}>(SQL: string) {
 
         const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|USE)/i)
@@ -186,7 +188,7 @@ export default class Stawrij {
         
         try {
 
-            const indexes = Dir.searchIndexes(Query.getExprs(updateSchema.$where ?? {}, collection))
+            const indexes = Dir.searchIndexes(Query.getExprs(updateSchema.$where ?? {}, collection), updateSchema?.$where?.$updated)
 
             const ids = Array.from(new Set(indexes.map(idx => idx.split('/').pop()!)))
 
@@ -233,7 +235,7 @@ export default class Stawrij {
 
         try {
 
-            const indexes = Dir.searchIndexes(Query.getExprs(deleteSchema ?? {}, collection))
+            const indexes = Dir.searchIndexes(Query.getExprs(deleteSchema ?? {}, collection), deleteSchema?.$updated)
 
             const ids = Array.from(new Set(indexes.map(idx => idx.split('/').pop()!)))
 
@@ -418,7 +420,7 @@ export default class Stawrij {
                     }
                 }
                 
-                for await (const _id of Dir.onChange(Query.getExprs(query ?? {}, collection))) {
+                for await (const _id of Dir.onChange(Query.getExprs(query ?? {}, collection), query?.$updated)) {
 
                     if(query && query.$onlyIds) {
                         await Bun.sleep(100)
@@ -448,7 +450,7 @@ export default class Stawrij {
 
                 const ids = new Set<_uuid>()
 
-                const indexes = Dir.searchIndexes(Query.getExprs(query ?? {}, collection))
+                const indexes = Dir.searchIndexes(Query.getExprs(query ?? {}, collection), query?.$updated)
 
                 for(let i = 0; i < indexes.length; i++) {
                     ids.add(indexes[i].split('/').pop()! as _uuid)

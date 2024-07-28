@@ -291,7 +291,7 @@ export default class {
             for(const cond of andGroups) {
 
                 const condition = this.parseSQLCondition(cond)
-                // @ts-ignore
+
                 result.$on[condition.column as keyof T] = this.mapConditionToOperand(condition) as _joinOperand<U>
             }
 
@@ -320,7 +320,15 @@ export default class {
 
                 andConditionsArray.forEach((cond) => {
                     const condition = this.parseSQLCondition(cond)
-                    andGroupConditions[condition.column as keyof T] = this.mapConditionToOperand(condition)
+
+                    if(condition.column === '_updated' && !result.$updated) {
+                        result.$updated ??= {} as _updated
+                        if(condition.operator === '<' && !result.$updated.$lt) result.$updated.$lt = Number(condition.value)
+                        else if(condition.operator === '>' && !result.$updated.$gt) result.$updated.$gt = Number(condition.value)
+                        else if(condition.operator === '>=' && !result.$updated.$gte) result.$updated.$gte = Number(condition.value)
+                        else if(condition.operator === '<=' && !result.$updated.$lte) result.$updated.$lte = Number(condition.value)
+                        else throw new Error("Invalid SQL UPDATED clause")
+                    } else andGroupConditions[condition.column as keyof T] = this.mapConditionToOperand(condition)
                 })
 
                 orConditions.push(andGroupConditions)
