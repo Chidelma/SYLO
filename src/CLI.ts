@@ -3,7 +3,7 @@ import Silo from './Stawrij'
 
 try {
 
-    const SQL = process.argv.slice(1)[0]
+    const SQL = process.argv[process.argv.length - 1]
 
     const op = SQL.match(/^((?:SELECT|select)|(?:INSERT|insert)|(?:UPDATE|update)|(?:DELETE|delete)|(?:CREATE|create)|(?:ALTER|alter)|(?:DROP|drop)|(?:USE|use))/i)
 
