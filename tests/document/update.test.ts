@@ -55,7 +55,7 @@ describe("SQL", async () => {
         const keys = Object.keys(todo)
         const values = Object.values(todo).map(val => JSON.stringify(val))
 
-        return Silo.executeSQL<_todo>(`INSERT INTO ${TODOS} (${keys.join(',')}) VALUES (${values.join('\\')})`)
+        return Silo.executeSQL<_todo>(`INSERT INTO ${TODOS} (${keys.join(',')}) VALUES (${values.join('|')})`)
     }))
 
     test("UPDATE CLAUSE", async () => {

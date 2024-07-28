@@ -7,7 +7,6 @@ rmSync(process.env.DATA_PREFIX!, {recursive:true})
 mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
 
 const ALBUMS = 'albums'
-
 const POSTS = 'posts'
 
 await Promise.all([Silo.createSchema(ALBUMS), Silo.createSchema(POSTS)])

@@ -147,11 +147,11 @@ export default class {
 
             const columns = cols.trim().split(',')
 
-            const values = vals.trim().split('\\')
+            const values = vals.trim().split('|')
 
             if(columns.length !== values.length) throw new Error("Length of Columns and Values don't match")
             
-                for(let i = 0; i < columns.length; i++) {
+            for(let i = 0; i < columns.length; i++) {
 
                 try {
                     insert.$values[columns[i] as keyof T] = JSON.parse(values[i])
@@ -183,7 +183,7 @@ export default class {
 
             update.$collection = table.trim()
 
-            const setConditions = setClause.split('\\').map((cond) => cond.trim())
+            const setConditions = setClause.split('|').map((cond) => cond.trim())
 
             for(let i = 0; i < setConditions.length; i++) {
 

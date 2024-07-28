@@ -63,7 +63,7 @@ describe("SQL", async () => {
         const keys = Object.keys(user)
         const values = Object.values(user).map(val => JSON.stringify(val))
 
-        return Silo.executeSQL<_user>(`INSERT INTO ${USERS} (${keys.join(',')}) VALUES (${values.join('\\')})`)
+        return Silo.executeSQL<_user>(`INSERT INTO ${USERS} (${keys.join(',')}) VALUES (${values.join('|')})`)
     }))
 
     let cursor = await Silo.executeSQL<_user>(`SELECT * FROM users LIMIT 1`) as _storeCursor<_user>
