@@ -14,6 +14,8 @@ export default class Stawrij {
 
     private static CACHE_URL = process.env.CACHE_URL
 
+    private static SYSTEM_COLLECTIONS = ['_heaps', '_logs']
+
     static async executeSQL<T extends Record<string, any>, U extends Record<string, any> = {}>(SQL: string) {
 
         const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|USE)/i)
@@ -139,7 +141,7 @@ export default class Stawrij {
 
             if(this.LOGGING) console.log(`Writing ${_id}`)
 
-            if(this.SCHEMA === 'STRICT') await Dir.validateData(collection, data)
+            if(this.SCHEMA === 'STRICT' && !this.SYSTEM_COLLECTIONS.includes(collection)) await Dir.validateData(collection, data)
 
             await Dir.aquireLock(collection, _id)
             

@@ -7,6 +7,8 @@ export default class {
 
     private static readonly CHAR_LIMIT = 255
 
+    private static readonly MAX_CHAR_LIMIT = process.env.MAX_CHAR_LIMIT === 'true'
+
     private static readonly SLASH_ASCII = "%2F"
 
     private static SCHEMA_PATH = process.env.SCHEMA_PATH || `${process.cwd()}/schemas`
@@ -177,11 +179,11 @@ export default class {
 
         if(!match) throw new Error(`declaration file for '${collection}' not formatted correctly`)
 
-        const [__, yaml] = match
+        const [_, yaml] = match
 
         const lines = yaml.replaceAll(',', '').split('\n').map(line => line.trim()).filter(line => line.length > 0)
 
-        const [tree, _] = this.parseLines(lines)
+        const [ tree ] = this.parseLines(lines)
 
         return this.constructSchema(tree)
     }
@@ -480,8 +482,14 @@ export default class {
             } else if(typeof obj[field] === 'object' && Array.isArray(obj[field])) {
                 const items: (string | number | boolean)[] = obj[field]
                 if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
-                items.forEach((item, idx) => indexes.push(`${collection}/${newField}/${idx}/${String(item).replaceAll('/', this.SLASH_ASCII)}/${_id}`))
-            } else indexes.push(`${collection}/${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
+                items.forEach((item, idx) => {
+                    if(this.MAX_CHAR_LIMIT && String(item).length > this.CHAR_LIMIT) throw new Error(`Field '${item}' is too long`)
+                    indexes.push(`${collection}/${newField}/${idx}/${String(item).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
+                })
+            } else {
+                if(this.MAX_CHAR_LIMIT && String(obj[field]).length > this.CHAR_LIMIT) throw new Error(`Field '${obj[field]}' is too long`)
+                indexes.push(`${collection}/${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
+            }
         }
 
         return indexes

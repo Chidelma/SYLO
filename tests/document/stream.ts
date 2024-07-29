@@ -1,9 +1,5 @@
-import Silo from '../../src/Stawrij'
+import { generateHeapSnapshot } from "bun";
 
-const PHOTOS = 'photos'
+const heap = generateHeapSnapshot();
 
-let count = 0
-
-for await(const data of Silo.findDocs(PHOTOS)) {
-    console.log(data, ++count)
-}
+await Bun.write(Bun.file("heap.json"), JSON.stringify(heap, null, 2));
