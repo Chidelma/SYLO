@@ -1,5 +1,7 @@
-import { generateHeapSnapshot } from "bun";
 
-const heap = generateHeapSnapshot();
 
-await Bun.write(Bun.file("heap.json"), JSON.stringify(heap, null, 2));
+const test = [0, 1, 2, 4]
+
+const testarr = JSON.stringify(test)
+
+console.log(JSON.parse(testarr))

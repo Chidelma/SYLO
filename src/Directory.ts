@@ -482,10 +482,8 @@ export default class {
             } else if(typeof obj[field] === 'object' && Array.isArray(obj[field])) {
                 const items: (string | number | boolean)[] = obj[field]
                 if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
-                items.forEach((item, idx) => {
-                    if(this.MAX_CHAR_LIMIT && String(item).length > this.CHAR_LIMIT) throw new Error(`Field '${item}' is too long`)
-                    indexes.push(`${collection}/${newField}/${idx}/${String(item).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
-                })
+                if(this.MAX_CHAR_LIMIT && JSON.stringify(items).length > this.CHAR_LIMIT) throw new Error(`Field '${items.join('')}' is too long`)
+                indexes.push(`${collection}/${newField}/${JSON.stringify(items).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
             } else {
                 if(this.MAX_CHAR_LIMIT && String(obj[field]).length > this.CHAR_LIMIT) throw new Error(`Field '${obj[field]}' is too long`)
                 indexes.push(`${collection}/${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
@@ -509,19 +507,14 @@ export default class {
 
                 const field = fields.shift()!
 
-                if(fields[0].match(/^\d+$/)) {
-                    if(!Array.isArray(curr[field])) curr[field] = []
-                } else {
-                    if(typeof curr[field] !== 'object' || curr[field] === null) curr[field] = {}
-                }
+                if(typeof curr[field] !== 'object' || curr[field] === null) curr[field] = {}
 
                 curr = curr[field]
             }
 
             const lastKey = fields.shift()!
 
-            if(lastKey.match(/^\d+$/)) curr[parseInt(lastKey, 10)] = this.parseValue(fieldVal[fullField].replaceAll(this.SLASH_ASCII, '/'))
-            else curr[lastKey] = this.parseValue(fieldVal[fullField].replaceAll(this.SLASH_ASCII, '/'))
+            curr[lastKey] = this.parseValue(fieldVal[fullField].replaceAll(this.SLASH_ASCII, '/'))
         }
 
         return data as T
