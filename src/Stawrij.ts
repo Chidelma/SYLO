@@ -14,7 +14,7 @@ export default class Stawrij {
 
     private static CACHE_URL = process.env.CACHE_URL
 
-    private static SYSTEM_COLLECTIONS = ['_heaps', '_logs']
+    private static SYSTEM_COLLECTIONS = ['_heaps', '_logs', '_requests']
 
     static async executeSQL<T extends Record<string, any>, U extends Record<string, any> = {}>(SQL: string) {
 
