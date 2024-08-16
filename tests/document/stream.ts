@@ -1,7 +1,9 @@
+import Silo from '../../src/Stawrij'
 
+const start = Date.now()
 
-const test = [0, 1, 2, 4]
+let count = 0
 
-const testarr = JSON.stringify(test)
-
-console.log(JSON.parse(testarr))
+for await (const data of Silo.findDocs<_tips>('tips', { $limit: 1000, $onlyIds: true }).collect()) {
+  console.log(data, Date.now() - start, 'ms', ++count)
+}

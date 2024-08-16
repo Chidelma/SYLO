@@ -1,10 +1,10 @@
 import { test, expect, describe } from 'bun:test'
 import Silo from '../../src/Stawrij'
-import { posts, albums } from '../data'
+import { postsURL, albumURL } from '../data'
 import { mkdirSync, rmdirSync, existsSync } from 'node:fs'
 
-rmdirSync(process.env.DATA_PREFIX!, {recursive:true})
-mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
+rmdirSync(process.env.DB_DIR!, {recursive:true})
+mkdirSync(process.env.DB_DIR!, {recursive:true})
 
 describe("NO-SQL", () => {
 
@@ -14,9 +14,9 @@ describe("NO-SQL", () => {
 
         await Silo.createSchema(POSTS)
 
-        await Silo.bulkDataPut<_post>('posts', posts.slice(0, 25))
+        await Silo.importBulkData<_post>(POSTS, new URL(postsURL))
 
-        Silo.dropSchema(POSTS)
+        await Silo.dropSchema(POSTS)
 
         expect(existsSync(`${process.env.DATA_PREFIX}/${POSTS}`)).toBe(false)
 
@@ -31,13 +31,7 @@ describe("SQL", () => {
 
         await Silo.executeSQL<_album>(`CREATE TABLE ${ALBUMS}`)
 
-        await Promise.all(albums.slice(0, 25).map((album: _album) => {
-
-            const keys = Object.keys(album)
-            const values = Object.values(album).map(val => JSON.stringify(val))
-
-            return Silo.executeSQL<_album>(`INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join('|')})`)
-        }))
+        await Silo.importBulkData<_album>(ALBUMS, new URL(albumURL))
 
         await Silo.executeSQL<_album>(`DROP TABLE ${ALBUMS}`)
 

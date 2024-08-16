@@ -1,34 +1,51 @@
 import { test, expect, describe } from 'bun:test'
 import Silo from '../../src/Stawrij'
-import { albums, posts } from '../data'
+import { albumURL, postsURL } from '../data'
 import { mkdirSync, rmSync } from 'node:fs'
 
-rmSync(process.env.DATA_PREFIX!, {recursive:true})
-mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
+rmSync(process.env.DB_DIR!, {recursive:true})
+mkdirSync(process.env.DB_DIR!, {recursive:true})
 
 const ALBUMS = 'albums'
 const POSTS = 'posts'
 
 await Promise.all([Silo.createSchema(ALBUMS), Silo.createSchema(POSTS)])
 
-await Promise.all([
-    Silo.bulkDataPut<_album>(ALBUMS, albums.slice(0, 25)),
-    Silo.bulkDataPut<_post>(POSTS, posts.slice(0, 25))
-])
+describe("NO-SQL", async() => {
 
-describe("NO-SQL", () => {
+    const count = await Silo.importBulkData<_album>(ALBUMS, new URL(albumURL), 100)
 
     test("SELECT ALL", async () => {
 
-        const results = await Silo.findDocs<_album>(ALBUMS).collect() as Map<_uuid, _album>
+        const results = new Map<_ulid, _album>()
 
-        expect(results.size).toBe(25)
+        for await (const data of Silo.findDocs<_album>(ALBUMS).collect()) {
+
+            const doc = data as Map<_ulid, _album>
+
+            for(const [id, album] of doc) {
+
+                results.set(id, album)
+            }
+        }
+
+        expect(results.size).toBe(count)
     })
 
     test("SELECT PARTIAL", async () => {
 
-        const results = await Silo.findDocs<_album>(ALBUMS, { $select: ["title"] }).collect() as Map<_uuid, _album>
+        const results = new Map<_ulid, _album>()
 
+        for await (const data of Silo.findDocs<_album>(ALBUMS, { $select: ["title"] }).collect()) {
+
+            const doc = data as Map<_ulid, _album>
+
+            for(const [id, album] of doc) {
+
+                results.set(id, album)
+            }
+        }
+        
         const allAlbums = Array.from(results.values())
 
         const onlyTtitle = allAlbums.every(user => user.title && !user.userId)
@@ -38,7 +55,12 @@ describe("NO-SQL", () => {
 
     test("GET ONE", async () => {
 
-        const ids = await Silo.findDocs<_album>(ALBUMS, { $limit: 1, $onlyIds: true }).collect() as _uuid[]
+        const ids: _ulid[] = []
+
+        for await (const data of Silo.findDocs<_album>(ALBUMS, { $limit: 1, $onlyIds: true }).collect()) {
+
+            ids.push(data as _ulid)
+        }
 
         const result = await Silo.getDoc<_album>(ALBUMS, ids[0]).once()
 
@@ -49,8 +71,18 @@ describe("NO-SQL", () => {
 
     test("SELECT CLAUSE", async () => {
 
-        const results = await Silo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $eq: 2 } }] }).collect() as Map<_uuid, _album>
-        
+        const results = new Map<_ulid, _album>()
+
+        for await (const data of Silo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $eq: 2 } }] }).collect()) {
+
+            const doc = data as Map<_ulid, _album>
+
+            for(const [id, album] of doc) {
+
+                results.set(id, album)
+            }
+        }
+
         const allAlbums = Array.from(results.values())
         
         const onlyUserId = allAlbums.every(user => user.userId === 2)
@@ -60,33 +92,53 @@ describe("NO-SQL", () => {
 
     test("SELECT LIMIT", async () => {
 
-        const results = await Silo.findDocs<_album>(ALBUMS, { $limit: 5 }).collect() as Map<_uuid, _album>
+        const results = new Map<_ulid, _album>()
+
+        for await (const data of Silo.findDocs<_album>(ALBUMS, { $limit: 5 }).collect()) {
+
+            const doc = data as Map<_ulid, _album>
+
+            for(const [id, album] of doc) {
+
+                results.set(id, album)
+            }
+        }
 
         expect(results.size).toBe(5)
     })
 
     test("SELECT GROUP BY", async () => {
 
-        const results = await Silo.findDocs<_album>(ALBUMS, { $groupby: "userId", $onlyIds: true }).collect() as Map<_album[keyof _album], _uuid[]>
-        
+        const results = new Map<_album[keyof _album], _ulid[]>()
+
+        for await (const data of Silo.findDocs<_album>(ALBUMS, { $groupby: "userId", $onlyIds: true }).collect()) {
+
+            const doc = data as Map<_album[keyof _album], _ulid[]>
+
+            for(const [key, ids] of doc) {
+
+                results.set(key, ids)
+            }
+        }
+
         expect(results.size).toBeGreaterThan(0)
     })
 
     test("SELECT JOIN", async () => {
 
-        const results = await Silo.joinDocs<_album, _post>({ $leftCollection: ALBUMS, $rightCollection: POSTS, $mode: "inner",  $on: { "userId": { $eq: "id" } } }) as Map<_uuid[], _album | _post>
+        const results = await Silo.joinDocs<_album, _post>({ $leftCollection: ALBUMS, $rightCollection: POSTS, $mode: "inner",  $on: { "userId": { $eq: "id" } } }) as Map<_ulid[], _album | _post>
         
         expect(results.size).toBeGreaterThan(0)
     })
 })
 
-describe("SQL", () => {
+describe("SQL", async () => {
+
+    const count = await Silo.importBulkData<_post>(POSTS, new URL(postsURL), 100)
 
     test("SELECT PARTIAL", async () => {
 
-        const cursor = await Silo.executeSQL<_album>(`SELECT title FROM ${ALBUMS}`) as _storeCursor<_album>
-
-        const results = await cursor.collect() as Map<_uuid, _album>
+        const results = await Silo.executeSQL<_album>(`SELECT title FROM ${ALBUMS}`) as Map<_ulid, _album>
 
         const allAlbums = Array.from(results.values())
         
@@ -97,9 +149,7 @@ describe("SQL", () => {
 
     test("SELECT CLAUSE", async () => {
 
-        const cursor = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} WHERE userId = 2`) as _storeCursor<_album>
-
-        const results = await cursor.collect() as Map<_uuid, _album>
+        const results = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} WHERE userId = 2`) as Map<_ulid, _album>
         
         const allAlbums = Array.from(results.values())
         
@@ -110,34 +160,28 @@ describe("SQL", () => {
 
     test("SELECT ALL", async () => {
 
-        const cursor = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as _storeCursor<_album>
+        const results = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as Map<_ulid, _album>
 
-        const results = await cursor.collect() as Map<_uuid, _album>
-
-        expect(results.size).toBe(25)
+        expect(results.size).toBe(count)
     })
 
     test("SELECT LIMIT", async () => {
 
-        const cursor = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} LIMIT 5`) as _storeCursor<_album>
-
-        const results = await cursor.collect() as Map<_uuid, _album>
+        const results = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} LIMIT 5`) as Map<_ulid, _album>
 
         expect(results.size).toBe(5)
     })
 
     test("SELECT GROUP BY", async () => {
 
-        const cursor = await Silo.executeSQL<_album>(`SELECT userId FROM ${ALBUMS} GROUP BY userId`) as _storeCursor<_album>
-
-        const results = await cursor.collect() as Map<_album[keyof _album], Map<_uuid, _album>>
+        const results = await Silo.executeSQL<_album>(`SELECT userId FROM ${ALBUMS} GROUP BY userId`) as unknown as Map<_album[keyof _album], Map<_ulid, _album>>
         
         expect(results.size).toBeGreaterThan(0)
     })
 
     test("SELECT JOIN", async () => {
 
-        const results = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} INNER JOIN ${POSTS} ON userId = id`) as Map<_uuid[], _album | _post>
+        const results = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} INNER JOIN ${POSTS} ON userId = id`) as Map<_ulid[], _album | _post>
         
         expect(results.size).toBeGreaterThan(0)
     })

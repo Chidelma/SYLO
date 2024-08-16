@@ -16,29 +16,29 @@ export default class {
 
                         const prefix = `${collection ?? query.$collection}/${column}`
 
-                        if(col.$eq) exprs = new Set([...exprs, `${prefix}/${col.$eq}/**/*`])
-                        if(col.$ne) exprs = new Set([...exprs, `${prefix}/!(${col.$ne})/**/*`])
+                        if(col.$eq) exprs = new Set([...exprs, `${prefix}/${col.$eq}/**`])
+                        if(col.$ne) exprs = new Set([...exprs, `${prefix}/!(${col.$ne})/**`])
                         if(col.$gt) {
                             const valOp = this.getGtOp(String(col.$gt).split('').map((n) => Number(n)))
-                            exprs = new Set([...exprs, `${prefix}/${valOp}/**/*`])
+                            exprs = new Set([...exprs, `${prefix}/${valOp}/**`])
                         }
                         if(col.$gte) {
                             const valOp = this.getGteOp(String(col.$gte).split('').map((n) => Number(n)))
-                            exprs = new Set([...exprs, `${prefix}/${valOp}/**/*`])
+                            exprs = new Set([...exprs, `${prefix}/${valOp}/**`])
                         }
                         if(col.$lt) {
                             const valOp = this.getLtOp(String(col.$lt).split('').map((n) => Number(n)))
-                            exprs = new Set([...exprs, `${prefix}/${valOp}/**/*`])
+                            exprs = new Set([...exprs, `${prefix}/${valOp}/**`])
                         }
                         if(col.$lte) {
                             const valOp = this.getLteOp(String(col.$lte).split('').map((n) => Number(n)))
-                            exprs = new Set([...exprs, `${prefix}/${valOp}/**/*`])
+                            exprs = new Set([...exprs, `${prefix}/${valOp}/**`])
                         }
-                        if(col.$like) exprs = new Set([...exprs, `${prefix}/${col.$like.replaceAll('%', '*')}/**/*`])
+                        if(col.$like) exprs = new Set([...exprs, `${prefix}/${col.$like.replaceAll('%', '*')}/**`])
                     }
                 }
 
-            } else exprs = new Set([`${collection ?? query.$collection}/**/*`])
+            } else exprs = new Set([`${collection ?? query.$collection}/**`])
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Query.getExprs -> ${e.message}`)

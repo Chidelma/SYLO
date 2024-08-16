@@ -1,3 +1,5 @@
 node_modules
 .env
 db
+docker-compose.yml
+Dockerfile

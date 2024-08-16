@@ -1,13 +1,3 @@
-interface _operand {
-    $eq?: any
-    $ne?: any
-    $gt?: number
-    $lt?: number
-    $gte?: number
-    $lte?: number
-    $like?: string
-}
-
 interface _joinOperand<U> {
     $eq?: keyof U
     $ne?: keyof U
@@ -17,11 +7,21 @@ interface _joinOperand<U> {
     $lte?: keyof U
 }
 
-interface _updated {
+interface _timestamp {
     $gt?: number
     $lt?: number
     $gte?: number
     $lte?: number
+}
+
+interface _operand {
+    $eq?: any
+    $ne?: any
+    $gt?: number
+    $lt?: number
+    $gte?: number
+    $lte?: number
+    $like?: string
 }
 
 type _op<T> = Partial<Record<keyof T, _operand>>
@@ -48,7 +48,8 @@ interface _storeQuery<T extends Record<string, any>> {
     $limit?: number
     $onlyIds?: boolean
     $groupby?: keyof T
-    $updated?: _updated
+    $updated?: _timestamp
+    $created?: _timestamp
 }
 
 interface _condition { column: string, operator: string, value: string | number| boolean | null }

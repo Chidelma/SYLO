@@ -322,13 +322,22 @@ export default class {
                     const condition = this.parseSQLCondition(cond)
 
                     if(condition.column === '_updated' && !result.$updated) {
-                        result.$updated ??= {} as _updated
+                        result.$updated ??= {} as _timestamp
                         if(condition.operator === '<' && !result.$updated.$lt) result.$updated.$lt = Number(condition.value)
                         else if(condition.operator === '>' && !result.$updated.$gt) result.$updated.$gt = Number(condition.value)
                         else if(condition.operator === '>=' && !result.$updated.$gte) result.$updated.$gte = Number(condition.value)
                         else if(condition.operator === '<=' && !result.$updated.$lte) result.$updated.$lte = Number(condition.value)
                         else throw new Error("Invalid SQL UPDATED clause")
-                    } else andGroupConditions[condition.column as keyof T] = this.mapConditionToOperand(condition)
+                    } 
+                    else if(condition.column === '_created' && !result.$created) {
+                        result.$created ??= {} as _timestamp
+                        if(condition.operator === '<' && !result.$created.$lt) result.$created.$lt = Number(condition.value)
+                        else if(condition.operator === '>' && !result.$created.$gt) result.$created.$gt = Number(condition.value)
+                        else if(condition.operator === '>=' && !result.$created.$gte) result.$created.$gte = Number(condition.value)
+                        else if(condition.operator === '<=' && !result.$created.$lte) result.$created.$lte = Number(condition.value)
+                        else throw new Error("Invalid SQL CREATED clause")
+                    }
+                    else andGroupConditions[condition.column as keyof T] = this.mapConditionToOperand(condition)
                 })
 
                 orConditions.push(andGroupConditions)

@@ -1,80 +1,154 @@
-import { FileChangeInfo, watch } from "node:fs/promises"
-import { mkdirSync, existsSync } from "node:fs"
+import { FileChangeInfo, watch, mkdir, exists, opendir, readlink } from "node:fs/promises"
+import { spawn } from "bun"
+import ULID from "./ULID"
 
-export default class {
+export default class Walker {
 
-    private static listeners: Map<string, AsyncIterable<FileChangeInfo<string>>> = new Map()
+    private static readonly listeners: Map<string, AsyncIterable<FileChangeInfo<string>>> = new Map()
 
-    private static readonly DB_PATH = process.env.DATA_PREFIX || `${process.cwd()}/db`
+    static readonly DSK_DB = process.env.DB_DIR || `${process.cwd()}/db`
 
-    static search(pattern: string) {
-        return Array.from(new Bun.Glob(pattern).scanSync({ cwd: this.DB_PATH }))
+    static readonly TMP_DB = process.env.TMPFS
+
+    static readonly DIRECT_DIR = '.direct'
+
+    private static async *searchOnlyCollection(collection: string) {
+
+        const uniqueIds = new Set<string>()
+
+        const stream = spawn(['find', `${this.DSK_DB}/${collection}/${this.DIRECT_DIR}`, '-name', '*', '-type', 'd'], {
+            stdin: 'pipe',
+            stderr: 'pipe'
+        })
+
+        let isIncomplete = false    
+        let incompletePath = ''
+
+        for await (const chunk of stream.stdout) {
+
+            const folders = new TextDecoder().decode(chunk).split('\n')
+
+            for (let folder of folders) {
+
+                if(isIncomplete) {
+                    folder = incompletePath + folder
+                    isIncomplete = false
+                    incompletePath = ''
+                }
+
+                try {
+
+                    const files = await opendir(folder)
+
+                    const indexes: string[] = []
+                    let _id: _ulid = '' as _ulid
+
+                    for await (const file of files) {
+                        if(!file.isSymbolicLink()) continue
+                        const data = await readlink(`${folder}/${file.name}`)
+                        _id = data.split('/').pop()! as _ulid
+                        indexes.push(data.replace(`${this.DSK_DB}/`, ''))
+                    }
+
+                    if(!uniqueIds.has(_id)) yield { _id, docIndexes: indexes }
+
+                    uniqueIds.add(_id)
+
+                } catch(e) {
+                    isIncomplete = true
+                    incompletePath = folder
+                }
+            }
+        } 
     }
 
-    private static async *streamPattern(pattern: string) {
+    private static async *searchField(collection: string, pattern: string) {
 
-        let lowestLatency = 500
+        const uniqueIds = new Set<string>()
 
-        const glob = new Bun.Glob(pattern)
+        const stream = spawn(['find', `${Walker.DSK_DB}/${collection}`, '-name', '*', '-type', 'f'], {
+            stdin: 'pipe',
+            stderr: 'pipe'
+        })
 
-        const iter = glob.scan({ cwd: this.DB_PATH })
+        let isIncomplete = false    
+        let incompletePath = ''
 
-        while(true) {
+        for await (const chunk of stream.stdout) {
 
-            let res: IteratorResult<string | undefined, any>
+            const paths = new TextDecoder().decode(chunk).split('\n')
 
-            const startTime = Date.now()
+            for (const path of paths) {
 
-            res = await Promise.race([
-                iter.next(),
-                new Promise<IteratorResult<string | undefined, any>>(resolve =>
-                    setTimeout(() => resolve({ done: true, value: undefined }), lowestLatency)
-                )
-            ])
+                let subPath = path.replace(`${Walker.DSK_DB}/`, '')
 
-            const elapsed = Date.now() - startTime
-            if(elapsed < lowestLatency) lowestLatency = elapsed + 1
+                if(isIncomplete) {
+                    subPath = incompletePath + subPath
+                    isIncomplete = false
+                    incompletePath = ''
+                }
 
-            if(res.done) break
+                if(!new Bun.Glob(pattern).match(subPath)) continue
 
-            yield res.value
+                const segements = subPath.split('/')
+
+                if(segements.length < 3) continue
+
+                const _id = segements.pop()! as _ulid
+
+                if(!ULID.isULID(_id)) {
+
+                    isIncomplete = true
+                    incompletePath = subPath
+
+                    continue
+                }
+
+                if(!uniqueIds.has(_id)) yield { _id, docIndexes: await this.getDocIndexes(segements.shift()!, _id) }
+
+                uniqueIds.add(_id)
+            }
+        } 
+    }
+
+    static async *search(pattern: string, listen: boolean = false, action: "upsert" | "delete" = "upsert") {
+
+        const segments = pattern.split('/');
+        const idx = segments.findIndex(seg => seg.includes('*'));
+        const starter = segments.slice(0, idx).join('/');
+
+        if(starter.split('/').length === 1) yield *this.searchOnlyCollection(starter)
+        else yield *this.searchField(starter, pattern)
+
+        const eventIds = new Set<string>()
+
+        if(listen) for await (const event of this.listen(pattern)) {
+
+            if(event.action !== action && eventIds.has(event.id))  {
+                eventIds.delete(event.id)
+            } else if(event.action === action && !eventIds.has(event.id)) {
+                eventIds.add(event.id)
+                yield { _id: event.id as _ulid, docIndexes: event.docIndexes }
+            }
         }
     }
 
-    static async *stream(pattern: string | string[]) {
+    static async getDocIndexes(collection: string, _id: _ulid) {
 
-        if(Array.isArray(pattern)) {
+        const indexes: string[] = []
 
-            for(const p of pattern) {
+        if(await exists(`${this.DSK_DB}/${collection}/${this.DIRECT_DIR}/${_id}`)) {
 
-                const iter = this.streamPattern(p)
+            const files = await opendir(`${this.DSK_DB}/${collection}/${this.DIRECT_DIR}/${_id}`)
 
-                do {    
-
-                    const res = await iter.next()
-
-                    if(res.done) break
-
-                    yield res.value
-                
-                } while(true)
+            for await (const file of files) {
+                if(!file.isSymbolicLink()) continue
+                const data = await readlink(`${this.DSK_DB}/${collection}/${this.DIRECT_DIR}/${_id}/${file.name}`)
+                indexes.push(data.replace(`${this.DSK_DB}/`, ''))
             }
+        }
 
-        } else {
-
-            const iter = this.streamPattern(pattern)
-
-            do {    
-
-                const res = await iter.next()
-
-                if(res.done) break
-
-                yield res.value
-            
-            } while(true)
-        }   
-
+        return indexes
     }
 
     private static async *processPattern(pattern: string) {
@@ -83,9 +157,9 @@ export default class {
 
         if(!this.listeners.has(table)) {
 
-            if(!existsSync(`${this.DB_PATH}/${table}`)) mkdirSync(`${this.DB_PATH}/${table}`, { recursive: true })
+            if(!await exists(`${this.DSK_DB}/${table}`)) await mkdir(`${this.DSK_DB}/${table}`, { recursive: true })
             
-            this.listeners.set(table, watch(`${this.DB_PATH}/${table}`, { recursive: true }))
+            this.listeners.set(table, watch(`${this.DSK_DB}/${table}`, { recursive: true }))
         }
 
         const watcher = this.listeners.get(table)!
@@ -96,11 +170,11 @@ export default class {
             
             if(event.filename && new Bun.Glob(pattern).match(path) && event.eventType !== 'change') {
 
-                const id = path.split('/').pop()!
+                const id = path.split('/').pop()! as _ulid
 
-                if(existsSync(`${this.DB_PATH}/${path}`)) {
-                    yield { id, action: "upsert", last_modified: Bun.file(`${this.DB_PATH}/${path}`).lastModified }
-                } else yield { id, action: "delete" }
+                if(await exists(`${this.DSK_DB}/${path}`)) {
+                    yield { id, action: "upsert", docIndexes: await this.getDocIndexes(table, id) }
+                } else yield { id, action: "delete", docIndexes: [] }
             }
         }
     }

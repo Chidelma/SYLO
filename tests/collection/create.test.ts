@@ -2,8 +2,8 @@ import { test, expect, describe } from 'bun:test'
 import Silo from '../../src/Stawrij'
 import { mkdirSync, readdirSync, rmdirSync } from 'node:fs'
 
-rmdirSync(process.env.DATA_PREFIX!, {recursive:true})
-mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
+rmdirSync(process.env.DB_DIR!, {recursive:true})
+mkdirSync(process.env.DB_DIR!, {recursive:true})
 
 describe("NO-SQL", () => {
 

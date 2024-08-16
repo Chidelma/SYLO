@@ -1,47 +1,50 @@
 import { test, expect, describe } from 'bun:test'
 import Silo from '../../src/Stawrij'
-import { albums, posts } from '../data'
+import { albumURL, postsURL } from '../data'
 import { mkdirSync, rmSync } from 'node:fs'
 
-rmSync(process.env.DATA_PREFIX!, {recursive:true})
-mkdirSync(process.env.DATA_PREFIX!, {recursive:true})
+rmSync(process.env.DB_DIR!, {recursive:true})
+mkdirSync(process.env.DB_DIR!, {recursive:true})
 
 describe("NO-SQL", () => {
 
+    const POSTS = 'posts'
+
     test("PUT", async () => {
 
-        await Silo.createSchema('posts')
+        await Silo.createSchema(POSTS)
 
-        await Silo.bulkDataPut<_post>('posts', posts.slice(0, 25))
+        const count = await Silo.importBulkData<_post>(POSTS, new URL(postsURL), 100)
 
-        const results = await Silo.findDocs<_post>('posts').collect() as Map<_uuid, _post>
+        const results = new Map<_ulid, _post>()
 
-        expect(results.size).toEqual(25)
+        for await (const data of Silo.findDocs<_post>(POSTS).collect()) {
 
+            const doc = data as Map<_ulid, _post>
+
+            for(const [id, post] of doc) {
+
+                results.set(id, post)
+            }
+        }
+
+        expect(results.size).toEqual(count)
     })
 })
 
-const ALBUMS = 'albums'
-
 describe("SQL", () => {
+
+    const ALBUMS = 'albums'
 
     test("INSERT", async () => {
 
         await Silo.createSchema(ALBUMS)
 
-        await Promise.all(albums.slice(0, 25).map((album: _album) => {
+        const count = await Silo.importBulkData<_album>(ALBUMS, new URL(albumURL), 100)
 
-            const keys = Object.keys(album)
-            const values = Object.values(album).map(val => JSON.stringify(val))
+        const results = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as Map<_ulid, _album>
 
-            return Silo.executeSQL<_album>(`INSERT INTO ${ALBUMS} (${keys.join(',')}) VALUES (${values.join('|')})`)
-        }))
-
-        const cursor = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as _storeCursor<_album>
-
-        const results = await cursor.collect() as Map<_uuid, _album>
-
-        expect(results.size).toEqual(25)
+        expect(results.size).toEqual(count)
 
     })
 })

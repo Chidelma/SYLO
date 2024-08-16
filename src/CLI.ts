@@ -25,11 +25,10 @@ try {
             console.log("Successfully dropped schema")
             break
         case "SELECT":
-            if(SQL.includes('JOIN')) console.log(res)
-            else console.log(await (res as _storeCursor<Record<string, any>>).collect())
+            console.log(res)
             break
         case "INSERT":
-            console.log(res as _uuid)
+            console.log(res as _ulid)
             break
         case "UPDATE":
             console.log(`Successfully updated ${res} document(s)`)

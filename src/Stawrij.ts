@@ -1,20 +1,17 @@
 import Query from './Kweeree'
 import Paser from './Paza'
 import Dir from "./Directory";
-import { invokeWorker } from "./utils/general";
+import ULID from './ULID';
+import Walker from './Walker';
+import { rmdir, mkdir, readdir, rm } from 'node:fs/promises';
 
 export default class Stawrij {
-
-    private static indexUrl = new URL('./workers/Directory.ts', import.meta.url).href
-    private static storeUrl = new URL('./workers/Stawrij.ts', import.meta.url).href
 
     private static SCHEMA = (process.env.SCHEMA || 'STRICT') as _schema
 
     private static LOGGING = process.env.LOGGING === 'true'
 
-    private static CACHE_URL = process.env.CACHE_URL
-
-    private static SYSTEM_COLLECTIONS = ['_heaps', '_logs', '_requests']
+    private static MAX_CPUS = navigator.hardwareConcurrency
 
     static async executeSQL<T extends Record<string, any>, U extends Record<string, any> = {}>(SQL: string) {
 
@@ -36,7 +33,14 @@ export default class Stawrij {
                 if(SQL.includes('JOIN')) return await Stawrij.joinDocs(query as _join<T, U>)
                 const selCol = (query as _storeQuery<T>).$collection
                 delete (query as _storeQuery<T>).$collection
-                return Stawrij.findDocs(selCol! as string, query as _storeQuery<T>) as _storeCursor<T>
+                const docs = new Map<_ulid, T>()
+                for await (const data of Stawrij.findDocs(selCol! as string, query as _storeQuery<T>).collect()) {
+                    const doc = data as Map<_ulid, T>
+                    for(let [_id, data] of doc) {
+                        docs.set(_id, data)
+                    }
+                }
+                return docs
             case "INSERT":
                 const insert = Paser.convertInsert<T>(SQL)
                 const insCol = insert.$collection
@@ -73,85 +77,221 @@ export default class Stawrij {
         }
     }
 
-    static dropSchema(collection: string) {
+    static async dropSchema(collection: string) {
         try {
-            Dir.dropSchema(collection)
+            await Dir.dropSchema(collection)
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.dropSchema -> ${e.message}`)
         }
     }
 
-    static getDoc<T extends Record<string, any>>(collection: string, _id: _uuid, onlyId: boolean = false) {
+    static async importBulkData<T extends Record<string, any>>(collection: string, url: URL, limit?: number) {
+
+        const res = await fetch(url)
+
+        if(!res.headers.get('content-type')?.includes('application/json')) throw new Error(`Invalid content type: ${res.headers.get('content-type')}`)
+
+        const allData: T[] = []
+
+        let batch = 0
+        let count = 0
+
+        let isIncomplete = false
+        let incompleteData = ''
+
+        const batchWrite = async () => {
+
+            batch++
+
+            if(limit && count + allData.length > limit) {
+                await Stawrij.batchPutData(collection, allData.slice(0, limit - count))
+                allData.length = 0
+                count = limit
+                return 
+            }
+
+            count += allData.length
+
+            if(count % 8000 === 0) console.log("Count:", count)
+
+            const start = Date.now()
+            await Stawrij.batchPutData(collection, allData)
+            const bytes = allData.toString().length
+            const elapsed = Date.now() - start
+            const bytesPerSec = (bytes / (elapsed / 1000)).toFixed(2)
+            if(this.LOGGING) {
+                console.log(`Batch ${batch} of ${JSON.stringify(allData).length} bytes took ${elapsed === Infinity ? 'Infinity' : elapsed}ms (${bytesPerSec} bytes/sec)`)
+            }
+
+            allData.length = 0
+        }
+
+        const processParquet = async (parquet: string) => {
+
+            const lines = parquet.split('\n')
+
+            for(let line of lines) {
+
+                try {
+
+                    if(isIncomplete) {
+                        line = incompleteData + line
+                        isIncomplete = false
+                    }
+
+                    allData.push(JSON.parse(line))
+
+                    if(allData.length === Stawrij.MAX_CPUS) await batchWrite()
+
+                } catch(e) {
+
+                    incompleteData = line
+                    isIncomplete = true
+                }
+            }
+
+            if(allData.length > 0) await batchWrite()
+        }
+
+        const clone = res.clone()
+
+        try {
+
+            const data = await res.json()
+
+            if(Array.isArray(data)) {
+
+                let parquetData = ''
+
+                for(const datum of data) parquetData += JSON.stringify(datum) + '\n'
+
+                await processParquet(parquetData)
+
+            } else await processParquet(JSON.stringify(data))
+            
+        } catch(e) {
+
+            let finished = false
+
+            const reader = clone.body!.getReader()
+
+            do {
+
+                const { done, value } = await reader.read()
+
+                if(done) finished = true
+
+                await processParquet(new TextDecoder('utf-8').decode(value))
+
+            }  while(!finished)
+        }
+
+        return count
+    }
+
+    static async *exportBulkData<T extends Record<string, any>>(collection: string, url: URL) {
+
+        // extract the file extension from the URL
+        const fileExtension = url.pathname.split('.').pop()!
+
+        // check if the file extension is valid
+        if (fileExtension !== 'json') throw new Error(`Invalid file extension: ${fileExtension}`)
+
+        const writer = Bun.file(url).writer()
+
+        for await (const data of this.findDocs<T>(collection).collect()) {
+
+            const doc = data as Map<_ulid, T>
+
+            for(let [_id, data] of doc) {
+
+                yield _id
+
+                writer.write(JSON.stringify(data) + '\n')
+            }
+        }
+
+        await writer.end()
+
+        await Stawrij.dropSchema(collection)
+    }
+
+    static getDoc<T extends Record<string, any>>(collection: string, _id: _ulid, onlyId: boolean = false) {
 
         return {
 
             async *[Symbol.asyncIterator]() {
 
-                const initRes = await this.once()
+                for await (const data of Dir.searchDocs<T>(`${collection}/**/${_id}`, {}, true)) {
 
-                if(initRes.size > 0 && !onlyId) {
-                    await Bun.sleep(100)
-                    yield initRes
-                }
+                    const doc = data as Map<_ulid, T>
 
-                for await (const _ of Dir.onChange(`${collection}/**/${_id}`)) {
-                    if(onlyId) {
+                    if(onlyId && doc.size > 0) {
                         await Bun.sleep(100)
                         yield _id
+                        continue
                     }
-                    else {
-                        const doc = await Dir.reconstructData(collection, _id)
+                    else if(doc.size > 0) {
                         await Bun.sleep(100)
-                        yield new Map([[_id, doc]]) as Map<_uuid, T>
+                        yield doc
+                        continue
                     }
                 }
             },
 
             async once() {
 
-                const data = await Dir.reconstructData<T>(collection, _id)
+                const indexes = await Walker.getDocIndexes(collection, _id)
 
-                const doc = new Map<_uuid, T>()
+                if(indexes.length === 0) return new Map<_ulid, T>()
 
-                if(Object.entries(data).length > 0) doc.set(_id, data)
+                const data = await Dir.reconstructData<T>(indexes)
 
-                return doc
+                return new Map<_ulid, T>([[_id, data]])
             },
 
             async *onDelete() {
-                for await (const _ of Dir.onDelete(`${collection}/**/${_id}`)) yield _id
+                for await (const _ of Dir.searchDocs<T>(`${collection}/**/${_id}`, {}, true, true)) {
+                    yield _id
+                }
             }
         }
     }
 
-    static async bulkDataPut<T extends Record<string, any>>(collection: string, data: T[]) {
+    static async batchPutData<T extends Record<string, any>>(collection: string, batch: Array<T>) {
 
-        const ids: _uuid[] = []
-
-        await Promise.all(data.map(doc => new Promise<void>(resolve => invokeWorker(Stawrij.storeUrl, { action: "PUT", data: { collection, doc }}, resolve, ids))))
-    
-        return ids.flat()
+        if(batch.length > navigator.hardwareConcurrency * 2) throw new Error("Batch size must be less than or equal to the number of CPUs")
+        
+        await Promise.allSettled(batch.map(data => Stawrij.putData(collection, data)))
     }
 
-    static async putData<T extends Record<string, any>>(collection: string, data: Map<_uuid, T> | T) {
+    static async putData<T extends Record<string, any>>(collection: string, data: Map<_ulid, T> | T, indexes?: string[]) {
 
-        const _id = data instanceof Map ? Array.from((data as Map<_uuid, T>).keys())[0] : crypto.randomUUID() 
+        const _id = data instanceof Map ? Array.from((data as Map<_ulid, T>).keys())[0] : ULID.generate()
         
-        try {   
+        try {
 
-            if(this.LOGGING) console.log(`Writing ${_id}`)
-
-            if(this.SCHEMA === 'STRICT' && !this.SYSTEM_COLLECTIONS.includes(collection)) await Dir.validateData(collection, data)
-
-            await Dir.aquireLock(collection, _id)
+            if(this.SCHEMA === 'STRICT' && !collection.startsWith('_')) await Dir.validateData(collection, data)
             
-            const doc = data instanceof Map ? (data as Map<_uuid, T>).get(_id)! : data as T
+            await Dir.aquireLock(collection, _id)
 
-            const indexes = Dir.deconstructData(collection, _id, doc)
+            indexes ??= await Walker.getDocIndexes(collection, _id)
 
-            await Promise.all(indexes.map(idx => new Promise<void>(resolve => invokeWorker(this.indexUrl, { action: 'PUT', data: { idx } }, resolve))))
+            await Promise.allSettled(indexes.map(idx => Dir.deleteIndex(idx)))
 
-            Dir.releaseLock(collection, _id)
+            const files = await readdir(`${Walker.DSK_DB}/${collection}/${Walker.DIRECT_DIR}/${_id}`, { withFileTypes: true })
+            
+            await Promise.allSettled(files.filter(file => !file.isSymbolicLink()).map(file => rm(`${Walker.DSK_DB}/${collection}/${Walker.DIRECT_DIR}/${_id}/${file.name}`, { recursive: true })))
+            
+            const doc = data instanceof Map ? (data as Map<_ulid, T>).get(_id)! : data as T
+
+            await mkdir(`${Walker.DSK_DB}/${collection}/${Walker.DIRECT_DIR}/${_id}`, { recursive: true })
+
+            await Promise.allSettled(Dir.deconstructData(collection, _id, doc).map(idx => Dir.putIndex(idx)))
+
+            if(this.LOGGING) console.log(`Finished Writing ${_id}`)
+            
+            await Dir.releaseLock(collection, _id)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.putData -> ${e.message}`)
@@ -160,23 +300,37 @@ export default class Stawrij {
         return _id
     }
 
-    static async patchDoc<T extends Record<string, any>>(collection: string, doc: Map<_uuid, Partial<T>>) {
+    static async patchDoc<T extends Record<string, any>>(collection: string, newDoc: Map<_ulid, Partial<T>>, oldDoc: Map<_ulid, T> = new Map<_ulid, T>()) {
         
         try {
 
-            const _id = Array.from(doc.keys())[0] as _uuid
+            const _id = Array.from(newDoc.keys())[0] as _ulid
 
             if(!_id) throw new Error("Stawrij document does not contain an UUID")
 
-            if(this.LOGGING) console.log(`Updating ${_id}`)
+            const indexes: string[] = []
 
-            const currData = await Dir.reconstructData<T>(collection, _id)
+            if(oldDoc.size === 0) {
 
-            const data = doc.get(_id)!
+                indexes.push(...await Walker.getDocIndexes(collection, _id))
 
-            for(const field in data) currData[field] = data[field]!
+                const data = await Dir.reconstructData<T>(indexes)
 
-            await this.putData(collection, new Map([[_id, currData]]) as Map<_uuid, T>)
+                oldDoc = new Map([[_id, data]]) as Map<_ulid, T>
+            }
+
+            if(oldDoc.size > 0) {
+
+                const currData = oldDoc.get(_id)!
+
+                const data = newDoc.get(_id)!
+
+                for(const field in data) currData[field] = data[field]!
+
+                await this.putData(collection, new Map([[_id, currData]]) as Map<_ulid, T>, indexes)
+            }
+
+            if(this.LOGGING) console.log(`Finished Updating ${_id}`)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.patchDoc -> ${e.message}`)
@@ -190,20 +344,21 @@ export default class Stawrij {
         
         try {
 
-            const indexes = Dir.searchIndexes(Query.getExprs(updateSchema.$where ?? {}, collection), updateSchema?.$where?.$updated)
+            const promises: Promise<void>[] = []
 
-            const ids = Array.from(new Set(indexes.map(idx => idx.split('/').pop()!)))
+            for await (const data of Dir.searchDocs<T>(Query.getExprs(updateSchema.$where ?? {}, collection), { updated: updateSchema?.$where?.$updated, created: updateSchema?.$where?.$created })) {
 
-            await Promise.all(ids.map(_id => {
+                const doc = data as Map<_ulid, T>
 
-                const partialData: Record<keyof Partial<T>, any> = { } as Record<keyof Partial<T>, any>
+                if(doc.size > 0) {
 
-                for(const field in updateSchema.$set) partialData[field as keyof T] = updateSchema.$set[field as keyof T]
-                
-                return new Promise<void>(resolve => invokeWorker(Stawrij.storeUrl, { action: 'PATCH', data: { collection, doc: new Map([[_id, partialData]]) } }, resolve))
-            }))
+                    for(const [_id] of doc) promises.push(Stawrij.patchDoc(collection, new Map([[_id, updateSchema.$set]]), doc))
 
-            count = ids.length
+                    count++
+                }
+            }
+
+            await Promise.allSettled(promises)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.putDoc -> ${e.message}`)
@@ -212,19 +367,19 @@ export default class Stawrij {
         return count
     }
 
-    static async delDoc(collection: string, _id: _uuid) {
+    static async delDoc(collection: string, _id: _ulid) {
 
         try {
 
             await Dir.aquireLock(collection, _id)
 
-            if(this.LOGGING) console.log(`Deleting ${_id}`)
+            const indexes = await Walker.getDocIndexes(collection, _id)
 
-            const indexes = Dir.searchIndexes(`${collection}/**/${_id}`)
+            await Promise.allSettled(indexes.map(idx => Dir.deleteIndex(idx)))
 
-            indexes.map(idx => Dir.deleteIndex(idx))
+            await rmdir(`${Walker.DSK_DB}/${collection}/${Walker.DIRECT_DIR}/${_id}`, { recursive: true })
 
-            Dir.releaseLock(collection, _id)
+            if(this.LOGGING) console.log(`Finished Deleting ${_id}`)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.delDoc -> ${e.message}`)
@@ -237,13 +392,21 @@ export default class Stawrij {
 
         try {
 
-            const indexes = Dir.searchIndexes(Query.getExprs(deleteSchema ?? {}, collection), deleteSchema?.$updated)
+            const promises: Promise<void>[] = []
 
-            const ids = Array.from(new Set(indexes.map(idx => idx.split('/').pop()!)))
-
-            await Promise.all(ids.map(_id => new Promise<void>(resolve => invokeWorker(Stawrij.storeUrl, { action: 'DEL', data: { collection, _id }}, resolve))))
+            for await (const data of Dir.searchDocs<T>(Query.getExprs(deleteSchema ?? {}, collection), { updated: deleteSchema?.$updated, created: deleteSchema?.$created })) {
             
-            count = ids.length
+                const doc = data as Map<_ulid, T>
+
+                if(doc.size > 0) {
+ 
+                    for(const [_id] of doc) promises.push(Stawrij.delDoc(collection, _id))
+
+                    count++
+                }
+            }
+
+            await Promise.allSettled(promises)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.delDocs -> ${e.message}`)
@@ -275,7 +438,7 @@ export default class Stawrij {
 
     static async joinDocs<T extends Record<string, any>, U extends Record<string, any>>(join: _join<T, U>) { 
         
-        const docs: Map<_uuid[], T | U | T & U | Partial<T> & Partial<U>> = new Map<_uuid[], T | U | T & U | Partial<T> & Partial<U>>()
+        const docs: Map<_ulid[], T | U | T & U | Partial<T> & Partial<U>> = new Map<_ulid[], T | U | T & U | Partial<T> & Partial<U>>()
 
         try {
 
@@ -285,13 +448,13 @@ export default class Stawrij {
 
                     if(join.$leftCollection === join.$rightCollection) throw new Error("Left and right collections cannot be the same")
 
-                    const leftFieldIndexes = Dir.searchIndexes(`${join.$leftCollection}/${String(leftField)}/**`)
-                    const rightFieldIndexes = Dir.searchIndexes(`${join.$rightCollection}/${String(rightField)}/**`)
+                    const leftFieldIndexes = Array.from(new Bun.Glob(`${join.$leftCollection}/${String(leftField)}/**`).scanSync({ cwd: Walker.DSK_DB })) 
+                    const rightFieldIndexes = Array.from(new Bun.Glob(`${join.$rightCollection}/${String(rightField)}/**`).scanSync({ cwd: Walker.DSK_DB }))
 
                     for(const leftIdx of leftFieldIndexes) {
         
                         const leftSegs = leftIdx.split('/')
-                        const left_id = leftSegs.pop()! as _uuid
+                        const left_id = leftSegs.pop()! as _ulid
                         const leftVal = leftSegs.pop()!
         
                         const leftCollection = leftSegs.shift()!
@@ -301,7 +464,7 @@ export default class Stawrij {
                         for(const rightIdx of rightFieldIndexes) {
         
                             const rightSegs = rightIdx.split('/')
-                            const right_id = rightSegs.pop()! as _uuid
+                            const right_id = rightSegs.pop()! as _ulid
                             const rightVal = rightSegs.pop()!
         
                             const rightCollection = rightSegs.shift()!
@@ -315,27 +478,44 @@ export default class Stawrij {
                                         docs.set([left_id, right_id], { [leftField]: Dir.parseValue(leftVal), [rightField]: Dir.parseValue(rightVal) } as Partial<T> & Partial<U>)
                                         break
                                     case "left":
-                                        let leftData = await Dir.reconstructData<T>(leftCollection, left_id)
-                                        if(join.$select) leftData = this.selectValues<T>(join.$select as Array<keyof T>, leftData)
-                                        if(join.$rename) leftData = this.renameFields<T>(join.$rename, leftData)
-                                        docs.set([left_id, right_id], leftData as T)
+                                        for await (const data of Dir.searchDocs<T>(`${leftCollection}/**/${left_id}`, {})) {
+                                            const leftDoc = data as Map<_ulid, T>
+                                            let leftData = leftDoc.get(left_id)!
+                                            if(join.$select) leftData = this.selectValues<T>(join.$select as Array<keyof T>, leftData)
+                                            if(join.$rename) leftData = this.renameFields<T>(join.$rename, leftData)
+                                            docs.set([left_id, right_id], leftData as T)
+                                        }
                                         break
                                     case "right":
-                                        let rightData = await Dir.reconstructData<U>(rightCollection, right_id)
-                                        if(join.$select) rightData = this.selectValues<U>(join.$select as Array<keyof U>, rightData)
-                                        if(join.$rename) rightData = this.renameFields<U>(join.$rename, rightData)
-                                        docs.set([left_id, right_id], rightData as U)
+                                        for await (const data of Dir.searchDocs<U>(`${rightCollection}/**/${right_id}`, {})) {
+                                            const rightDoc = data as Map<_ulid, U>
+                                            let rightData = rightDoc.get(right_id)!
+                                            if(join.$select) rightData = this.selectValues<U>(join.$select as Array<keyof U>, rightData)
+                                            if(join.$rename) rightData = this.renameFields<U>(join.$rename, rightData)
+                                            docs.set([left_id, right_id], rightData as U)
+                                        }
                                         break
                                     case "outer":
-                                        let [leftFullData, rightFullData] = await Promise.all([Dir.reconstructData<T>(leftCollection, left_id), Dir.reconstructData<U>(rightCollection, right_id)])
-                                        if(join.$select) {
-                                            leftFullData = this.selectValues<T>(join.$select as Array<keyof T>, leftFullData) as Awaited<T>
-                                            rightFullData = this.selectValues<U>(join.$select as Array<keyof U>, rightFullData) as Awaited<U>
+
+                                        let leftFullData: T = {} as T
+                                        let rightFullData: U = {} as U
+
+                                        for await (const data of Dir.searchDocs<T>(`${leftCollection}/**/${left_id}`, {})) {
+                                            const leftDoc = data as Map<_ulid, T>
+                                            let leftData = leftDoc.get(left_id)!
+                                            if(join.$select) leftData = this.selectValues<T>(join.$select as Array<keyof T>, leftData)
+                                            if(join.$rename) leftData = this.renameFields<T>(join.$rename, leftData)
+                                            leftFullData = { ...leftData, ...leftFullData } as T
                                         }
-                                        if(join.$rename) {
-                                            leftFullData = this.renameFields<T>(join.$rename, leftFullData) as Awaited<T>
-                                            rightFullData = this.renameFields<U>(join.$rename, rightFullData) as Awaited<U>
+
+                                        for await (const data of Dir.searchDocs<U>(`${rightCollection}/**/${right_id}`, {})) {
+                                            const rightDoc = data as Map<_ulid, U>
+                                            let rightData = rightDoc.get(right_id)!
+                                            if(join.$select) rightData = this.selectValues<U>(join.$select as Array<keyof U>, rightData)
+                                            if(join.$rename) rightData = this.renameFields<U>(join.$rename, rightData)
+                                            rightFullData = { ...rightData, ...rightFullData } as U
                                         }
+
                                         docs.set([left_id, right_id], { ...leftFullData, ...rightFullData } as T & U)
                                         break
                                 }
@@ -369,14 +549,14 @@ export default class Stawrij {
     
             if(join.$groupby) {
     
-                const groupedDocs: Map<T[keyof T] | U[keyof U], Map<_uuid[], Partial<T | U>>> = new Map<T[keyof T] | U[keyof U], Map<_uuid[], Partial<T | U>>>()
+                const groupedDocs: Map<T[keyof T] | U[keyof U], Map<_ulid[], Partial<T | U>>> = new Map<T[keyof T] | U[keyof U], Map<_ulid[], Partial<T | U>>>()
     
-                for(const [ids, data] of docs.entries()) {
+                for(const [ids, data] of docs) {
     
                     // @ts-ignore
                     const grouping = Map.groupBy([data], elem => elem[join.$groupby!])
     
-                    for(const [group] of grouping.entries()) {
+                    for(const [group] of grouping) {
     
                         if(groupedDocs.has(group)) groupedDocs.get(group)!.set(ids, data)
                         else groupedDocs.set(group, new Map([[ids, data]]))
@@ -385,9 +565,9 @@ export default class Stawrij {
     
                 if(join.$onlyIds) {
     
-                    const groupedIds: Map<T[keyof T] | U[keyof U], _uuid[]> = new Map<T[keyof T] | U[keyof U], _uuid[]>()
+                    const groupedIds: Map<T[keyof T] | U[keyof U], _ulid[]> = new Map<T[keyof T] | U[keyof U], _ulid[]>()
     
-                    for(const [group, doc] of groupedDocs.entries()) {
+                    for(const [group, doc] of groupedDocs) {
                         groupedIds.set(group, Array.from(doc.keys()).flat())
                     }
     
@@ -411,106 +591,113 @@ export default class Stawrij {
         return {
 
             async *[Symbol.asyncIterator]() {
-
-                const data = await this.collect()
-
-                if((Array.isArray(data) && data.length > 0) || (data instanceof Map && data.size > 0)) {
-                    for (const doc of data) {
-                        await Bun.sleep(100)
-                        // @ts-ignore
-                        yield Array.isArray(doc) ? new Map([doc]) : doc
-                    }
-                }
                 
-                for await (const _id of Dir.onChange(Query.getExprs(query ?? {}, collection), query?.$updated)) {
+                for await (const data of Dir.searchDocs<T>(Query.getExprs(query ?? {}, collection), { updated: query?.$updated, created: query?.$created }, true)) {
+                    
+                    const doc = data as Map<_ulid, T>
+                    
+                    if(query && query.$onlyIds && doc.size > 0) {
 
-                    if(query && query.$onlyIds) {
                         await Bun.sleep(100)
-                        yield _id
+
+                        for(let [_id] of doc) yield _id
+
+                        continue
                     }
-                    else {
-                        
-                        let data = await Dir.reconstructData<T>(collection, _id)
+                    else if(doc.size > 0) {
 
-                        if(query && query.$select && query.$select.length > 0) {
+                        for(let [_id, data] of doc) {
 
-                            data = Stawrij.selectValues<T>(query.$select as Array<keyof T>, data)
+                            if(query && query.$select && query.$select.length > 0) {
+
+                                data = Stawrij.selectValues<T>(query.$select as Array<keyof T>, data)
+                            }
+
+                            if(query && query.$rename) data = Stawrij.renameFields<T>(query.$rename, data)
+
+                            await Bun.sleep(100)
+
+                            yield new Map([[_id, data]]) as Map<_ulid, T>
+
+                            continue
                         }
-
-                        if(query && query.$rename) data = Stawrij.renameFields<T>(query.$rename, data)
-
-                        await Bun.sleep(100)
-
-                        yield new Map([[_id, data]]) as Map<_uuid, T>
                     }
                 }
             },
             
-            async collect() {
+            async *collect() {
 
-                const docs: Map<_uuid, T> | Map<_uuid, Partial<T>> = new Map<_uuid, T>()
+                let count = 0
 
-                const ids = new Set<_uuid>()
+                for await (const data of Dir.searchDocs<T>(Query.getExprs(query ?? {}, collection), { updated: query?.$updated, created: query?.$created })) {
+                    
+                    const doc = data as Map<_ulid, T>
 
-                const indexes = Dir.searchIndexes(Query.getExprs(query ?? {}, collection), query?.$updated)
+                    if(doc.size > 0) {
 
-                for(let i = 0; i < indexes.length; i++) {
-                    ids.add(indexes[i].split('/').pop()! as _uuid)
-                    if(query && query.$limit && ids.size === query.$limit) break
-                }
+                        count++
 
-                for(const _id of ids) {
+                        for(let [_id, data] of doc) {
 
-                    let data = await Dir.reconstructData<T>(collection, _id)
+                            if(query && query.$select && query.$select.length > 0) {
 
-                    if(query && query.$select && query.$select.length > 0) {
-
-                        data = Stawrij.selectValues<T>(query.$select as Array<keyof T>, data)
-                    } 
-
-                    if(query && query.$rename) data = Stawrij.renameFields<T>(query.$rename, data)
-
-                    docs.set(_id, data)
-                }
-
-                if(query && query.$groupby) {
-
-                    const groupedDocs: Map<T[keyof T] | undefined, Map<_uuid, Partial<T>>> = new Map<T[keyof T] | undefined, Map<_uuid, T>>()
-
-                    for(const [id, data] of docs.entries()) {
-
-                        const grouping = Map.groupBy([data], elem => elem[query.$groupby! as keyof T])
-
-                        for(const [group] of grouping.entries()) {
-
-                            if(groupedDocs.has(group)) groupedDocs.get(group)!.set(id, data)
-                            else groupedDocs.set(group, new Map([[id, data]]))
-                        }
-                    }
-
-                    if(query && query.$onlyIds) {
-
-                        const groupedIds: Map<T[keyof T] | undefined, _uuid[]> = new Map<T[keyof T] | undefined, _uuid[]>()
-
-                        for(const [group, doc] of groupedDocs.entries()) {
-                            groupedIds.set(group, Array.from(doc.keys()))
+                                data = Stawrij.selectValues<T>(query.$select as Array<keyof T>, data)
+                            }
+    
+                            if(query && query.$rename) data = Stawrij.renameFields<T>(query.$rename, data)
+    
+                            doc.set(_id, data)
                         }
 
-                        return groupedIds
+                        if(query && query.$groupby) {
+
+                            const docGroup: Map<T[keyof T] | undefined, Map<_ulid, Partial<T>>> = new Map<T[keyof T] | undefined, Map<_ulid, T>>()
+
+                            for(const [id, data] of doc) {
+
+                                const grouping = Map.groupBy([data], elem => elem[query.$groupby! as keyof T])
+
+                                for(const [group] of grouping) {
+
+                                    if(docGroup.has(group)) docGroup.get(group)!.set(id, data)
+                                    else docGroup.set(group, new Map([[id, data]]))
+                                }
+                            }
+
+                            if(query && query.$onlyIds) {
+
+                                const groupedIds: Map<T[keyof T] | undefined, _ulid[]> = new Map<T[keyof T] | undefined, _ulid[]>()
+
+                                for(const [group, doc] of docGroup) {
+                                    groupedIds.set(group, Array.from(doc.keys()))
+                                }
+
+                                yield groupedIds
+                                if(query && query.$limit && count === query.$limit) break
+                                continue
+                            }
+
+                            yield docGroup
+                            if(query && query.$limit && count === query.$limit) break
+                            continue
+                        }
+
+                        if(query && query.$onlyIds) {
+                            yield Array.from(doc.keys())[0]
+                            if(query && query.$limit && count === query.$limit) break
+                            continue
+                        }
+
+                        yield doc
+                        if(query && query.$limit && count === query.$limit) break
                     }
-
-                    return groupedDocs
                 }
-
-                if(query && query.$onlyIds) return Array.from(ids)
-
-                return docs
             },
 
             async *onDelete() {
 
-                for await (const _id of Dir.onDelete(Query.getExprs(query ?? {}, collection))) {
-                    yield _id
+                for await (const _id of Dir.searchDocs<T>(Query.getExprs(query ?? {}, collection), {}, true, true)) {
+                    yield _id as _ulid
                 }
             }
         }
