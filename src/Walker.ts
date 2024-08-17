@@ -12,61 +12,63 @@ export default class Walker {
 
     static readonly DIRECT_DIR = '.direct'
 
-    private static async *searchOnlyCollection(collection: string) {
+    private static async *searchCollection(collection: string) {
 
         const uniqueIds = new Set<string>()
 
-        const stream = spawn(['find', `${this.DSK_DB}/${collection}/${this.DIRECT_DIR}`, '-name', '*', '-type', 'd'], {
-            stdin: 'pipe',
-            stderr: 'pipe'
-        })
+        const fields = await opendir(`${this.DSK_DB}/${collection}`)
 
-        let isIncomplete = false    
-        let incompletePath = ''
+        for await (const field of fields) {
 
-        for await (const chunk of stream.stdout) {
+            if(field.name === this.DIRECT_DIR) continue
 
-            const folders = new TextDecoder().decode(chunk).split('\n')
+            const stream = spawn(['find', `${this.DSK_DB}/${collection}/${field.name}`, '-type', 'f', '-empty'], {
+                stdin: 'pipe',
+                stderr: 'pipe',
+            })
 
-            for (let folder of folders) {
+            let isIncomplete = false    
+            let incompletePath = ''
 
-                if(isIncomplete) {
-                    folder = incompletePath + folder
-                    isIncomplete = false
-                    incompletePath = ''
-                }
+            for await (const chunk of stream.stdout) {
 
-                try {
-
-                    const files = await opendir(folder)
-
-                    const indexes: string[] = []
-                    let _id: _ulid = '' as _ulid
-
-                    for await (const file of files) {
-                        if(!file.isSymbolicLink()) continue
-                        const data = await readlink(`${folder}/${file.name}`)
-                        _id = data.split('/').pop()! as _ulid
-                        indexes.push(data.replace(`${this.DSK_DB}/`, ''))
+                const files = new TextDecoder().decode(chunk).split('\n')
+    
+                for (let file of files) {
+    
+                    if(isIncomplete) {
+                        file = incompletePath + file
+                        isIncomplete = false
+                        incompletePath = ''
                     }
 
-                    if(!uniqueIds.has(_id)) yield { _id, docIndexes: indexes }
+                    file = file.replace(`${this.DSK_DB}/`, '')
+
+                    const segements = file.split('/')
+
+                    const _id = segements.pop()! as _ulid
+
+                    if(!ULID.isULID(_id)) {
+                        isIncomplete = true
+                        incompletePath = file
+                        continue
+                    }
+
+                    if(ULID.isULID(_id) && uniqueIds.has(_id)) continue
+
+                    yield { _id, docIndexes: await this.getDocIndexes(segements.shift()!, _id) }
 
                     uniqueIds.add(_id)
-
-                } catch(e) {
-                    isIncomplete = true
-                    incompletePath = folder
                 }
-            }
-        } 
+            } 
+        }
     }
 
-    private static async *searchField(collection: string, pattern: string) {
+    private static async *searchField(prefix: string, pattern: string) {
 
         const uniqueIds = new Set<string>()
 
-        const stream = spawn(['find', `${Walker.DSK_DB}/${collection}`, '-name', '*', '-type', 'f'], {
+        const stream = spawn(['find', `${Walker.DSK_DB}/${prefix}`, '-type', 'f', '-empty'], {
             stdin: 'pipe',
             stderr: 'pipe'
         })
@@ -115,10 +117,10 @@ export default class Walker {
 
         const segments = pattern.split('/');
         const idx = segments.findIndex(seg => seg.includes('*'));
-        const starter = segments.slice(0, idx).join('/');
+        const prefix = segments.slice(0, idx).join('/');
 
-        if(starter.split('/').length === 1) yield *this.searchOnlyCollection(starter)
-        else yield *this.searchField(starter, pattern)
+        if(prefix.split('/').length === 1) yield *this.searchCollection(prefix)
+        else yield *this.searchField(prefix, pattern)
 
         const eventIds = new Set<string>()
 
