@@ -28,18 +28,20 @@ export default class Stawrij {
             case "ALTER":   
                 return await Stawrij.modifySchema(Paser.convertTableCRUD(SQL).collection!)
             case "DROP":
-                return Stawrij.dropSchema(Paser.convertTableCRUD(SQL).collection!)
+                return await Stawrij.dropSchema(Paser.convertTableCRUD(SQL).collection!)
             case "SELECT":
                 const query = Paser.convertSelect<T>(SQL)
                 if(SQL.includes('JOIN')) return await Stawrij.joinDocs(query as _join<T, U>)
                 const selCol = (query as _storeQuery<T>).$collection
                 delete (query as _storeQuery<T>).$collection
-                const docs = new Map<_ulid, T>()
+                const docs = query.$onlyIds ? new Array<any> : new Map()
                 for await (const data of Stawrij.findDocs(selCol! as string, query as _storeQuery<T>).collect()) {
-                    const doc = data as Map<_ulid, T>
-                    for(let [_id, data] of doc) {
-                        docs.set(_id, data)
-                    }
+                    if(data instanceof Map) {
+                        const doc = data as Map<any, any>
+                        for(let [key, value] of doc) {
+                            (docs as Map<any, any>).set(key, value)
+                        }
+                    } else (docs as Array<any>).push(data as _ulid)
                 }
                 return docs
             case "INSERT":
@@ -293,7 +295,7 @@ export default class Stawrij {
 
     static async batchPutData<T extends Record<string, any>>(collection: string, batch: Array<T>) {
 
-        if(batch.length > navigator.hardwareConcurrency * 2) throw new Error("Batch size must be less than or equal to the number of CPUs")
+        if(batch.length > navigator.hardwareConcurrency) throw new Error("Batch size must be less than or equal to the number of CPUs")
         
         await Promise.allSettled(batch.map(data => Stawrij.putData(collection, data)))
     }
@@ -441,9 +443,9 @@ export default class Stawrij {
 
             await Dir.aquireLock(collection, _id)
 
-            const data = await Walker.getDocData(collection, _id)
+            const keys = await Walker.getDocData(collection, _id)
 
-            await Promise.allSettled(data.map(idx => Dir.deleteKeys(idx)))
+            await Promise.allSettled(keys.map(key => Dir.deleteKeys(key)))
 
             await rmdir(`${Walker.DSK_DB}/${collection}/.${_id}`, { recursive: true })
 
@@ -744,7 +746,7 @@ export default class Stawrij {
 
     static findDocs<T extends Record<string, any>>(collection: string, query?: _storeQuery<T>) {
 
-        const processDoc = <T extends Record<string, any>>(doc: Map<_ulid, T>, query?: _storeQuery<T>) => {
+        const processDoc = (doc: Map<_ulid, T>, query?: _storeQuery<T>) => {
 
             if(doc.size > 0) {
 
@@ -808,7 +810,6 @@ export default class Stawrij {
                 if(expression.length === 1 && expression[0] === `${collection}/**/*`) {
 
                     for(const doc of await Stawrij.allDocs<T>(collection, query)) yield processDoc(doc, query)
-                
                 } 
 
                 let count = 0

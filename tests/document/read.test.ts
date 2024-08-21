@@ -27,7 +27,7 @@ describe("NO-SQL", async() => {
 
         const results = new Map<_ulid, _album>()
 
-        for await (const data of Silo.findDocs<_album>(ALBUMS).collect()) {
+        for await (const data of Silo.findDocs<_album>(ALBUMS).collect()) { 
 
             const doc = data as Map<_ulid, _album>
 

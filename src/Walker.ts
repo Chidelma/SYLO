@@ -21,7 +21,7 @@ export default class Walker {
         endpoint: process.env.S3_ENDPOINT
     })
 
-    private static async *searchS3(bucket: string, prefix: string, pattern?: string): AsyncGenerator<{ _id: _ulid, data: string[] } | undefined, void, { count: number, limit?: number  }> {
+    private static async *searchS3(bucket: string, prefix: string, pattern?: string): AsyncGenerator<{ _id: _ulid, data: string[] } | void, void, { count: number, limit?: number  }> {
 
         const uniqueIds = new Set<string>()
 
@@ -90,7 +90,7 @@ export default class Walker {
         } while(!finished)
     }
 
-    static async *search(pattern: string, { listen = false, skip = false }: { listen: boolean, skip: boolean }, action: "upsert" | "delete" = "upsert"): AsyncGenerator<{ _id: _ulid, data: string[] } | undefined, void, { count: number, limit?: number }> {
+    static async *search(pattern: string, { listen = false, skip = false }: { listen: boolean, skip: boolean }, action: "upsert" | "delete" = "upsert"): AsyncGenerator<{ _id: _ulid, data: string[] } | void, void, { count: number, limit?: number  }> {
 
         if(!skip) {
             const segments = pattern.split('/');

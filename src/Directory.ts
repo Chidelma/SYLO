@@ -1,4 +1,4 @@
-import { rm, exists, mkdir, readdir, opendir, rmdir } from "node:fs/promises"
+import { rm, exists, mkdir, readdir, opendir, rmdir, watch } from "node:fs/promises"
 import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from "@aws-sdk/client-s3"
 import Walker from "./Walker"
 import ULID from "./ULID"
@@ -282,9 +282,9 @@ export default class {
             if(await this.isLocked(collection, _id)) {
 
                 await this.queueProcess(collection, _id)
-    
-                for await (const event of Walker.listen(`${collection}/.${_id}/${process.pid}`)) {
-                    if(event.action === "delete") break
+
+                for await (const event of watch(`${Walker.DSK_DB}/${collection}/.${_id}/${process.pid}`)) {
+                    if(event.eventType !== "change") break
                 }
             }
     
@@ -301,11 +301,13 @@ export default class {
 
         try {
 
+            if(writer) await writer.end()
+
             await rm(`${Walker.DSK_DB}/${collection}/.${_id}/${process.pid}`, { recursive: true })
 
             const results = await readdir(`${Walker.DSK_DB}/${collection}/.${_id}`, { withFileTypes: true })
 
-            const timeSortedDir = results.filter(p => !p.isSymbolicLink()).sort((a, b) => {
+            const timeSortedDir = results.sort((a, b) => {
                 const aTime = Bun.file(`${Walker.DSK_DB}/${collection}/.${_id}/${a.name}`).lastModified
                 const bTime = Bun.file(`${Walker.DSK_DB}/${collection}/.${_id}/${b.name}`).lastModified
                 return aTime - bTime
@@ -313,8 +315,6 @@ export default class {
 
             if(timeSortedDir.length > 0) await rm(`${Walker.DSK_DB}/${collection}/.${_id}/${timeSortedDir[0].name}`, { recursive: true })
             
-            if(writer) await writer.end()
-
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.releaseLock -> ${e.message}`)
         }
@@ -495,7 +495,7 @@ export default class {
         return indexes.length > 0
     }
 
-    static async *searchDocs<T extends Record<string, any>>(pattern: string | string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }, { listen = false, skip = false }: { listen: boolean, skip: boolean }, deleted: boolean = false): AsyncGenerator<Map<_ulid, T> | _ulid | undefined, void, { count: number, limit?: number }> {
+    static async *searchDocs<T extends Record<string, any>>(pattern: string | string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }, { listen = false, skip = false }: { listen: boolean, skip: boolean }, deleted: boolean = false): AsyncGenerator<Map<_ulid, T> | _ulid | void, void, { count: number, limit?: number  }> {
         
         const constructData = async (_id: _ulid, items: string[]) => {
 
@@ -517,76 +517,17 @@ export default class {
             }
         }
 
-        const data = yield
-        let count = data.count
-        let limit = data.limit
-        let finished = false
+        const processQuery = async function*(p: string): AsyncGenerator<Map<_ulid, T> | _ulid | void, void, { count: number, limit?: number  }> {
+            
+            const data = yield
+            let count = data.count
+            let limit = data.limit
 
-        if(Array.isArray(pattern)) {
-
-            for(const p of pattern) {
-
-                if(listen && !deleted) {
-
-                    const iter = Walker.search(p, { listen, skip})
-
-                    do {
-
-                        const { value, done } = await iter.next({ count, limit })
-
-                        if(done) finished = true
-
-                        if(value) {
-                            const data = yield await constructData(value._id, value.data)
-                            count = data.count
-                            limit = data.limit
-                        }
-
-                    } while(!finished)
-
-                } else if(listen && deleted) {
-
-                    const iter = Walker.search(p, { listen, skip }, "delete")
-
-                    do {
-
-                        const { value, done } = await iter.next({ count, limit })
-
-                        if(done) finished = true
-
-                        if(value) {
-                            const data = yield value._id
-                            count = data.count
-                            limit = data.limit
-                        }
-
-                    } while(!finished)
-
-                } else {
-
-                    const iter = Walker.search(p, { listen, skip })
-
-                    do {
-
-                        const { value, done } = await iter.next({ count, limit })
-
-                        if(done) finished = true
-
-                        if(value) {
-                            const data = yield await constructData(value._id, value.data)
-                            count = data.count
-                            limit = data.limit
-                        }
-
-                    } while(!finished)
-                }
-            }
-
-        } else {
-
+            let finished = false
+            
             if(listen && !deleted) {
 
-                const iter = Walker.search(pattern, { listen, skip })
+                const iter = Walker.search(p, { listen, skip })
 
                 do {
 
@@ -604,7 +545,7 @@ export default class {
 
             } else if(listen && deleted) {
 
-                const iter = Walker.search(pattern, { listen, skip }, "delete")
+                const iter = Walker.search(p, { listen, skip }, "delete")
 
                 do {
 
@@ -622,7 +563,7 @@ export default class {
 
             } else {
 
-                const iter = Walker.search(pattern, { listen, skip })
+                const iter = Walker.search(p, { listen, skip })
 
                 do {
 
@@ -639,6 +580,12 @@ export default class {
                 } while(!finished)
             }
         }
+
+        if(Array.isArray(pattern)) {
+
+            for(const p of pattern) yield* processQuery(p)
+
+        } else yield* processQuery(pattern)
     }
 
     static async putKeys({ data, index }: { data: string, index: string }, writer: FileSink | undefined) {
@@ -666,7 +613,10 @@ export default class {
             data = `${indexSegs.join('/')}/${_id}`
         }
 
-        if(writer) writer.write(`${index}\n`)
+        if(writer) {
+            writer.write(`${index}\n`)
+            await writer.flush()
+        }
 
         await Promise.allSettled([Walker.s3Client.send(new PutObjectCommand({
             Bucket: Walker.S3_DATA_DB,

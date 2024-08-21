@@ -10,7 +10,7 @@ export default class {
 
             const [_, database] = useMatch
 
-            process.env.DATA_PREFIX = database
+            Bun.env.DB_DIR = database
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Parser.convertUse -> ${e.message}`)

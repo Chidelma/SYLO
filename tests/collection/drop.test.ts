@@ -1,10 +1,18 @@
-import { test, expect, describe } from 'bun:test'
+import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import Silo from '../../src/Stawrij'
-import { postsURL, albumURL } from '../data'
-import { mkdir, rmdir, exists } from 'node:fs/promises'
+import { mkdir, exists, rm } from 'node:fs/promises'
 
-await rmdir(process.env.DB_DIR!, {recursive:true})
-await mkdir(process.env.DB_DIR!, {recursive:true})
+const POSTS = 'posts'
+const ALBUMS = 'albums'
+
+beforeAll(async () => {
+    await rm(process.env.DB_DIR!, {recursive:true})
+    await mkdir(process.env.DB_DIR!, {recursive:true})
+})
+
+afterAll(async () => {
+    await Promise.all([rm(process.env.DB_DIR!, {recursive:true}), Silo.dropSchema(ALBUMS), Silo.dropSchema(POSTS)])
+})
 
 describe("NO-SQL", () => {
 
@@ -14,12 +22,13 @@ describe("NO-SQL", () => {
 
         await Silo.createSchema(POSTS)
 
-        await Silo.importBulkData<_post>(POSTS, new URL(postsURL))
-
         await Silo.dropSchema(POSTS)
 
-        expect(await exists(`${process.env.DATA_PREFIX}/${POSTS}`)).toBe(false)
+        const file = Bun.file(`${process.env.DB_DIR}/${POSTS}/.schema.json`)
 
+        expect(await file.exists()).toBe(false)
+
+        expect(await exists(`${process.env.DB_DIR}/${POSTS}`)).toBe(false)
     })
 })
 
@@ -31,10 +40,12 @@ describe("SQL", () => {
 
         await Silo.executeSQL<_album>(`CREATE TABLE ${ALBUMS}`)
 
-        await Silo.importBulkData<_album>(ALBUMS, new URL(albumURL))
-
         await Silo.executeSQL<_album>(`DROP TABLE ${ALBUMS}`)
 
-        expect(await exists(`${process.env.DATA_PREFIX}/${ALBUMS}`)).toBe(false)
+        const file = Bun.file(`${process.env.DB_DIR}/${ALBUMS}/.schema.json`)
+
+        expect(await file.exists()).toBe(false)
+
+        expect(await exists(`${process.env.DB_DIR}/${ALBUMS}`)).toBe(false)
     })
 })

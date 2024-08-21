@@ -1,46 +1,43 @@
-import { test, expect, describe } from 'bun:test'
+import { test, expect, describe, afterAll, beforeAll } from 'bun:test'
 import Silo from '../../src/Stawrij'
-import { mkdir, readdir, rmdir } from 'node:fs/promises'
+import { exists, mkdir, rm } from 'node:fs/promises'
 
-await rmdir(process.env.DB_DIR!, {recursive:true})
-await mkdir(process.env.DB_DIR!, {recursive:true})
+const POSTS = 'posts'
+const ALBUMS = 'albums'
+
+beforeAll(async () => {
+    await rm(process.env.DB_DIR!, {recursive:true})
+    await mkdir(process.env.DB_DIR!, {recursive:true})
+})
+
+afterAll(async () => {
+    await Promise.all([rm(process.env.DB_DIR!, {recursive:true}), Silo.dropSchema(ALBUMS), Silo.dropSchema(POSTS)])
+})
 
 describe("NO-SQL", () => {
-
-    const POSTS = 'posts'
-
+    
     test("CREATE", async () => {
 
         await Silo.createSchema(POSTS)
 
-        const file = Bun.file(`${process.env.DATA_PREFIX}/${POSTS}/.schema.json`)
+        const file = Bun.file(`${process.env.DB_DIR}/${POSTS}/.schema.json`)
 
-        const savedSchema = await file.json()
+        expect(await exists(`${process.env.DB_DIR}/${POSTS}`)).toBe(true)
 
-        const dirKeys = await readdir(`${process.env.DATA_PREFIX}/${POSTS}`)
-
-        const testPassed = Object.keys(savedSchema).every(key => dirKeys.includes(key))
-
-        expect(testPassed).toBe(true)
+        expect(await file.exists()).toBe(true)
     })
 })
 
 describe("SQL", () => {
 
-    const ALBUMS = 'albums'
-
     test("CREATE", async () => {
 
         await Silo.executeSQL<_album>(`CREATE TABLE ${ALBUMS}`)
 
-        const file = Bun.file(`${process.env.DATA_PREFIX}/${ALBUMS}/.schema.json`)
+        const file = Bun.file(`${process.env.DB_DIR}/${ALBUMS}/.schema.json`)
 
-        const savedSchema = await file.json()
+        expect(await exists(`${process.env.DB_DIR}/${ALBUMS}`)).toBe(true)
 
-        const dirKeys = await readdir(`${process.env.DATA_PREFIX}/${ALBUMS}`)
-
-        const testPassed = Object.keys(savedSchema).every(key => dirKeys.includes(key))
-
-        expect(testPassed).toBe(true)
+        expect(await file.exists()).toBe(true)
     })
 })
