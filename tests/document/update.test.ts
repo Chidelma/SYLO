@@ -1,18 +1,25 @@
-import { test, expect, describe } from 'bun:test'
+import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import Silo from '../../src/Stawrij'
 import { photosURL, todosURL } from '../data'
-import { mkdirSync, rmSync } from 'node:fs' 
+import { mkdir, rm } from 'node:fs/promises' 
 
-rmSync(process.env.DB_DIR!, {recursive:true})
-mkdirSync(process.env.DB_DIR!, {recursive:true})
+const PHOTOS = 'photos'
+const TODOS = 'todos'
 
-describe("NO-SQL", async () => {
-
-    const PHOTOS = 'photos'
-
-    await Silo.createSchema(PHOTOS)
+beforeAll(async () => {
+    await rm(process.env.DB_DIR!, {recursive:true})
+    await mkdir(process.env.DB_DIR!, {recursive:true})
+    await Promise.all([Silo.createSchema(PHOTOS), Silo.executeSQL<_todo>(`CREATE TABLE ${TODOS}`)])
 
     await Silo.importBulkData<_photo>(PHOTOS, new URL(photosURL), 100)
+    await Silo.importBulkData<_todo>(TODOS, new URL(todosURL), 100)
+})
+
+afterAll(async () => {
+    await Promise.all([rm(process.env.DB_DIR!, {recursive:true}), Silo.dropSchema(PHOTOS), Silo.executeSQL<_todo>(`DROP TABLE ${TODOS}`)])
+})
+
+describe("NO-SQL", async () => {
 
     test("UPDATE ONE", async () => {
 
@@ -76,16 +83,10 @@ describe("NO-SQL", async () => {
         }
 
         expect(results.size).toBe(count)
-    })
+    }, 20000)
 })
 
 describe("SQL", async () => {
-
-    const TODOS = 'todos'
-
-    await Silo.executeSQL<_todo>(`CREATE TABLE ${TODOS}`)
-
-    await Silo.importBulkData<_todo>(TODOS, new URL(todosURL), 100)
 
     test("UPDATE CLAUSE", async () => {
 
@@ -103,5 +104,5 @@ describe("SQL", async () => {
         const results = await Silo.executeSQL<_todo>(`SELECT * FROM ${TODOS} WHERE title = 'All Mightier'`) as Map<_ulid, _todo>
         
         expect(results.size).toBe(count)
-    })
+    }, 20000)
 })

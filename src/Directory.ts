@@ -1,39 +1,18 @@
-import { rm, exists, mkdir, rmdir, symlink, readdir } from "node:fs/promises"
+import { rm, exists, mkdir, readdir, opendir, rmdir } from "node:fs/promises"
+import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from "@aws-sdk/client-s3"
 import Walker from "./Walker"
 import ULID from "./ULID"
+import { FileSink } from "bun"
 
 export default class {
 
-    private static readonly CHAR_LIMIT = 255
-
-    private static readonly SLASH_ASCII = "%2F"
+    private static readonly KEY_LIMIT = 1024
 
     private static SCHEMA_PATH = process.env.SCHEMA_PATH || `${process.cwd()}/schemas`
 
     private static ALL_SCHEMAS = new Map<string, Map<string, string[]>>()
 
-    static async createDirFile(dirname: string, filename: any, data?: string) {
-
-        try {
-
-            const collection = dirname.split('/').shift()!
-
-            const index = `${Walker.DSK_DB}/${dirname}/${filename}`
-
-            await mkdir(`${Walker.DSK_DB}/${dirname}`, { recursive: true })
-
-            if(data) {
-                const writer = Bun.file(index).writer()
-                writer.write(data)
-                await writer.end()
-            } else await Bun.file(index).writer().end()
-
-            await symlink(index, `${Walker.DSK_DB}/${collection}/${Walker.DIRECT_DIR}/${filename}/${crypto.randomUUID()}`, 'file')
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Dir.createDirFile -> ${e.message}`)
-        }
-    }
+    private static readonly SLASH_ASCII = "%2F"
 
     static async createSchema(collection: string) {
 
@@ -45,18 +24,13 @@ export default class {
 
             const schemaFile = Bun.file(`${this.SCHEMA_PATH}/${collection}.d.ts`)
 
-            if(!await schemaFile.exists()) throw new Error(`Cannot finddeclaration file for '${collection}'`)
+            if(!await schemaFile.exists()) throw new Error(`Cannot find declaration file for '${collection}'`)
 
             const newSchema = this.getSchema(collection, await schemaFile.text())
             
             await Bun.write(savedSchema, JSON.stringify(Object.fromEntries(newSchema)))
 
             this.ALL_SCHEMAS.set(collection, newSchema)
-
-            for(const field of newSchema.keys()) {
-
-                await mkdir(`${Walker.DSK_DB}/${collection}/${field}`, { recursive: true })
-            }
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.createSchema -> ${e.message}`)
@@ -87,11 +61,32 @@ export default class {
 
                 const removedFields = savedSchemaFields.difference(newSchemaFields)
 
-                const addedFields = newSchemaFields.difference(savedSchemaFields)
+                for(const field of removedFields) {
 
-                for(const field of removedFields) await rm(`${Walker.DSK_DB}/${collection}/${field}`, { recursive: true })
+                    let idxToken: string | undefined
 
-                for(const field of addedFields) await mkdir(`${Walker.DSK_DB}/${collection}/${field}`, { recursive: true })
+                    do {
+
+                        const idxResults = await Walker.s3Client.send(new ListObjectsV2Command({
+                            Bucket: Walker.S3_IDX_DB,
+                            Prefix: `${collection}/${field}`,
+                            ContinuationToken: idxToken
+                        }))
+
+                        idxToken = idxResults.NextContinuationToken
+
+                        if(!idxResults.Contents) break
+
+                        await Walker.s3Client.send(new DeleteObjectsCommand({
+                            Bucket: Walker.S3_IDX_DB,
+                            Delete: {
+                                Objects: idxResults.Contents!.map(content => ({ Key: content.Key! })),
+                                Quiet: false
+                            }
+                        }))
+
+                    } while(idxToken)
+                }
 
                 await Bun.write(savedSchemaFile, JSON.stringify(Object.fromEntries(newSchemaData)))
                 
@@ -108,6 +103,54 @@ export default class {
     static async dropSchema(collection: string) {
 
         try {
+
+            let idxToken: string | undefined
+
+            do {
+
+                const data = await Walker.s3Client.send(new ListObjectsV2Command({
+                    Bucket: Walker.S3_IDX_DB,
+                    Prefix: collection,
+                    ContinuationToken: idxToken
+                }))
+
+                idxToken = data.NextContinuationToken
+
+                if(!data.Contents) break
+
+                await Walker.s3Client.send(new DeleteObjectsCommand({
+                    Bucket: Walker.S3_IDX_DB,
+                    Delete: {
+                        Objects: data.Contents!.map(content => ({ Key: content.Key! })),
+                        Quiet: false
+                    }
+                }))
+
+            } while(idxToken)
+
+            let dataToken: string | undefined
+
+            do {
+
+                const data = await Walker.s3Client.send(new ListObjectsV2Command({
+                    Bucket: Walker.S3_DATA_DB,
+                    Prefix: collection,
+                    ContinuationToken: idxToken
+                }))
+
+                dataToken = data.NextContinuationToken
+
+                if(!data.Contents) break
+
+                await Walker.s3Client.send(new DeleteObjectsCommand({
+                    Bucket: Walker.S3_DATA_DB,
+                    Delete: {
+                        Objects: data.Contents!.map(content => ({ Key: content.Key! })),
+                        Quiet: false
+                    }
+                }))
+
+            } while(dataToken)
 
             await rmdir(`${Walker.DSK_DB}/${collection}`, { recursive: true })
 
@@ -232,39 +275,45 @@ export default class {
 
     static async aquireLock(collection: string, _id: _ulid) {
 
+        let writer: FileSink | undefined
+
         try {
 
             if(await this.isLocked(collection, _id)) {
 
                 await this.queueProcess(collection, _id)
     
-                for await (const event of Walker.listen(`${collection}/${Walker.DIRECT_DIR}/${_id}/${process.pid}`)) {
+                for await (const event of Walker.listen(`${collection}/.${_id}/${process.pid}`)) {
                     if(event.action === "delete") break
                 }
             }
     
-            await this.queueProcess(collection, _id)
+            writer = await this.queueProcess(collection, _id)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.aquireLock -> ${e.message}`)
         }
+
+        return writer
     }
 
-    static async releaseLock(collection: string, _id: _ulid) {
+    static async releaseLock(collection: string, _id: _ulid, writer: FileSink | undefined) {
 
         try {
 
-            await rm(`${Walker.DSK_DB}/${collection}/${Walker.DIRECT_DIR}/${_id}/${process.pid}`, { recursive: true })
+            await rm(`${Walker.DSK_DB}/${collection}/.${_id}/${process.pid}`, { recursive: true })
 
-            const results = await readdir(`${Walker.DSK_DB}/${collection}/${Walker.DIRECT_DIR}/${_id}`, { withFileTypes: true })
+            const results = await readdir(`${Walker.DSK_DB}/${collection}/.${_id}`, { withFileTypes: true })
 
             const timeSortedDir = results.filter(p => !p.isSymbolicLink()).sort((a, b) => {
-                const aTime = Bun.file(`${Walker.DSK_DB}/${collection}/${Walker.DIRECT_DIR}/${_id}/${a.name}`).lastModified
-                const bTime = Bun.file(`${Walker.DSK_DB}/${collection}/${Walker.DIRECT_DIR}/${_id}/${b.name}`).lastModified
+                const aTime = Bun.file(`${Walker.DSK_DB}/${collection}/.${_id}/${a.name}`).lastModified
+                const bTime = Bun.file(`${Walker.DSK_DB}/${collection}/.${_id}/${b.name}`).lastModified
                 return aTime - bTime
             })
 
-            if(timeSortedDir.length > 0) await rm(`${Walker.DSK_DB}/${collection}/${Walker.DIRECT_DIR}/${_id}/${timeSortedDir[0].name}`, { recursive: true })
+            if(timeSortedDir.length > 0) await rm(`${Walker.DSK_DB}/${collection}/.${_id}/${timeSortedDir[0].name}`, { recursive: true })
+            
+            if(writer) await writer.end()
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.releaseLock -> ${e.message}`)
@@ -273,31 +322,41 @@ export default class {
 
     private static async isLocked(collection: string, _id: _ulid) {
 
-        const results = await Array.fromAsync(new Bun.Glob(`${collection}/${Walker.DIRECT_DIR}/${_id}/**/*`).scan({ cwd: Walker.DSK_DB }))
-        
-        return results.filter(p => !ULID.isUUID(p.split('/').pop()!)).length > 0
+        if(!await exists(`${Walker.DSK_DB}/${collection}/.${_id}`)) return false
+
+        const files = await opendir(`${Walker.DSK_DB}/${collection}/.${_id}`)
+
+        for await (const file of files) {
+            if(!file.isSymbolicLink()) return true
+        }
+
+        return false
     }
 
     private static async queueProcess(collection: string, _id: _ulid) {
 
+        let writer: FileSink | undefined
+
         try {
 
-            await mkdir(`${Walker.DSK_DB}/${collection}/${Walker.DIRECT_DIR}/${_id}`, { recursive: true })
+            await mkdir(`${Walker.DSK_DB}/${collection}/.${_id}`, { recursive: true })
 
-            await Bun.file(`${Walker.DSK_DB}/${collection}/${Walker.DIRECT_DIR}/${_id}/${process.pid}`).writer().end()
+            writer = Bun.file(`${Walker.DSK_DB}/${collection}/.${_id}/${process.pid}`).writer()
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.queueProcess -> ${e.message}`)
         }
+
+        return writer
     }
 
-    static async reconstructData<T extends Record<string, any>>(indexes: string[]) {
+    static async reconstructData<T extends Record<string, any>>(items: string[]) {
         
-        const fieldVals = await this.reArrangeIndexes(indexes)
+        items = await this.readValues(items)
 
         let fieldVal: Record<string, string> = {}
 
-        fieldVals.forEach(data => {
+        items.forEach(data => {
             const segs = data.split('/')
             const val = segs.pop()!
             const field = segs.join('/')
@@ -307,32 +366,28 @@ export default class {
         return this.constructData<T>(fieldVal)
     }
 
-    static async reArrangeIndexes(indexes: string[]) {
+    static async readValues(items: string[]) {
 
-        const keyVals: string[] = []
+        for(let i = 0; i < items.length; i++) {
 
-        for(const index of indexes) {
+            const segments = items[i].split('/')
 
-            let val: string
+            const filename = segments.pop()!
 
-            const file = Bun.file(`${Walker.DSK_DB}/${index}`)
+            if(ULID.isUUID(filename)) {
 
-            const segments = index.split('/')
+                const data = await Walker.s3Client.send(new GetObjectCommand({
+                    Bucket: Walker.S3_DATA_DB,
+                    Key: items[i]
+                }))
 
-            const id = segments.pop()!
+                const val = await data.Body?.transformToString('utf-8') || ''
 
-            if(file.size > this.CHAR_LIMIT) val = await file.text()
-            else val = segments.pop()!
-
-            const collection = segments.shift()! 
-
-            segments.unshift(id)
-            segments.unshift(collection)
-
-            keyVals.push(`${segments.join('/')}/${val}`)
+                items[i] = `${segments.join('/')}/${val}`
+            }
         }
 
-        return keyVals
+        return items
     }
 
     private static filterByTimestamp(_id: _ulid, indexes: string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }) {
@@ -440,15 +495,15 @@ export default class {
         return indexes.length > 0
     }
 
-    static async *searchDocs<T extends Record<string, any>>(pattern: string | string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }, listen: boolean = false, deleted: boolean = false) {
+    static async *searchDocs<T extends Record<string, any>>(pattern: string | string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }, { listen = false, skip = false }: { listen: boolean, skip: boolean }, deleted: boolean = false): AsyncGenerator<Map<_ulid, T> | _ulid | undefined, void, { count: number, limit?: number }> {
         
-        const constructData = async (_id: _ulid, indexes: string[]) => {
+        const constructData = async (_id: _ulid, items: string[]) => {
 
             if(created || updated) {
 
-                if(this.filterByTimestamp(_id, indexes, { created, updated })) {
+                if(this.filterByTimestamp(_id, items, { created, updated })) {
 
-                    const data = await this.reconstructData<T>(indexes)
+                    const data = await this.reconstructData<T>(items)
 
                     return new Map([[_id, data]]) as Map<_ulid, T>
 
@@ -456,11 +511,16 @@ export default class {
 
             } else {
 
-                const data = await this.reconstructData<T>(indexes)
+                const data = await this.reconstructData<T>(items)
 
                 return new Map([[_id, data]]) as Map<_ulid, T>
             }
         }
+
+        const data = yield
+        let count = data.count
+        let limit = data.limit
+        let finished = false
 
         if(Array.isArray(pattern)) {
 
@@ -468,24 +528,57 @@ export default class {
 
                 if(listen && !deleted) {
 
-                    for await(const { _id, docIndexes } of Walker.search(p, listen)) {
+                    const iter = Walker.search(p, { listen, skip})
 
-                        yield await constructData(_id, docIndexes)
-                    }
+                    do {
+
+                        const { value, done } = await iter.next({ count, limit })
+
+                        if(done) finished = true
+
+                        if(value) {
+                            const data = yield await constructData(value._id, value.data)
+                            count = data.count
+                            limit = data.limit
+                        }
+
+                    } while(!finished)
 
                 } else if(listen && deleted) {
 
-                    for await(const { _id } of Walker.search(p, listen, "delete")) {
+                    const iter = Walker.search(p, { listen, skip }, "delete")
 
-                        yield _id
-                    }
+                    do {
+
+                        const { value, done } = await iter.next({ count, limit })
+
+                        if(done) finished = true
+
+                        if(value) {
+                            const data = yield value._id
+                            count = data.count
+                            limit = data.limit
+                        }
+
+                    } while(!finished)
 
                 } else {
 
-                    for await(const { _id, docIndexes } of Walker.search(p, listen)) {
+                    const iter = Walker.search(p, { listen, skip })
 
-                        yield await constructData(_id, docIndexes)
-                    }
+                    do {
+
+                        const { value, done } = await iter.next({ count, limit })
+
+                        if(done) finished = true
+
+                        if(value) {
+                            const data = yield await constructData(value._id, value.data)
+                            count = data.count
+                            limit = data.limit
+                        }
+
+                    } while(!finished)
                 }
             }
 
@@ -493,58 +586,125 @@ export default class {
 
             if(listen && !deleted) {
 
-                for await(const { _id, docIndexes } of Walker.search(pattern, listen)) {
+                const iter = Walker.search(pattern, { listen, skip })
 
-                    yield await constructData(_id, docIndexes)
-                }
+                do {
+
+                    const { value, done } = await iter.next({ count, limit })
+
+                    if(done) finished = true
+
+                    if(value) {
+                        const data = yield await constructData(value._id, value.data)
+                        count = data.count
+                        limit = data.limit
+                    }
+
+                } while(!finished)
 
             } else if(listen && deleted) {
 
-                for await(const { _id } of Walker.search(pattern, listen, "delete")) {
+                const iter = Walker.search(pattern, { listen, skip }, "delete")
 
-                    yield _id
-                }
+                do {
+
+                    const { value, done } = await iter.next({ count, limit })
+
+                    if(done) finished = true
+
+                    if(value) {
+                        const data = yield value._id
+                        count = data.count
+                        limit = data.limit
+                    }
+
+                } while(!finished)
 
             } else {
 
-                for await(const { _id, docIndexes } of Walker.search(pattern, listen)) {
+                const iter = Walker.search(pattern, { listen, skip })
 
-                    yield await constructData(_id, docIndexes)
-                }
+                do {
+
+                    const { value, done } = await iter.next({ count, limit })
+
+                    if(done) finished = true
+
+                    if(value) {
+                        const data = yield await constructData(value._id, value.data)
+                        count = data.count
+                        limit = data.limit
+                    }
+
+                } while(!finished)
             }
         }
     }
 
-    static async putIndex(index: string) {
+    static async putKeys({ data, index }: { data: string, index: string }, writer: FileSink | undefined) {
 
-        const segements = index.split('/')
+        let dataBody: string | undefined
+        let indexBody: string | undefined
 
-        const collection = segements.shift()!
-        const _id = segements.pop()! as _ulid
+        if(data.length > this.KEY_LIMIT) {
+
+            const dataSegs = data.split('/')
+
+            dataBody = dataSegs.pop()!
+            
+            index = `${dataSegs.join('/')}/${crypto.randomUUID()}`
+        } 
+
+        if(index.length > this.KEY_LIMIT) {
+
+            const indexSegs = index.split('/')
+
+            const _id = indexSegs.pop()! as _ulid
+
+            indexBody = indexSegs.pop()!
+
+            data = `${indexSegs.join('/')}/${_id}`
+        }
+
+        if(writer) writer.write(`${index}\n`)
+
+        await Promise.allSettled([Walker.s3Client.send(new PutObjectCommand({
+            Bucket: Walker.S3_DATA_DB,
+            Key: data,
+            Body: dataBody,
+            ContentLength: dataBody ? dataBody.length : 0
+        })), Walker.s3Client.send(new PutObjectCommand({
+            Bucket: Walker.S3_IDX_DB,
+            Key: index,
+            Body: indexBody,
+            ContentLength: indexBody ? indexBody.length : 0
+        }))])
+    }
+
+    static async deleteKeys(dataKey: string) {
+
+        const segements = dataKey.split('/')
+
         const val = segements.pop()!
-        
-        if(val.length > this.CHAR_LIMIT) {
-            index = `${collection}/${segements.join('/')}/${_id}`
-            await this.createDirFile(`${collection}/${segements.join('/')}`, _id, val)
-        }
-        else {
-            index = `${collection}/${segements.join('/')}/${val}/${_id}`
-            await this.createDirFile(`${collection}/${segements.join('/')}/${val}`, _id)
-        }
+        const collection = segements.shift()!
+        const _id = segements.shift()! as _ulid
 
-        return index
+        let index = `${collection}/${segements.join('/')}/${val}/${_id}`
+
+        if(ULID.isUUID(val)) index = `${collection}/${segements.join('/')}/${_id}`
+
+        await Promise.allSettled([Walker.s3Client.send(new DeleteObjectCommand({
+            Bucket: Walker.S3_DATA_DB,
+            Key: dataKey
+        })), Walker.s3Client.send(new DeleteObjectCommand({
+            Bucket: Walker.S3_IDX_DB,
+            Key: index
+        }))])
     }
 
-    static async deleteIndex(index: string) { 
+    static extractKeys<T>(collection: string, _id: _ulid, data: T, parentField?: string) {
 
-        const fullIndex = `${Walker.DSK_DB}/${index}`
-
-        if(await exists(fullIndex)) await rm(fullIndex, { recursive: true })
-    }
-
-    static deconstructData<T>(collection: string, _id: _ulid, data: T, parentField?: string) {
-
-        const indexes: string[] = []
+        const keys: { data: string[], indexes: string[] } = { data: [], indexes: [] }
 
         const obj = {...data}
 
@@ -553,19 +713,21 @@ export default class {
             const newField = parentField ? `${parentField}/${field}` : field
 
             if(typeof obj[field] === 'object' && !Array.isArray(obj[field])) {
-                indexes.push(...this.deconstructData(collection, _id, obj[field], newField))
+                const items = this.extractKeys(collection, _id, obj[field], newField)
+                keys.data.push(...items.data)
+                keys.indexes.push(...items.indexes)
             } else if(typeof obj[field] === 'object' && Array.isArray(obj[field])) {
                 const items: (string | number | boolean)[] = obj[field]
                 if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
-                if(JSON.stringify(items).length > this.CHAR_LIMIT) throw new Error(`Field '${items.join('')}' is too long`)
-                indexes.push(`${collection}/${newField}/${JSON.stringify(items).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
+                keys.data.push(`${collection}/${_id}/${newField}/${JSON.stringify(items).replaceAll('/', this.SLASH_ASCII)}`)
+                keys.indexes.push(`${collection}/${newField}/${JSON.stringify(items).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
             } else {
-                if(String(obj[field]).length > this.CHAR_LIMIT) throw new Error(`Field '${obj[field]}' is too long`)
-                indexes.push(`${collection}/${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
+                keys.data.push(`${collection}/${_id}/${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}`)
+                keys.indexes.push(`${collection}/${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
             }
         }
 
-        return indexes
+        return keys
     }
 
     static constructData<T>(fieldVal: Record<string, string>) {

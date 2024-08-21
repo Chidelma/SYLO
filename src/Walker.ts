@@ -1,5 +1,5 @@
-import { FileChangeInfo, watch, mkdir, exists, opendir, readlink } from "node:fs/promises"
-import { spawn } from "bun"
+import { FileChangeInfo, watch, mkdir, exists } from "node:fs/promises"
+import { S3Client, ListObjectsV2Command, _Object } from "@aws-sdk/client-s3"
 import ULID from "./ULID"
 
 export default class Walker {
@@ -8,119 +8,97 @@ export default class Walker {
 
     static readonly DSK_DB = process.env.DB_DIR || `${process.cwd()}/db`
 
-    static readonly TMP_DB = process.env.TMPFS
+    static readonly MEM_DB = process.env.MEM_DIR
 
-    static readonly DIRECT_DIR = '.direct'
+    static readonly S3_IDX_DB = process.env.S3_INDEX_BUCKET
 
-    private static async *searchCollection(collection: string) {
+    static readonly S3_DATA_DB = process.env.S3_DATA_BUCKET
+
+    private static readonly MAX_KEYS = 1000
+
+    static readonly s3Client = new S3Client({ 
+        region: process.env.S3_REGION,
+        endpoint: process.env.S3_ENDPOINT
+    })
+
+    private static async *searchS3(bucket: string, prefix: string, pattern?: string): AsyncGenerator<{ _id: _ulid, data: string[] } | undefined, void, { count: number, limit?: number  }> {
 
         const uniqueIds = new Set<string>()
 
-        const fields = await opendir(`${this.DSK_DB}/${collection}`)
+        let cursor: string | undefined
+        let finished = false
 
-        for await (const field of fields) {
+        const prefixSegments = prefix.split('/')
 
-            if(field.name === this.DIRECT_DIR) continue
+        const collection = prefixSegments.shift()!
 
-            const stream = spawn(['find', `${this.DSK_DB}/${collection}/${field.name}`, '-type', 'f', '-empty'], {
-                stdin: 'pipe',
-                stderr: 'pipe',
-            })
+        let filter = yield
 
-            let isIncomplete = false    
-            let incompletePath = ''
+        let limit = filter ? filter.limit : this.MAX_KEYS
 
-            for await (const chunk of stream.stdout) {
+        do {
 
-                const files = new TextDecoder().decode(chunk).split('\n')
-    
-                for (let file of files) {
-    
-                    if(isIncomplete) {
-                        file = incompletePath + file
-                        isIncomplete = false
-                        incompletePath = ''
-                    }
+            const res = await this.s3Client.send(new ListObjectsV2Command({
+                Bucket: bucket,
+                Prefix: prefix,
+                MaxKeys: pattern ? limit : undefined,
+                StartAfter: cursor
+            }))
 
-                    file = file.replace(`${this.DSK_DB}/`, '')
+            if(!res.Contents) break
 
-                    const segements = file.split('/')
+            cursor = res.Contents[res.Contents.length - 1].Key
+
+            const keys = res.Contents.map(item => item.Key!)
+
+            if(pattern) {
+
+                for(const key of keys) {
+
+                    const segements = key.split('/')
 
                     const _id = segements.pop()! as _ulid
 
-                    if(!ULID.isULID(_id)) {
-                        isIncomplete = true
-                        incompletePath = file
-                        continue
+                    if((ULID.isULID(_id) && !uniqueIds.has(_id)) && new Bun.Glob(pattern).match(key)) {
+
+                        filter = yield { _id, data: await this.getDocData(collection, _id) }
+
+                        limit = filter.limit ? filter.limit : this.MAX_KEYS
+
+                        uniqueIds.add(_id)
+
+                        if(filter.count === limit) {
+                            finished = true
+                            break
+                        }
                     }
-
-                    if(ULID.isULID(_id) && uniqueIds.has(_id)) continue
-
-                    yield { _id, docIndexes: await this.getDocIndexes(segements.shift()!, _id) }
-
-                    uniqueIds.add(_id)
-                }
-            } 
-        }
-    }
-
-    private static async *searchField(prefix: string, pattern: string) {
-
-        const uniqueIds = new Set<string>()
-
-        const stream = spawn(['find', `${Walker.DSK_DB}/${prefix}`, '-type', 'f', '-empty'], {
-            stdin: 'pipe',
-            stderr: 'pipe'
-        })
-
-        let isIncomplete = false    
-        let incompletePath = ''
-
-        for await (const chunk of stream.stdout) {
-
-            const paths = new TextDecoder().decode(chunk).split('\n')
-
-            for (const path of paths) {
-
-                let subPath = path.replace(`${Walker.DSK_DB}/`, '')
-
-                if(isIncomplete) {
-                    subPath = incompletePath + subPath
-                    isIncomplete = false
-                    incompletePath = ''
                 }
 
-                if(!new Bun.Glob(pattern).match(subPath)) continue
+                if(finished) break
 
-                const segements = subPath.split('/')
+            } else {
 
-                if(segements.length < 3) continue
+                const _id = prefix.split('/').pop()! as _ulid
 
-                const _id = segements.pop()! as _ulid
+                yield { _id, data: keys }
 
-                if(!ULID.isULID(_id)) {
+                finished = true
 
-                    isIncomplete = true
-                    incompletePath = subPath
-
-                    continue
-                }
-
-                if(!uniqueIds.has(_id)) yield { _id, docIndexes: await this.getDocIndexes(segements.shift()!, _id) }
-
-                uniqueIds.add(_id)
+                break
             }
-        } 
+
+        } while(!finished)
     }
 
-    static async *search(pattern: string, listen: boolean = false, action: "upsert" | "delete" = "upsert") {
+    static async *search(pattern: string, { listen = false, skip = false }: { listen: boolean, skip: boolean }, action: "upsert" | "delete" = "upsert"): AsyncGenerator<{ _id: _ulid, data: string[] } | undefined, void, { count: number, limit?: number }> {
 
-        const segments = pattern.split('/');
-        const idx = segments.findIndex(seg => seg.includes('*'));
-        const prefix = segments.slice(0, idx).join('/');
+        if(!skip) {
+            const segments = pattern.split('/');
+            const idx = segments.findIndex(seg => seg.includes('*'));
+            const prefix = segments.slice(0, idx).join('/');
 
-        if(prefix.split('/').length === 1) yield *this.searchCollection(prefix)
-        else yield *this.searchField(prefix, pattern)
+            yield* this.searchS3(this.S3_IDX_DB!, prefix, pattern)
+        }
 
         const eventIds = new Set<string>()
 
@@ -130,32 +108,42 @@ export default class Walker {
                 eventIds.delete(event.id)
             } else if(event.action === action && !eventIds.has(event.id)) {
                 eventIds.add(event.id)
-                yield { _id: event.id as _ulid, docIndexes: event.docIndexes }
+                yield { _id: event.id, data: event.data }
             }
         }
     }
 
-    static async getDocIndexes(collection: string, _id: _ulid) {
+    static async getDocData(collection: string, _id: _ulid) {
 
-        const indexes: string[] = []
+        const data: string[] = []
 
-        if(await exists(`${this.DSK_DB}/${collection}/${this.DIRECT_DIR}/${_id}`)) {
+        let finished = false
 
-            const files = await opendir(`${this.DSK_DB}/${collection}/${this.DIRECT_DIR}/${_id}`)
+        const iter = this.searchS3(this.S3_DATA_DB!, `${collection}/${_id}`)
 
-            for await (const file of files) {
-                if(!file.isSymbolicLink()) continue
-                const data = await readlink(`${this.DSK_DB}/${collection}/${this.DIRECT_DIR}/${_id}/${file.name}`)
-                indexes.push(data.replace(`${this.DSK_DB}/`, ''))
+        do {
+
+            const { value, done } = await iter.next()
+
+            if(done) {
+                finished = true
+                break
             }
-        }
 
-        return indexes
+            if(value) {
+                data.push(...value.data)
+                finished = true
+                break
+            }
+
+        } while(!finished)
+
+        return data
     }
 
     private static async *processPattern(pattern: string) {
 
-        const table = pattern.split('/')[0]
+        const table = pattern.split('/').shift()!
 
         if(!this.listeners.has(table)) {
 
@@ -167,16 +155,46 @@ export default class Walker {
         const watcher = this.listeners.get(table)!
 
         for await (const event of watcher) {
-
-            const path = `${table}/${event.filename}`
             
-            if(event.filename && new Bun.Glob(pattern).match(path) && event.eventType !== 'change') {
+            if(event.filename && event.eventType !== 'change') {
 
-                const id = path.split('/').pop()! as _ulid
+                try {
 
-                if(await exists(`${this.DSK_DB}/${path}`)) {
-                    yield { id, action: "upsert", docIndexes: await this.getDocIndexes(table, id) }
-                } else yield { id, action: "delete", docIndexes: [] }
+                    for await (const chunk of Bun.file(`${this.DSK_DB}/${table}/${event.filename}`).stream()) {
+
+                        const data = new TextDecoder().decode(chunk)
+
+                        const lines = data.split('\n')
+
+                        for(let i = 0; i < lines.length; i++) {
+
+                            if(i === 1 && pattern === `${table}/**/*`) break
+
+                            const line = lines[i]
+
+                            const _id = line.split('/').pop() as _ulid
+
+                            if(new Bun.Glob(pattern).match(line)) {
+
+                                if(await exists(`${this.DSK_DB}/${table}/.${_id}`)) {
+                                    yield { id: _id, action: "upsert", data: await this.getDocData(table, _id) }
+                                } else yield { id: _id, action: "delete", data: [] }
+                            }
+                        }
+                    }
+
+                } catch(e) {
+                    
+                    const segs = `${this.DSK_DB}/${table}/${event.filename}`.split('/')
+
+                    segs.pop()
+
+                    const _id = segs.pop()! as _ulid
+
+                    if(!await exists(`${this.DSK_DB}/${table}/${_id}`)) {
+                        yield { id: _id, action: "delete", data: [] }
+                    }
+                }
             }
         }
     }

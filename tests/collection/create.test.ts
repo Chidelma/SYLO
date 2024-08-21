@@ -1,9 +1,9 @@
 import { test, expect, describe } from 'bun:test'
 import Silo from '../../src/Stawrij'
-import { mkdirSync, readdirSync, rmdirSync } from 'node:fs'
+import { mkdir, readdir, rmdir } from 'node:fs/promises'
 
-rmdirSync(process.env.DB_DIR!, {recursive:true})
-mkdirSync(process.env.DB_DIR!, {recursive:true})
+await rmdir(process.env.DB_DIR!, {recursive:true})
+await mkdir(process.env.DB_DIR!, {recursive:true})
 
 describe("NO-SQL", () => {
 
@@ -17,7 +17,7 @@ describe("NO-SQL", () => {
 
         const savedSchema = await file.json()
 
-        const dirKeys = readdirSync(`${process.env.DATA_PREFIX}/${POSTS}`)
+        const dirKeys = await readdir(`${process.env.DATA_PREFIX}/${POSTS}`)
 
         const testPassed = Object.keys(savedSchema).every(key => dirKeys.includes(key))
 
@@ -37,7 +37,7 @@ describe("SQL", () => {
 
         const savedSchema = await file.json()
 
-        const dirKeys = readdirSync(`${process.env.DATA_PREFIX}/${ALBUMS}`)
+        const dirKeys = await readdir(`${process.env.DATA_PREFIX}/${ALBUMS}`)
 
         const testPassed = Object.keys(savedSchema).every(key => dirKeys.includes(key))
 

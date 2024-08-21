@@ -1,20 +1,30 @@
-import { test, expect, describe } from 'bun:test'
+import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import Silo from '../../src/Stawrij'
 import { albumURL, postsURL } from '../data'
-import { mkdirSync, rmSync } from 'node:fs'
+import { rm, mkdir } from 'node:fs/promises'
 
-rmSync(process.env.DB_DIR!, {recursive:true})
-mkdirSync(process.env.DB_DIR!, {recursive:true})
+const POSTS = 'posts'
+const ALBUMS = 'albums'
+
+let postsCount = 0
+let albumsCount = 0
+
+beforeAll(async () => {
+    await rm(process.env.DB_DIR!, {recursive:true})
+    await mkdir(process.env.DB_DIR!, {recursive:true})
+    await Promise.all([Silo.createSchema(POSTS), Silo.executeSQL<_user>(`CREATE TABLE ${ALBUMS}`)])
+
+    albumsCount = await Silo.importBulkData<_album>(ALBUMS, new URL(albumURL), 100)
+    postsCount = await Silo.importBulkData<_post>(POSTS, new URL(postsURL), 100)
+})
+
+afterAll(async () => {
+    await Promise.all([rm(process.env.DB_DIR!, {recursive:true}), Silo.dropSchema(POSTS), Silo.executeSQL<_album>(`DROP TABLE ${ALBUMS}`)])
+})
 
 describe("NO-SQL", () => {
 
-    const POSTS = 'posts'
-
     test("PUT", async () => {
-
-        await Silo.createSchema(POSTS)
-
-        const count = await Silo.importBulkData<_post>(POSTS, new URL(postsURL), 100)
 
         const results = new Map<_ulid, _post>()
 
@@ -28,23 +38,16 @@ describe("NO-SQL", () => {
             }
         }
 
-        expect(results.size).toEqual(count)
+        expect(results.size).toEqual(postsCount)
     })
 })
 
 describe("SQL", () => {
 
-    const ALBUMS = 'albums'
-
     test("INSERT", async () => {
-
-        await Silo.createSchema(ALBUMS)
-
-        const count = await Silo.importBulkData<_album>(ALBUMS, new URL(albumURL), 100)
 
         const results = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as Map<_ulid, _album>
 
-        expect(results.size).toEqual(count)
-
+        expect(results.size).toEqual(albumsCount)
     })
 })

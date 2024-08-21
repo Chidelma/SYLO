@@ -1,10 +1,10 @@
 import { test, expect, describe } from 'bun:test'
 import Silo from '../../src/Stawrij'
 import { postsURL, albumURL } from '../data'
-import { mkdirSync, rmdirSync } from 'node:fs'
+import { mkdir, rmdir } from 'node:fs/promises'
 
-rmdirSync(process.env.DB_DIR!, {recursive:true})
-mkdirSync(process.env.DB_DIR!, {recursive:true})
+await rmdir(process.env.DB_DIR!, {recursive:true})
+await mkdir(process.env.DB_DIR!, {recursive:true})
 
 describe("NO-SQL", () => {
 

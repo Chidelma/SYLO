@@ -1,10 +1,10 @@
 import { test, expect, describe } from 'bun:test'
 import Silo from '../../src/Stawrij'
 import { postsURL, albumURL } from '../data'
-import { mkdirSync, rmdirSync, existsSync } from 'node:fs'
+import { mkdir, rmdir, exists } from 'node:fs/promises'
 
-rmdirSync(process.env.DB_DIR!, {recursive:true})
-mkdirSync(process.env.DB_DIR!, {recursive:true})
+await rmdir(process.env.DB_DIR!, {recursive:true})
+await mkdir(process.env.DB_DIR!, {recursive:true})
 
 describe("NO-SQL", () => {
 
@@ -18,7 +18,7 @@ describe("NO-SQL", () => {
 
         await Silo.dropSchema(POSTS)
 
-        expect(existsSync(`${process.env.DATA_PREFIX}/${POSTS}`)).toBe(false)
+        expect(await exists(`${process.env.DATA_PREFIX}/${POSTS}`)).toBe(false)
 
     })
 })
@@ -35,6 +35,6 @@ describe("SQL", () => {
 
         await Silo.executeSQL<_album>(`DROP TABLE ${ALBUMS}`)
 
-        expect(existsSync(`${process.env.DATA_PREFIX}/${ALBUMS}`)).toBe(false)
+        expect(await exists(`${process.env.DATA_PREFIX}/${ALBUMS}`)).toBe(false)
     })
 })

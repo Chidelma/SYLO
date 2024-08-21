@@ -1,23 +1,15 @@
 import { spawn } from 'bun'
 import Silo from '../../src/Stawrij'
+import { readdir, opendir } from 'fs/promises'
+import Walker from '../../src/Walker'
+import { ListObjectsV2Command, DeleteObjectsCommand } from '@aws-sdk/client-s3'
 
 let start = Date.now()
 
 let count = 0
 
-for await (const data of Silo.findDocs<_tips>('tips', { $limit: 100, $onlyIds: true }).collect()) {
-  console.log(data, Date.now() - start, 'ms', ++count)
-  start = Date.now()
+for await (const data of Silo.findDocs<_tips>('tips', { $limit: 100 }).collect()) {
+  console.log(data, ++count)
 }
 
-// const stream = spawn(['find', `${process.env.DB_DIR}/tips`, '-type', 'f', '-empty'], {
-//   stdin: 'pipe',
-//   stderr: 'pipe'
-// })
-
-// for await (const chunk of stream.stdout) {
-
-//   const paths = new TextDecoder().decode(chunk).split('\n')
-
-//   console.log(paths)
-// }
+console.log(Date.now() - start)

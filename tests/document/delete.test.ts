@@ -1,18 +1,25 @@
-import { test, expect, describe } from 'bun:test'
+import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import Silo from '../../src/Stawrij'
 import { commentsURL, usersURL } from '../data'
-import { mkdirSync, rmSync } from 'node:fs'
+import { mkdir, rm } from 'node:fs/promises'
 
-rmSync(process.env.DB_DIR!, {recursive:true})
-mkdirSync(process.env.DB_DIR!, {recursive:true})
+const COMMENTS = 'comments'
+const USERS = 'users'
 
-describe("NO-SQL", async () => {
-
-    const COMMENTS = 'comments'
-
-    await Silo.createSchema(COMMENTS)
+beforeAll(async () => {
+    await rm(process.env.DB_DIR!, {recursive:true})
+    await mkdir(process.env.DB_DIR!, {recursive:true})
+    await Promise.all([Silo.createSchema(COMMENTS), Silo.executeSQL<_user>(`CREATE TABLE ${USERS}`)])
 
     await Silo.importBulkData<_comment>(COMMENTS, new URL(commentsURL), 100)
+    await Silo.importBulkData<_user>(USERS, new URL(usersURL), 100)
+})
+
+afterAll(async () => {
+    await Promise.all([await rm(process.env.DB_DIR!, {recursive:true}), Silo.dropSchema(COMMENTS), Silo.executeSQL<_user>(`DROP TABLE ${USERS}`)])
+})
+
+describe("NO-SQL", async () => {
 
     let results = new Map<_ulid, _comment>()
 
@@ -94,21 +101,15 @@ describe("NO-SQL", async () => {
 
 describe("SQL", async () => {
 
-    const USERS = 'users'
-
-    await Silo.executeSQL<_user>(`CREATE TABLE ${USERS}`)
-
-    await Silo.importBulkData<_user>(USERS, new URL(usersURL), 100)
-
-    let results = await Silo.executeSQL<_user>(`SELECT * FROM users LIMIT 1`) as Map<_ulid, _user>
+    let results = await Silo.executeSQL<_user>(`SELECT * FROM ${USERS} LIMIT 1`) as Map<_ulid, _user>
 
     test("DELETE CLAUSE", async () => {
 
         const name = Array.from(results.values())[0].name
 
-        await Silo.executeSQL<_user>(`DELETE FROM users WHERE name = '${name}'`)
+        await Silo.executeSQL<_user>(`DELETE FROM ${USERS} WHERE name = '${name}'`)
 
-        results = await Silo.executeSQL<_user>(`SELECT * FROM users WHERE name = '${name}'`) as Map<_ulid, _user>
+        results = await Silo.executeSQL<_user>(`SELECT * FROM ${USERS} WHERE name = '${name}'`) as Map<_ulid, _user>
         
         const idx = Array.from(results.values()).findIndex(com => com.name === name)
 
@@ -117,10 +118,10 @@ describe("SQL", async () => {
 
     test("DELETE ALL", async () => {
 
-        await Silo.executeSQL<_user>(`DELETE FROM users`)
+        await Silo.executeSQL<_user>(`DELETE FROM ${USERS}`)
 
-        results = await Silo.executeSQL<_user>(`SELECT * FROM users`) as Map<_ulid, _user>
+        results = await Silo.executeSQL<_user>(`SELECT * FROM ${USERS}`) as Map<_ulid, _user>
 
         expect(results.size).toBe(0)
-    }, 10000)
+    })
 })

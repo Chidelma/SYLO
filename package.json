@@ -10,6 +10,9 @@
   "bin": {
     "byos": "./src/CLI.ts"
   },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.368.0"
+  },
   "devDependencies": {
     "@types/node": "^16",
     "bun-types": "latest"
