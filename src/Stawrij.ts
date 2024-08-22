@@ -192,31 +192,34 @@ export default class Stawrij {
         return count
     }
 
-    static async *exportBulkData<T extends Record<string, any>>(collection: string, url: URL) {
+    static async *exportBulkData<T extends Record<string, any>>(collection: string) {
 
-        // extract the file extension from the URL
-        const fileExtension = url.pathname.split('.').pop()!
+        let token: string | undefined
 
-        // check if the file extension is valid
-        if (fileExtension !== 'json') throw new Error(`Invalid file extension: ${fileExtension}`)
+        do {
 
-        const writer = Bun.file(url).writer()
+            const data = await Walker.s3Client.send(new ListObjectsV2Command({
+                Bucket: Walker.S3_DATA_DB,
+                Prefix: `${collection}/`,
+                ContinuationToken: token,
+                Delimiter: '/'
+            }))
 
-        for await (const data of this.findDocs<T>(collection).collect()) {
+            if(!data.CommonPrefixes) break
 
-            const doc = data as Map<_ulid, T>
+            const ids = data.CommonPrefixes.map(item => item.Prefix!.split('/')[1]!) as _ulid[]
 
-            for(let [_id, data] of doc) {
+            const res = await Promise.allSettled(ids.map(id => Stawrij.getDoc<T>(collection, id).once()))
 
-                yield _id
+            const docs = res.filter(item => item.status === 'fulfilled').map(item => item.value)
 
-                writer.write(JSON.stringify(data) + '\n')
+            for(const doc of docs) {
+                for(const [_, data] of doc) {
+                    yield data
+                }
             }
-        }
 
-        await writer.end()
-
-        await Stawrij.dropSchema(collection)
+        } while(token)
     }
 
     static getDoc<T extends Record<string, any>>(collection: string, _id: _ulid, onlyId: boolean = false) {
@@ -295,9 +298,27 @@ export default class Stawrij {
 
     static async batchPutData<T extends Record<string, any>>(collection: string, batch: Array<T>) {
 
-        if(batch.length > navigator.hardwareConcurrency) throw new Error("Batch size must be less than or equal to the number of CPUs")
+        const batches: T[][] = []
+        const ids: _ulid[] = []
+
+        if(batch.length > navigator.hardwareConcurrency) {
+
+            for(let i = 0; i < batch.length; i += navigator.hardwareConcurrency) {
+                batches.push(batch.slice(i, i + navigator.hardwareConcurrency))
+            }
+            
+        } else batches.push(batch)
         
-        await Promise.allSettled(batch.map(data => Stawrij.putData(collection, data)))
+        for(const batch of batches) {
+
+            const res = await Promise.allSettled(batch.map(data => Stawrij.putData(collection, data)))
+
+            for(const _id of res.filter(item => item.status === 'fulfilled').map(item => item.value)) {
+                ids.push(_id)
+            }
+        }
+
+        return ids
     }
 
     static async putData<T extends Record<string, any>>(collection: string, data: Map<_ulid, T> | T, items?: string[]) {
