@@ -12,4 +12,11 @@ for await (const data of Silo.findDocs<_tips>('tips', { $limit: 100 }).collect()
   console.log(data, ++count)
 }
 
-console.log(Date.now() - start)
+// for await (const data of Silo.findDocs<_album>('albums')) {
+
+//     console.log(data, ++count, Date.now() - start)
+
+//     start = Date.now()
+// }
+
+

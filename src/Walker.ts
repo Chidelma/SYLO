@@ -154,46 +154,29 @@ export default class Walker {
 
         const watcher = this.listeners.get(table)!
 
+        const stackIds = new Set<string>()
+
         for await (const event of watcher) {
             
-            if(event.filename && event.eventType !== 'change') {
+            if(event.filename && event.eventType === 'rename' && event.filename.split('/').length === 2) {
 
-                try {
+                const index = event.filename.split('/').pop()!.replaceAll('\\', '/')
 
-                    for await (const chunk of Bun.file(`${this.DSK_DB}/${table}/${event.filename}`).stream()) {
+                const _id = index.split('/').pop()! as _ulid
 
-                        const data = new TextDecoder().decode(chunk)
+                if(ULID.isULID(_id) && new Bun.Glob(pattern).match(index) && !stackIds.has(_id)) {
 
-                        const lines = data.split('\n')
+                    stackIds.add(_id)
 
-                        for(let i = 0; i < lines.length; i++) {
+                    yield { id: _id, action: "upsert", data: await this.getDocData(table, _id) }
 
-                            if(i === 1 && pattern === `${table}/**/*`) break
+                } else if(!await exists(`${this.DSK_DB}/${table}/.${_id}`)) {
 
-                            const line = lines[i]
+                    yield { id: _id, action: "delete", data: [] }
+                
+                } else if(ULID.isULID(_id) && stackIds.has(_id)) {
 
-                            const _id = line.split('/').pop() as _ulid
-
-                            if(new Bun.Glob(pattern).match(line)) {
-
-                                if(await exists(`${this.DSK_DB}/${table}/.${_id}`)) {
-                                    yield { id: _id, action: "upsert", data: await this.getDocData(table, _id) }
-                                } else yield { id: _id, action: "delete", data: [] }
-                            }
-                        }
-                    }
-
-                } catch(e) {
-                    
-                    const segs = `${this.DSK_DB}/${table}/${event.filename}`.split('/')
-
-                    segs.pop()
-
-                    const _id = segs.pop()! as _ulid
-
-                    if(!await exists(`${this.DSK_DB}/${table}/${_id}`)) {
-                        yield { id: _id, action: "delete", data: [] }
-                    }
+                    stackIds.delete(_id)
                 }
             }
         }

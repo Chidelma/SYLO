@@ -1,8 +1,7 @@
-import { rm, exists, mkdir, readdir, opendir, rmdir, watch } from "node:fs/promises"
+import { rm, exists, mkdir, readdir, opendir, rmdir, watch, stat } from "node:fs/promises"
 import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from "@aws-sdk/client-s3"
 import Walker from "./Walker"
 import ULID from "./ULID"
-import { FileSink } from "bun"
 
 export default class {
 
@@ -275,8 +274,6 @@ export default class {
 
     static async aquireLock(collection: string, _id: _ulid) {
 
-        let writer: FileSink | undefined
-
         try {
 
             if(await this.isLocked(collection, _id)) {
@@ -288,20 +285,17 @@ export default class {
                 }
             }
     
-            writer = await this.queueProcess(collection, _id)
+            await this.queueProcess(collection, _id)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.aquireLock -> ${e.message}`)
         }
 
-        return writer
     }
 
-    static async releaseLock(collection: string, _id: _ulid, writer: FileSink | undefined) {
+    static async releaseLock(collection: string, _id: _ulid) {
 
         try {
-
-            if(writer) await writer.end()
 
             await rm(`${Walker.DSK_DB}/${collection}/.${_id}/${process.pid}`, { recursive: true })
 
@@ -335,19 +329,15 @@ export default class {
 
     private static async queueProcess(collection: string, _id: _ulid) {
 
-        let writer: FileSink | undefined
-
         try {
 
             await mkdir(`${Walker.DSK_DB}/${collection}/.${_id}`, { recursive: true })
 
-            writer = Bun.file(`${Walker.DSK_DB}/${collection}/.${_id}/${process.pid}`).writer()
+            await Bun.file(`${Walker.DSK_DB}/${collection}/.${_id}/${process.pid}`).writer().end()
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.queueProcess -> ${e.message}`)
         }
-
-        return writer
     }
 
     static async reconstructData<T extends Record<string, any>>(items: string[]) {
@@ -390,9 +380,13 @@ export default class {
         return items
     }
 
-    private static filterByTimestamp(_id: _ulid, indexes: string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }) {
+    private static async filterByTimestamp(collection: string, _id: _ulid, indexes: string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }) {
 
-        if(updated) {
+        if(updated && await exists(`${Walker.DSK_DB}/${collection}/.${_id}`)) {
+
+            const metadata = await stat(`${Walker.DSK_DB}/${collection}/.${_id}`)
+
+            const lastModified = metadata.mtime.getMilliseconds()
 
             if((updated.$gt || updated.$gte) && (updated.$lt || updated.$lte)) {
 
@@ -400,46 +394,34 @@ export default class {
 
                     if(updated.$gt! > updated.$lt!) throw new Error("Invalid updated query")
 
-                    indexes = indexes.filter(idx => {
-                        return Bun.file(`${Walker.DSK_DB}/${idx}`).lastModified > updated.$gt! && Bun.file(`${Walker.DSK_DB}/${idx}`).lastModified < updated.$lt!
-                    })
+                    indexes = lastModified > updated.$gt! && lastModified < updated.$lt! ? indexes : []
                 
                 } else if(updated.$gt && updated.$lte) {
 
                     if(updated.$gt! > updated.$lte!) throw new Error("Invalid updated query")
 
-                    indexes = indexes.filter(idx => {
-                        return Bun.file(`${Walker.DSK_DB}/${idx}`).lastModified > updated.$gt! && Bun.file(`${Walker.DSK_DB}/${idx}`).lastModified <= updated.$lte!
-                    })
+                    indexes = lastModified > updated.$gt! && lastModified <= updated.$lte! ? indexes : []
                 
                 } else if(updated.$gte && updated.$lt) {
 
                     if(updated.$gte! > updated.$lt!) throw new Error("Invalid updated query")
 
-                    indexes = indexes.filter(idx => {
-                        return Bun.file(`${Walker.DSK_DB}/${idx}`).lastModified >= updated.$gte! && Bun.file(`${Walker.DSK_DB}/${idx}`).lastModified < updated.$lt!
-                    })
+                    indexes = lastModified >= updated.$gte! && lastModified < updated.$lt! ? indexes : []
                 
                 } else if(updated.$gte && updated.$lte) {
 
                     if(updated.$gte! > updated.$lte!) throw new Error("Invalid updated query")
 
-                    indexes = indexes.filter(idx => {
-                        return Bun.file(`${Walker.DSK_DB}/${idx}`).lastModified >= updated.$gte! && Bun.file(`${Walker.DSK_DB}/${idx}`).lastModified <= updated.$lte!
-                    })
+                    indexes = lastModified >= updated.$gte! && lastModified <= updated.$lte! ? indexes : []
                 }
 
             } else if((updated.$gt || updated.$gte) && !updated.$lt && !updated.$lte) {
 
-                indexes = indexes.filter(idx => {
-                    return updated.$gt ? Bun.file(`${Walker.DSK_DB}/${idx}`).lastModified > updated.$gt! : Bun.file(`${Walker.DSK_DB}/${idx}`).lastModified >= updated.$gte!
-                })
+                indexes = updated.$gt ? lastModified > updated.$gt! ? indexes : [] : lastModified >= updated.$gte! ? indexes : []
             
             } else if(!updated.$gt && !updated.$gte && (updated.$lt || updated.$lte)) {
 
-                indexes = indexes.filter(idx => {
-                    return updated.$lt ? Bun.file(`${Walker.DSK_DB}/${idx}`).lastModified < updated.$lt! : Bun.file(`${Walker.DSK_DB}/${idx}`).lastModified <= updated.$lte!
-                })
+                indexes = updated.$lt ? lastModified < updated.$lt! ? indexes : [] : lastModified <= updated.$lte! ? indexes : []
             }
         }
 
@@ -497,11 +479,15 @@ export default class {
 
     static async *searchDocs<T extends Record<string, any>>(pattern: string | string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }, { listen = false, skip = false }: { listen: boolean, skip: boolean }, deleted: boolean = false): AsyncGenerator<Map<_ulid, T> | _ulid | void, void, { count: number, limit?: number  }> {
         
-        const constructData = async (_id: _ulid, items: string[]) => {
+        const data = yield
+        let count = data.count
+        let limit = data.limit
+        
+        const constructData = async (collection: string, _id: _ulid, items: string[]) => {
 
             if(created || updated) {
 
-                if(this.filterByTimestamp(_id, items, { created, updated })) {
+                if(await this.filterByTimestamp(collection, _id, items, { created, updated })) {
 
                     const data = await this.reconstructData<T>(items)
 
@@ -518,10 +504,6 @@ export default class {
         }
 
         const processQuery = async function*(p: string): AsyncGenerator<Map<_ulid, T> | _ulid | void, void, { count: number, limit?: number  }> {
-            
-            const data = yield
-            let count = data.count
-            let limit = data.limit
 
             let finished = false
             
@@ -536,7 +518,7 @@ export default class {
                     if(done) finished = true
 
                     if(value) {
-                        const data = yield await constructData(value._id, value.data)
+                        const data = yield await constructData(p.split('/').shift()!, value._id, value.data)
                         count = data.count
                         limit = data.limit
                     }
@@ -572,7 +554,7 @@ export default class {
                     if(done) finished = true
 
                     if(value) {
-                        const data = yield await constructData(value._id, value.data)
+                        const data = yield await constructData(p.split('/').shift()!, value._id, value.data)
                         count = data.count
                         limit = data.limit
                     }
@@ -588,7 +570,7 @@ export default class {
         } else yield* processQuery(pattern)
     }
 
-    static async putKeys({ data, index }: { data: string, index: string }, writer: FileSink | undefined) {
+    static async putKeys({ data, index }: { data: string, index: string }) {
 
         let dataBody: string | undefined
         let indexBody: string | undefined
@@ -613,11 +595,6 @@ export default class {
             data = `${indexSegs.join('/')}/${_id}`
         }
 
-        if(writer) {
-            writer.write(`${index}\n`)
-            await writer.flush()
-        }
-
         await Promise.allSettled([Walker.s3Client.send(new PutObjectCommand({
             Bucket: Walker.S3_DATA_DB,
             Key: data,
@@ -629,6 +606,12 @@ export default class {
             Body: indexBody,
             ContentLength: indexBody ? indexBody.length : 0
         }))])
+
+        const collection = index.split('/').shift()!
+        const _id = index.split('/').pop()! as _ulid
+
+        await Bun.file(`${Walker.DSK_DB}/${collection}/.${_id}/${index.replaceAll('/', '\\')}`).writer().end()
+        await rm(`${Walker.DSK_DB}/${collection}/.${_id}/${index.replaceAll('/', '\\')}`, { recursive: true })
     }
 
     static async deleteKeys(dataKey: string) {

@@ -308,7 +308,7 @@ export default class Stawrij {
 
             if(this.SCHEMA === 'STRICT' && !collection.startsWith('_')) await Dir.validateData(collection, data)
             
-            const writer = await Dir.aquireLock(collection, _id)
+            await Dir.aquireLock(collection, _id)
 
             items ??= await Walker.getDocData(collection, _id)
 
@@ -318,11 +318,11 @@ export default class Stawrij {
 
             const keys = Dir.extractKeys(collection, _id, doc)
 
-            await Promise.allSettled(keys.data.map((item, i) => Dir.putKeys({ data: item, index: keys.indexes[i] }, writer)))
+            await Promise.allSettled(keys.data.map((item, i) => Dir.putKeys({ data: item, index: keys.indexes[i] })))
 
             if(this.LOGGING) console.log(`Finished Writing ${_id}`)
             
-            await Dir.releaseLock(collection, _id, writer)
+            await Dir.releaseLock(collection, _id)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.putData -> ${e.message}`)
