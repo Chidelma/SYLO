@@ -1,4 +1,4 @@
-import { rm, exists, mkdir, readdir, opendir, rmdir, watch, stat } from "node:fs/promises"
+import { rm, exists, mkdir, readdir, opendir, rmdir, watch, stat, symlink } from "node:fs/promises"
 import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from "@aws-sdk/client-s3"
 import Walker from "./Walker"
 import ULID from "./ULID"
@@ -316,15 +316,28 @@ export default class {
 
     private static async isLocked(collection: string, _id: _ulid) {
 
-        if(!await exists(`${Walker.DSK_DB}/${collection}/.${_id}`)) return false
+        let locked = false
 
-        const files = await opendir(`${Walker.DSK_DB}/${collection}/.${_id}`)
+        try {
 
-        for await (const file of files) {
-            if(!file.isSymbolicLink()) return true
+            if(!await exists(`${Walker.DSK_DB}/${collection}/.${_id}`)) return locked
+
+            const files = await opendir(`${Walker.DSK_DB}/${collection}/.${_id}`)
+
+            for await (const file of files) {
+
+                if(!file.isSymbolicLink()) {
+                    locked = true
+                    break
+                }
+
+            }
+
+        } catch(e) {
+            if(e instanceof Error) throw new Error(`Dir.isLocked -> ${e.message}`)
         }
 
-        return false
+        return locked
     }
 
     private static async queueProcess(collection: string, _id: _ulid) {
@@ -610,7 +623,7 @@ export default class {
         const collection = index.split('/').shift()!
         const _id = index.split('/').pop()! as _ulid
 
-        await Bun.file(`${Walker.DSK_DB}/${collection}/.${_id}/${index.replaceAll('/', '\\')}`).writer().end()
+        await symlink(``, `${Walker.DSK_DB}/${collection}/.${_id}/${index.replaceAll('/', '\\')}`)
         await rm(`${Walker.DSK_DB}/${collection}/.${_id}/${index.replaceAll('/', '\\')}`, { recursive: true })
     }
 
