@@ -14,15 +14,26 @@ export default class Stawrij {
 
     private static MAX_CPUS = navigator.hardwareConcurrency
 
+    private static checkEnvironment() {
+
+        if(!process.env.S3_INDEX_BUCKET) throw new Error("Missing S3_INDEX_BUCKET")
+
+        if(!process.env.S3_DATA_BUCKET) throw new Error("Missing S3_DATA_BUCKET")
+
+        if(!process.env.DB_DIR) throw new Error("Missing DB_DIR")
+
+        if(process.env.S3_INDEX_BUCKET! === process.env.S3_DATA_BUCKET!) throw new Error("S3_INDEX_BUCKET and S3_DATA_BUCKET cannot be the same")
+    }
+
     static async executeSQL<T extends Record<string, any>, U extends Record<string, any> = {}>(SQL: string) {
 
-        const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|USE)/i)
+        this.checkEnvironment()
+        
+        const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)/i)
 
         if(!op) throw new Error("Missing SQL Operation")
 
         switch(op[0]) {
-            case "USE":
-                return Paser.convertUse(SQL)
             case "CREATE":
                 return await Stawrij.createSchema(Paser.convertTableCRUD(SQL).collection!)
             case "ALTER":   
@@ -89,6 +100,8 @@ export default class Stawrij {
     }
 
     static async importBulkData<T extends Record<string, any>>(collection: string, url: URL, limit?: number) {
+        
+        this.checkEnvironment()
         
         const res = await fetch(url)
 
@@ -194,6 +207,8 @@ export default class Stawrij {
 
     static async *exportBulkData<T extends Record<string, any>>(collection: string) {
 
+        this.checkEnvironment()
+
         let token: string | undefined
 
         do {
@@ -224,6 +239,8 @@ export default class Stawrij {
 
     static getDoc<T extends Record<string, any>>(collection: string, _id: _ulid, onlyId: boolean = false) {
 
+        this.checkEnvironment()
+        
         return {
 
             async *[Symbol.asyncIterator]() {
@@ -298,6 +315,8 @@ export default class Stawrij {
 
     static async batchPutData<T extends Record<string, any>>(collection: string, batch: Array<T>) {
 
+        this.checkEnvironment()
+
         const batches: T[][] = []
         const ids: _ulid[] = []
 
@@ -306,7 +325,7 @@ export default class Stawrij {
             for(let i = 0; i < batch.length; i += navigator.hardwareConcurrency) {
                 batches.push(batch.slice(i, i + navigator.hardwareConcurrency))
             }
-            
+
         } else batches.push(batch)
         
         for(const batch of batches) {
@@ -323,6 +342,8 @@ export default class Stawrij {
 
     static async putData<T extends Record<string, any>>(collection: string, data: Map<_ulid, T> | T, items?: string[]) {
 
+        this.checkEnvironment()
+        
         const _id = data instanceof Map ? Array.from((data as Map<_ulid, T>).keys())[0] : ULID.generate()
         
         try {
@@ -353,6 +374,8 @@ export default class Stawrij {
     }
 
     static async patchDoc<T extends Record<string, any>>(collection: string, newDoc: Map<_ulid, Partial<T>>, oldDoc: Map<_ulid, T> = new Map<_ulid, T>()) {
+        
+        this.checkEnvironment()
         
         try {
 
@@ -394,6 +417,8 @@ export default class Stawrij {
 
     static async patchDocs<T extends Record<string, any>>(collection: string, updateSchema: _storeUpdate<T>) {
 
+        this.checkEnvironment()
+        
         const processDoc = (doc: Map<_ulid, T>, updateSchema: _storeUpdate<T>) => {
 
             for(const [_id] of doc) 
@@ -460,6 +485,8 @@ export default class Stawrij {
 
     static async delDoc(collection: string, _id: _ulid) {
 
+        this.checkEnvironment()
+
         try {
 
             await Dir.aquireLock(collection, _id)
@@ -479,6 +506,8 @@ export default class Stawrij {
 
     static async delDocs<T extends Record<string, any>>(collection: string, deleteSchema?: _storeDelete<T>) {
 
+        this.checkEnvironment()
+        
         const processDoc = (doc: Map<_ulid, T>) => {
 
             for(const [_id] of doc) 
@@ -553,7 +582,7 @@ export default class Stawrij {
     }
 
     private static renameFields<T extends Record<string, any>>(rename: Record<keyof T, string>, data: T) {
-
+        
         for(const field in data) {
             if(rename[field]) {
                 data[rename[field]] = data[field]
@@ -565,6 +594,8 @@ export default class Stawrij {
     }
 
     static async joinDocs<T extends Record<string, any>, U extends Record<string, any>>(join: _join<T, U>) { 
+        
+        this.checkEnvironment()
         
         const docs: Map<_ulid[], T | U | T & U | Partial<T> & Partial<U>> = new Map<_ulid[], T | U | T & U | Partial<T> & Partial<U>>()
 
@@ -767,6 +798,8 @@ export default class Stawrij {
 
     static findDocs<T extends Record<string, any>>(collection: string, query?: _storeQuery<T>) {
 
+        this.checkEnvironment()
+        
         const processDoc = (doc: Map<_ulid, T>, query?: _storeQuery<T>) => {
 
             if(doc.size > 0) {

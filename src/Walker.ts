@@ -6,7 +6,7 @@ export default class Walker {
 
     private static readonly listeners: Map<string, AsyncIterable<FileChangeInfo<string>>> = new Map()
 
-    static readonly DSK_DB = process.env.DB_DIR || `${process.cwd()}/db`
+    static readonly DSK_DB = process.env.DB_DIR
 
     static readonly MEM_DB = process.env.MEM_DIR
 

@@ -1,22 +1,5 @@
 export default class {
 
-    static convertUse(SQL: string) {
-
-        try {
-
-            const useMatch = SQL.match(/(?:use|USE)\s+(\w+)/i)
-
-            if(!useMatch) throw new Error("Invalid SQL USE statement")
-
-            const [_, database] = useMatch
-
-            Bun.env.DB_DIR = database
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Parser.convertUse -> ${e.message}`)
-        }
-    }
-
     static convertTableCRUD(SQL: string) {
         
         const crud: { collection: string } = {} as { collection: string }
