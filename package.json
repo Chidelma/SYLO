@@ -1,11 +1,24 @@
 {
-    "name": "syloh",
-    "devDependencies": {
-      "@types/node": "^16"
-    },
-    "dependencies": {
-      "@aws-sdk/client-s3": "^3.456.0",
-      "@google-cloud/storage": "^7.6.0",
-      "@azure/storage-blob": "^12.17.0"
+  "name": "@delma/byos",
+  "version": "0.1.0",
+  "exports": { 
+    "." : {
+      "import": "./src/Stawrij.ts",
+      "types": "./types/index.d.ts"
     }
+  },
+  "bin": {
+    "byos": "./src/CLI.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.368.0"
+  },
+  "devDependencies": {
+    "@types/node": "^16",
+    "bun-types": "latest"
+  },
+  "type": "module",
+  "peerDependencies": {
+    "typescript": "^5.0.0"
   }
+}
