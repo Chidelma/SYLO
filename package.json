@@ -1,5 +1,5 @@
 {
-  "name": "@delma/byos",
+  "name": "@vyckr/byos",
   "version": "0.1.0",
   "exports": { 
     "." : {

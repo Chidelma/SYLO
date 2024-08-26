@@ -12,7 +12,7 @@ BYOS is a customizable storage solution built with TypeScript (Bun), providing a
 ## Installation
 
 ```bash
-npm install @delma/byos
+npm install @vyckr/byos
 ```
 
 ## Configuration
@@ -40,7 +40,7 @@ Make sure you have set the 'SCHEMA_PATH' if 'SCHEMA' is set to 'STRICT'. The sch
 ```
 
 ```typescript
-import Silo from "@delma/byos";
+import Silo from "@vyckr/byos";
 
 await Silo.createSchema("users")
 
@@ -74,7 +74,7 @@ await Silo.dropSchema("users")
 The equivalent of the above code using SQL syntax would be:
 
 ```typescript
-import Silo from "@delma/byos";
+import Silo from "@vyckr/byos";
 
 await Silo.executeSQL<_user>(`CREATE TABLE users`)
 
@@ -102,7 +102,7 @@ await Silo.executeSQL<_user>(`DROP TABLE users`)
 For streaming (listening) data, you can use the following methods:
 
 ```typescript
-import Silo from "@delma/byos";
+import Silo from "@vyckr/byos";
 
 for await (const user of Silo.findDocs<_user>("users", { $limit: 10 })) {
     console.log(user)
