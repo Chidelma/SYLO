@@ -20,5 +20,22 @@
   "type": "module",
   "peerDependencies": {
     "typescript": "^5.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Chidelma/BYOS.git"
+  },
+  "license": "MIT",
+  "keywords": [
+    "storage",
+    "database",
+    "s3",
+    "aws",
+    "typescript",
+    "bun"
+  ],
+  "author": "Chidelma",
+  "bugs": {
+    "url": "https://github.com/Chidelma/BYOS/issues"
   }
 }

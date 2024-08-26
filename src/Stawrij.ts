@@ -25,6 +25,11 @@ export default class Stawrij {
         if(process.env.S3_INDEX_BUCKET! === process.env.S3_DATA_BUCKET!) throw new Error("S3_INDEX_BUCKET and S3_DATA_BUCKET cannot be the same")
     }
 
+    /**
+     * Executes a SQL query and returns the results.
+     * @param SQL The SQL query to execute.
+     * @returns The results of the query.
+     */
     static async executeSQL<T extends Record<string, any>, U extends Record<string, any> = {}>(SQL: string) {
 
         this.checkEnvironment()
@@ -75,6 +80,10 @@ export default class Stawrij {
         }
     }
 
+    /**
+     * Creates a new schema for a collection.
+     * @param collection The name of the collection.
+     */
     static async createSchema(collection: string) {
 
         this.checkEnvironment()
@@ -86,6 +95,10 @@ export default class Stawrij {
         }
     }
 
+    /**
+     * Modifies an existing schema for a collection.
+     * @param collection The name of the collection.
+     */
     static async modifySchema(collection: string) {
 
         this.checkEnvironment()
@@ -97,6 +110,10 @@ export default class Stawrij {
         }
     }
 
+    /**
+     * Drops an existing schema for a collection.
+     * @param collection The name of the collection.
+     */
     static async dropSchema(collection: string) {
 
         this.checkEnvironment()
@@ -108,6 +125,12 @@ export default class Stawrij {
         }
     }
 
+    /**
+     * Imports data from a URL into a collection.
+     * @param collection The name of the collection.
+     * @param url The URL of the data to import.
+     * @param limit The maximum number of documents to import.
+     */
     static async importBulkData<T extends Record<string, any>>(collection: string, url: URL, limit?: number) {
         
         this.checkEnvironment()
@@ -214,6 +237,11 @@ export default class Stawrij {
         return count
     }
 
+    /**
+     * Exports data from a collection to a URL.
+     * @param collection The name of the collection.
+     * @returns The current data exported from the collection.
+     */
     static async *exportBulkData<T extends Record<string, any>>(collection: string) {
 
         this.checkEnvironment()
@@ -248,12 +276,22 @@ export default class Stawrij {
         } while(token !== undefined)
     }
 
+    /**
+     * Gets a document from a collection.
+     * @param collection The name of the collection.
+     * @param _id The ID of the document.
+     * @param onlyId Whether to only return the ID of the document.
+     * @returns The document or the ID of the document.
+     */
     static getDoc<T extends Record<string, any>>(collection: string, _id: _ulid, onlyId: boolean = false) {
 
         this.checkEnvironment()
         
         return {
 
+            /**
+             * Async iterator (listener) for the document.
+             */
             async *[Symbol.asyncIterator]() {
 
                 const doc = await this.once()
@@ -289,6 +327,9 @@ export default class Stawrij {
                 } while(!finished)
             },
 
+            /**
+             * Gets the document once.
+             */
             async once() {
 
                 const items = await Walker.getDocData(collection, _id)
@@ -300,6 +341,9 @@ export default class Stawrij {
                 return new Map<_ulid, T>([[_id, data]])
             },
 
+            /**
+             * Async iterator (listener) for the document's deletion.
+             */
             async *onDelete() {
 
                 let finished = false
@@ -324,6 +368,12 @@ export default class Stawrij {
         }
     }
 
+    /**
+     * Puts multiple documents into a collection.
+     * @param collection The name of the collection.
+     * @param batch The documents to put.
+     * @returns The IDs of the documents.
+     */
     static async batchPutData<T extends Record<string, any>>(collection: string, batch: Array<T>) {
 
         this.checkEnvironment()
@@ -351,6 +401,13 @@ export default class Stawrij {
         return ids
     }
 
+    /**
+     * Puts a document into a collection.
+     * @param collection The name of the collection.
+     * @param data The document to put.
+     * @param items The keys to delete for update operations.
+     * @returns The ID of the document.
+     */
     static async putData<T extends Record<string, any>>(collection: string, data: Map<_ulid, T> | T, items?: string[]) {
 
         this.checkEnvironment()
@@ -384,6 +441,13 @@ export default class Stawrij {
         return _id
     }
 
+    /**
+     * Patches a document in a collection.
+     * @param collection The name of the collection.
+     * @param newDoc The new document data.
+     * @param oldDoc The old document data.
+     * @returns The number of documents patched.
+     */
     static async patchDoc<T extends Record<string, any>>(collection: string, newDoc: Map<_ulid, Partial<T>>, oldDoc: Map<_ulid, T> = new Map<_ulid, T>()) {
         
         this.checkEnvironment()
@@ -425,7 +489,12 @@ export default class Stawrij {
         }
     }
 
-
+    /**
+     * Patches documents in a collection.
+     * @param collection The name of the collection.
+     * @param updateSchema The update schema.
+     * @returns The number of documents patched.
+     */
     static async patchDocs<T extends Record<string, any>>(collection: string, updateSchema: _storeUpdate<T>) {
 
         this.checkEnvironment()
@@ -494,6 +563,12 @@ export default class Stawrij {
         return count
     }
 
+    /**
+     * Deletes a document from a collection.
+     * @param collection The name of the collection.
+     * @param _id The ID of the document.
+     * @returns The number of documents deleted.
+     */
     static async delDoc(collection: string, _id: _ulid) {
 
         this.checkEnvironment()
@@ -515,6 +590,12 @@ export default class Stawrij {
         }
     }
 
+    /**
+     * Deletes documents from a collection.
+     * @param collection The name of the collection.
+     * @param deleteSchema The delete schema.
+     * @returns The number of documents deleted.
+     */
     static async delDocs<T extends Record<string, any>>(collection: string, deleteSchema?: _storeDelete<T>) {
 
         this.checkEnvironment()
@@ -604,6 +685,11 @@ export default class Stawrij {
         return data
     }
 
+    /**
+     * Joins documents from two collections.
+     * @param join The join schema.
+     * @returns The joined documents.
+     */
     static async joinDocs<T extends Record<string, any>, U extends Record<string, any>>(join: _join<T, U>) { 
         
         this.checkEnvironment()
@@ -807,6 +893,12 @@ export default class Stawrij {
         return docs.filter(item => item.status === 'fulfilled').map(item => item.value).filter(doc => doc.size > 0)
     }
 
+    /**
+     * Finds documents in a collection.
+     * @param collection The name of the collection.
+     * @param query The query schema.
+     * @returns The found documents.
+     */
     static findDocs<T extends Record<string, any>>(collection: string, query?: _storeQuery<T>) {
 
         this.checkEnvironment()
@@ -868,6 +960,9 @@ export default class Stawrij {
 
         return {
 
+            /**
+             * Async iterator (listener) for the documents.
+             */
             async *[Symbol.asyncIterator]() {
 
                 const expression = Query.getExprs(query ?? {}, collection)
@@ -900,6 +995,9 @@ export default class Stawrij {
                 } while(!finished)
             },
             
+            /**
+             * Async iterator for the documents.
+             */
             async *collect() {
 
                 const expression = Query.getExprs(query ?? {}, collection)
@@ -934,6 +1032,9 @@ export default class Stawrij {
                 }
             },
 
+            /**
+             * Async iterator (listener) for the document's deletion.
+             */
             async *onDelete() {
 
                 let count = 0
