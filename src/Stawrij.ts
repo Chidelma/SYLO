@@ -76,6 +76,9 @@ export default class Stawrij {
     }
 
     static async createSchema(collection: string) {
+
+        this.checkEnvironment()
+
         try {
             await Dir.createSchema(collection)
         } catch(e) {
@@ -84,6 +87,9 @@ export default class Stawrij {
     }
 
     static async modifySchema(collection: string) {
+
+        this.checkEnvironment()
+
         try {
             await Dir.modifySchema(collection)
         } catch(e) {
@@ -92,6 +98,9 @@ export default class Stawrij {
     }
 
     static async dropSchema(collection: string) {
+
+        this.checkEnvironment()
+
         try {
             await Dir.dropSchema(collection)
         } catch(e) {
@@ -234,7 +243,9 @@ export default class Stawrij {
                 }
             }
 
-        } while(token)
+            token = data.NextContinuationToken
+
+        } while(token !== undefined)
     }
 
     static getDoc<T extends Record<string, any>>(collection: string, _id: _ulid, onlyId: boolean = false) {
@@ -617,13 +628,13 @@ export default class Stawrij {
                             Prefix: `${join.$leftCollection}/${String(leftField)}`
                         }))
 
-                        leftToken = leftData.NextContinuationToken
-
                         if(!leftData.Contents) break
 
                         leftFieldIndexes.push(...leftData.Contents!.map(content => content.Key!))
 
-                    } while(leftToken)
+                        leftToken = leftData.NextContinuationToken
+
+                    } while(leftToken !== undefined)
                     
                     let rightToken: string | undefined
                     const rightFieldIndexes: string[] = []
@@ -635,13 +646,13 @@ export default class Stawrij {
                             Prefix: `${join.$rightCollection}/${String(rightField)}`
                         }))
 
-                        rightToken = rightData.NextContinuationToken
-
                         if(!rightData.Contents) break
 
                         rightFieldIndexes.push(...rightData.Contents!.map(content => content.Key!))
 
-                    } while(rightToken)
+                        rightToken = rightData.NextContinuationToken
+
+                    } while(rightToken !== undefined)
 
                     for(const leftIdx of leftFieldIndexes) {
         

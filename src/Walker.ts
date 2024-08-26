@@ -25,8 +25,7 @@ export default class Walker {
 
         const uniqueIds = new Set<string>()
 
-        let cursor: string | undefined
-        let finished = false
+        let token: string | undefined
 
         const prefixSegments = prefix.split('/')
 
@@ -42,12 +41,10 @@ export default class Walker {
                 Bucket: bucket,
                 Prefix: prefix,
                 MaxKeys: pattern ? limit : undefined,
-                StartAfter: cursor
+                ContinuationToken: token,
             }))
 
-            if(!res.Contents) break
-
-            cursor = res.Contents[res.Contents.length - 1].Key
+            if(res.Contents === undefined) break
 
             const keys = res.Contents.map(item => item.Key!)
 
@@ -67,14 +64,9 @@ export default class Walker {
 
                         uniqueIds.add(_id)
 
-                        if(filter.count === limit) {
-                            finished = true
-                            break
-                        }
+                        if(filter.count === limit) break
                     }
                 }
-
-                if(finished) break
 
             } else {
 
@@ -82,12 +74,12 @@ export default class Walker {
 
                 yield { _id, data: keys }
 
-                finished = true
-
                 break
             }
 
-        } while(!finished)
+            token = res.NextContinuationToken
+
+        } while(token !== undefined)
     }
 
     static async *search(pattern: string, { listen = false, skip = false }: { listen: boolean, skip: boolean }, action: "upsert" | "delete" = "upsert"): AsyncGenerator<{ _id: _ulid, data: string[] } | void, void, { count: number, limit?: number  }> {
