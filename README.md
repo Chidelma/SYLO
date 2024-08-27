@@ -12,7 +12,7 @@ BYOS is a customizable storage solution built with TypeScript (Bun), providing a
 ## Installation
 
 ```bash
-npm install @vyckr/byos
+bun add @vyckr/byos
 ```
 
 ## Configuration
