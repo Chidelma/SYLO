@@ -6,7 +6,7 @@ export default class {
         
         try {
             
-            const createMatch = SQL.match(/(?:(?:create|CREATE)|(?:alter|ALTER)|(?:truncate|TRUNCATE)|(?:drop|DROP))\s+(?:table|TABLE)\s+(\w+)/i)
+            const createMatch = SQL.match(/(?:(?:create|CREATE)|(?:alter|ALTER)|(?:truncate|TRUNCATE)|(?:drop|DROP))\s+(?:table|TABLE)\s+([\w-]+)/i)
             
             if(!createMatch) throw new Error("Invalid SQL CREATE statement")
             
@@ -29,10 +29,10 @@ export default class {
 
         try {
 
-            const selectMatch = SQL.match(/(?:select|SELECT)\s+(.*?)\s+(?:from|FROM)\s+(\w+)(?:\s+(?:((?:INNER|inner)|(?:LEFT|left)|(?:right|RIGHT)|(?:OUTER|outer))\s+)?(?:join|JOIN)\s+(\w+)\s+(?:on|ON)\s+(.+?))?\s*(?:(?:where|WHERE)\s+(.+?))?(?:\s+(?:group by|GROUP BY)\s+(\w+))?(?:\s+(?:limit|LIMIT)\s+(\d+))?$/i)
+            const selectMatch = SQL.match(/(?:select|SELECT)\s+(.*?)\s+(?:from|FROM)\s+([\w-]+)(?:\s+(?:((?:INNER|inner)|(?:LEFT|left)|(?:right|RIGHT)|(?:OUTER|outer))\s+)?(?:join|JOIN)\s+([\w-]+)\s+(?:on|ON)\s+(.+?))?\s*(?:(?:where|WHERE)\s+(.+?))?(?:\s+(?:group by|GROUP BY)\s+([\w-]+))?(?:\s+(?:limit|LIMIT)\s+(\d+))?$/i)
 
             if(!selectMatch) throw new Error("Invalid SQL SELECT statement")
-
+            
             const [_, columns, collection, mode, joinCollection, joinCondition, whereClause, groupBy, limit] = selectMatch
 
             if(joinCollection && joinCondition) {
@@ -118,7 +118,7 @@ export default class {
 
         try {
 
-            const insertMatch = SQL.match(/(?:insert|INSERT)\s+(?:into|INTO)\s+(\w+)\s*\(([^)]+)\)\s+(?:values|VALUES)\s*\(([\s\S]*)\)/i)
+            const insertMatch = SQL.match(/(?:insert|INSERT)\s+(?:into|INTO)\s+([\w-]+)\s*\(([^)]+)\)\s+(?:values|VALUES)\s*\(([\s\S]*)\)/i)
 
             if(!insertMatch) throw new Error("Invalid SQL INSERT statement")
 
@@ -156,7 +156,7 @@ export default class {
 
         try {
 
-            const updateMatch = SQL.match(/(?:update|UPDATE)\s+(\w+)\s+(?:set|SET)\s+(.+?)(?:\s+(?:where|WHERE)\s+(.+))?$/)
+            const updateMatch = SQL.match(/(?:update|UPDATE)\s+([\w-]+)\s+(?:set|SET)\s+(.+?)(?:\s+(?:where|WHERE)\s+(.+))?$/i)
 
             if(!updateMatch) throw new Error("Invalid SQL UPDATE statement")
 
@@ -194,7 +194,7 @@ export default class {
 
         try {
 
-            const deleteMatch = SQL.match(/(?:delete|DELETE)\s+(?:from|FROM)\s+(\w+)(?:\s+(?:where|WHERE)\s+(.+))?/i)
+            const deleteMatch = SQL.match(/(?:delete|DELETE)\s+(?:from|FROM)\s+([\w-]+)(?:\s+(?:where|WHERE)\s+(.+))?/i)
 
             if(!deleteMatch) throw new Error("Invalid SQL DELETE statement")
 

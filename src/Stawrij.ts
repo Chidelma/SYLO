@@ -4,11 +4,9 @@ import Dir from "./Directory";
 import ULID from './ULID';
 import Walker from './Walker';
 import { rmdir } from 'node:fs/promises';
-import { ListObjectsV2Command } from '@aws-sdk/client-s3';
+import { S3 } from "./S3"
 
 export default class Stawrij {
-
-    private static SCHEMA = (process.env.SCHEMA || 'STRICT') as _schema
 
     private static LOGGING = process.env.LOGGING === 'true'
 
@@ -16,13 +14,7 @@ export default class Stawrij {
 
     private static checkEnvironment() {
 
-        if(!process.env.S3_INDEX_BUCKET) throw new Error("Missing S3_INDEX_BUCKET")
-
-        if(!process.env.S3_DATA_BUCKET) throw new Error("Missing S3_DATA_BUCKET")
-
         if(!process.env.DB_DIR) throw new Error("Missing DB_DIR")
-
-        if(process.env.S3_INDEX_BUCKET! === process.env.S3_DATA_BUCKET!) throw new Error("S3_INDEX_BUCKET and S3_DATA_BUCKET cannot be the same")
     }
 
     /**
@@ -34,17 +26,15 @@ export default class Stawrij {
 
         this.checkEnvironment()
         
-        const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)/i)
+        const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP)/i)
 
         if(!op) throw new Error("Missing SQL Operation")
 
         switch(op[0]) {
             case "CREATE":
-                return await Stawrij.createSchema(Paser.convertTableCRUD(SQL).collection!)
-            case "ALTER":   
-                return await Stawrij.modifySchema(Paser.convertTableCRUD(SQL).collection!)
+                return await Stawrij.createCollection(Paser.convertTableCRUD(SQL).collection!)
             case "DROP":
-                return await Stawrij.dropSchema(Paser.convertTableCRUD(SQL).collection!)
+                return await Stawrij.dropCollection(Paser.convertTableCRUD(SQL).collection!)
             case "SELECT":
                 const query = Paser.convertSelect<T>(SQL)
                 if(SQL.includes('JOIN')) return await Stawrij.joinDocs(query as _join<T, U>)
@@ -84,29 +74,14 @@ export default class Stawrij {
      * Creates a new schema for a collection.
      * @param collection The name of the collection.
      */
-    static async createSchema(collection: string) {
+    static async createCollection(collection: string) {
 
         this.checkEnvironment()
 
         try {
             await Dir.createSchema(collection)
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.createSchema -> ${e.message}`)
-        }
-    }
-
-    /**
-     * Modifies an existing schema for a collection.
-     * @param collection The name of the collection.
-     */
-    static async modifySchema(collection: string) {
-
-        this.checkEnvironment()
-
-        try {
-            await Dir.modifySchema(collection)
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.modifySchema -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.createCollection -> ${e.message}`)
         }
     }
 
@@ -114,14 +89,14 @@ export default class Stawrij {
      * Drops an existing schema for a collection.
      * @param collection The name of the collection.
      */
-    static async dropSchema(collection: string) {
+    static async dropCollection(collection: string) {
 
         this.checkEnvironment()
 
         try {
             await Dir.dropSchema(collection)
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.dropSchema -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.dropCollection -> ${e.message}`)
         }
     }
 
@@ -250,16 +225,14 @@ export default class Stawrij {
 
         do {
 
-            const data = await Walker.s3Client.send(new ListObjectsV2Command({
-                Bucket: Walker.S3_DATA_DB,
-                Prefix: `${collection}/`,
-                ContinuationToken: token,
-                Delimiter: '/'
-            }))
+            const data = await S3.list(collection, {
+                continuationToken: token,
+                delimiter: '/'
+            })
 
-            if(!data.CommonPrefixes) break
+            if(!data.commonPrefixes) break
 
-            const ids = data.CommonPrefixes.map(item => item.Prefix!.split('/')[1]!) as _ulid[]
+            const ids = data.commonPrefixes.map(item => item.prefix!.split('/')[1]!) as _ulid[]
 
             const res = await Promise.allSettled(ids.map(id => Stawrij.getDoc<T>(collection, id).once()))
 
@@ -271,7 +244,7 @@ export default class Stawrij {
                 }
             }
 
-            token = data.NextContinuationToken
+            token = data.nextContinuationToken
 
         } while(token !== undefined)
     }
@@ -300,7 +273,7 @@ export default class Stawrij {
 
                 let finished = false
 
-                const iter = Dir.searchDocs<T>(`${collection}/**/${_id}`, {}, { listen: true, skip: true })
+                const iter = Dir.searchDocs<T>(collection, `**/${_id}`, {}, { listen: true, skip: true })
 
                 do {
 
@@ -336,7 +309,7 @@ export default class Stawrij {
 
                 if(items.length === 0) return new Map<_ulid, T>()
 
-                const data = await Dir.reconstructData<T>(items)
+                const data = await Dir.reconstructData<T>(collection, items)
 
                 return new Map<_ulid, T>([[_id, data]])
             },
@@ -348,7 +321,7 @@ export default class Stawrij {
 
                 let finished = false
 
-                const iter = Dir.searchDocs<T>(`${collection}/**/${_id}`, {}, { listen: true, skip: true }, true)
+                const iter = Dir.searchDocs<T>(collection, `**/${_id}`, {}, { listen: true, skip: true }, true)
 
                 do {
 
@@ -416,19 +389,17 @@ export default class Stawrij {
         
         try {
 
-            if(this.SCHEMA === 'STRICT' && !collection.startsWith('_')) await Dir.validateData(collection, data)
-            
             await Dir.aquireLock(collection, _id)
 
             items ??= await Walker.getDocData(collection, _id)
 
-            await Promise.allSettled(items.map(key => Dir.deleteKeys(key)))
+            await Promise.allSettled(items.map(key => Dir.deleteKeys(collection, key)))
 
             const doc = data instanceof Map ? (data as Map<_ulid, T>).get(_id)! : data as T
 
-            const keys = Dir.extractKeys(collection, _id, doc)
+            const keys = Dir.extractKeys(_id, doc)
 
-            await Promise.allSettled(keys.data.map((item, i) => Dir.putKeys({ data: item, index: keys.indexes[i] })))
+            await Promise.allSettled(keys.data.map((item, i) => Dir.putKeys(collection, { dataKey: item, indexKey: keys.indexes[i] })))
 
             if(this.LOGGING) console.log(`Finished Writing ${_id}`)
             
@@ -466,7 +437,7 @@ export default class Stawrij {
 
                 keys.push(...items)
 
-                const data = await Dir.reconstructData<T>(items)
+                const data = await Dir.reconstructData<T>(collection, items)
 
                 oldDoc = new Map([[_id, data]]) as Map<_ulid, T>
             }
@@ -515,9 +486,9 @@ export default class Stawrij {
 
             let finished = false
 
-            const exprs = Query.getExprs(updateSchema.$where ?? {}, collection)
+            const exprs = Query.getExprs(updateSchema.$where ?? {})
 
-            if(exprs.length === 1 && exprs[0] === `${collection}/**/*`) {
+            if(exprs.length === 1 && exprs[0] === `**/*`) {
 
                 for(const doc of await Stawrij.allDocs<T>(collection, updateSchema.$where)) {
 
@@ -531,7 +502,7 @@ export default class Stawrij {
             
             } else {
 
-                const iter = Dir.searchDocs<T>(exprs, { updated: updateSchema?.$where?.$updated, created: updateSchema?.$where?.$created }, { listen: false, skip: false })
+                const iter = Dir.searchDocs<T>(collection, exprs, { updated: updateSchema?.$where?.$updated, created: updateSchema?.$where?.$created }, { listen: false, skip: false })
 
                 do {
 
@@ -579,9 +550,9 @@ export default class Stawrij {
 
             const keys = await Walker.getDocData(collection, _id)
 
-            await Promise.allSettled(keys.map(key => Dir.deleteKeys(key)))
+            await Promise.allSettled(keys.map(key => Dir.deleteKeys(collection, key)))
 
-            await rmdir(`${Walker.DSK_DB}/${collection}/.${_id}`, { recursive: true })
+            await rmdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`, { recursive: true })
 
             if(this.LOGGING) console.log(`Finished Deleting ${_id}`)
 
@@ -597,7 +568,7 @@ export default class Stawrij {
      * @returns The number of documents deleted.
      */
     static async delDocs<T extends Record<string, any>>(collection: string, deleteSchema?: _storeDelete<T>) {
-
+        
         this.checkEnvironment()
         
         const processDoc = (doc: Map<_ulid, T>) => {
@@ -616,9 +587,9 @@ export default class Stawrij {
 
             let finished = false
 
-            const exprs = Query.getExprs(deleteSchema ?? {}, collection)
+            const exprs = Query.getExprs(deleteSchema ?? {})
 
-            if(exprs.length === 1 && exprs[0] === `${collection}/**/*`) {
+            if(exprs.length === 1 && exprs[0] === `**/*`) {
 
                 for(const doc of await Stawrij.allDocs<T>(collection, deleteSchema)) {
 
@@ -632,7 +603,7 @@ export default class Stawrij {
 
             } else {
 
-                const iter = Dir.searchDocs<T>(exprs, { updated: deleteSchema?.$updated, created: deleteSchema?.$created }, { listen: false, skip: false })
+                const iter = Dir.searchDocs<T>(collection, exprs, { updated: deleteSchema?.$updated, created: deleteSchema?.$created }, { listen: false, skip: false })
 
                 do {
 
@@ -709,34 +680,32 @@ export default class Stawrij {
 
                     do {
 
-                        const leftData = await Walker.s3Client.send(new ListObjectsV2Command({
-                            Bucket: Walker.S3_IDX_DB,
-                            Prefix: `${join.$leftCollection}/${String(leftField)}`
-                        }))
+                        const leftData = await S3.list(join.$leftCollection, {
+                            prefix: String(leftField)
+                        })
+                        
+                        if(!leftData.contents) break
 
-                        if(!leftData.Contents) break
+                        leftFieldIndexes.push(...leftData.contents!.map(content => content.key!))
 
-                        leftFieldIndexes.push(...leftData.Contents!.map(content => content.Key!))
-
-                        leftToken = leftData.NextContinuationToken
+                        leftToken = leftData.nextContinuationToken
 
                     } while(leftToken !== undefined)
                     
                     let rightToken: string | undefined
                     const rightFieldIndexes: string[] = []
 
-                    do {    
+                    do { 
 
-                        const rightData = await Walker.s3Client.send(new ListObjectsV2Command({
-                            Bucket: Walker.S3_IDX_DB,
-                            Prefix: `${join.$rightCollection}/${String(rightField)}`
-                        }))
+                        const rightData = await S3.list(join.$rightCollection, {
+                            prefix: String(rightField)
+                        })
+                        
+                        if(!rightData.contents) break
 
-                        if(!rightData.Contents) break
+                        rightFieldIndexes.push(...rightData.contents!.map(content => content.key!))
 
-                        rightFieldIndexes.push(...rightData.Contents!.map(content => content.Key!))
-
-                        rightToken = rightData.NextContinuationToken
+                        rightToken = rightData.nextContinuationToken
 
                     } while(rightToken !== undefined)
 
@@ -879,15 +848,13 @@ export default class Stawrij {
 
     private static async allDocs<T extends Record<string, any>>(collection: string, query?: _storeQuery<T>) {
 
-        const res = await Walker.s3Client.send(new ListObjectsV2Command({
-            Bucket: Walker.S3_DATA_DB,
-            Prefix: `${collection}/`,
-            Delimiter: '/',
-            MaxKeys: !query || !query.$limit ? undefined : query.$limit
-        }))
-
-        const ids = res.CommonPrefixes?.map(item => item.Prefix!.split('/')[1]!) as _ulid[] ?? [] as _ulid[]
-
+        const res = await S3.list(collection, {
+            delimiter: '/',
+            maxKeys: !query || !query.$limit ? undefined : query.$limit
+        })
+        
+        const ids = res.commonPrefixes?.map(item => item.prefix!.split('/')[0]!).filter(key => ULID.isULID(key)) as _ulid[] ?? [] as _ulid[]
+        
         const docs = await Promise.allSettled(ids.map(id => Stawrij.getDoc<T>(collection, id).once()))
 
         return docs.filter(item => item.status === 'fulfilled').map(item => item.value).filter(doc => doc.size > 0)
@@ -965,9 +932,9 @@ export default class Stawrij {
              */
             async *[Symbol.asyncIterator]() {
 
-                const expression = Query.getExprs(query ?? {}, collection)
+                const expression = Query.getExprs(query ?? {})
 
-                if(expression.length === 1 && expression[0] === `${collection}/**/*`) {
+                if(expression.length === 1 && expression[0] === `**/*`) {
 
                     for(const doc of await Stawrij.allDocs<T>(collection, query)) yield processDoc(doc, query)
                 } 
@@ -975,7 +942,7 @@ export default class Stawrij {
                 let count = 0
                 let finished = false
 
-                const iter = Dir.searchDocs<T>(expression, { updated: query?.$updated, created: query?.$created }, { listen: true, skip: true })
+                const iter = Dir.searchDocs<T>(collection, expression, { updated: query?.$updated, created: query?.$created }, { listen: true, skip: true })
 
                 do {
 
@@ -1000,9 +967,9 @@ export default class Stawrij {
              */
             async *collect() {
 
-                const expression = Query.getExprs(query ?? {}, collection)
+                const expression = Query.getExprs(query ?? {})
 
-                if(expression.length === 1 && expression[0] === `${collection}/**/*`) {
+                if(expression.length === 1 && expression[0] === `**/*`) {
 
                     for(const doc of await Stawrij.allDocs<T>(collection, query)) yield processDoc(doc, query)
                 
@@ -1011,7 +978,7 @@ export default class Stawrij {
                     let count = 0
                     let finished = false
 
-                    const iter = Dir.searchDocs<T>(expression, { updated: query?.$updated, created: query?.$created }, { listen: false, skip: false })
+                    const iter = Dir.searchDocs<T>(collection, expression, { updated: query?.$updated, created: query?.$created }, { listen: false, skip: false })
 
                     do {
 
@@ -1040,7 +1007,7 @@ export default class Stawrij {
                 let count = 0
                 let finished = false
 
-                const iter = Dir.searchDocs<T>(Query.getExprs(query ?? {}, collection), {}, { listen: true, skip: true }, true)
+                const iter = Dir.searchDocs<T>(collection, Query.getExprs(query ?? {}), {}, { listen: true, skip: true }, true)
 
                 do {
 

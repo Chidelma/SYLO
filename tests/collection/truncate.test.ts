@@ -2,24 +2,28 @@ import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import Silo from '../../src/Stawrij'
 import { postsURL, albumURL } from '../data'
 import { exists, mkdir, rm } from 'node:fs/promises'
+import { S3 } from '../../src/S3'
 
-const POSTS = 'posts'
-const ALBUMS = 'albums'
+const POSTS = `posts`
+const ALBUMS = `albums`
 
 beforeAll(async () => {
-    await rm(process.env.DB_DIR!, {recursive:true})
+    if(await exists(process.env.DB_DIR!)) {
+        await rm(process.env.DB_DIR!, {recursive:true})
+    }
     await mkdir(process.env.DB_DIR!, {recursive:true})
 })
 
 afterAll(async () => {
-    await Promise.all([rm(process.env.DB_DIR!, {recursive:true}), Silo.dropSchema(ALBUMS), Silo.dropSchema(POSTS)])
+    await Promise.all([Silo.dropCollection(ALBUMS), Silo.dropCollection(POSTS)])
+    await rm(process.env.DB_DIR!, {recursive:true})
 })
 
 describe("NO-SQL", () => {
 
     test("TRUNCATE", async () => {
 
-        await Silo.createSchema(POSTS)
+        await Silo.createCollection(POSTS)
 
         await Silo.importBulkData<_post>(POSTS, new URL(postsURL))
 
@@ -32,11 +36,7 @@ describe("NO-SQL", () => {
             ids.push(data as _ulid)
         }
 
-        const file = Bun.file(`${process.env.DB_DIR}/${POSTS}/.schema.json`)
-
-        expect(await exists(`${process.env.DB_DIR}/${POSTS}`)).toBe(true)
-
-        expect(await file.exists()).toBe(true)
+        expect(await exists(`${process.env.DB_DIR}/${S3.getBucketFormat(POSTS)}`)).toBe(true)
 
         expect(ids.length).toBe(0)
     })
@@ -54,11 +54,7 @@ describe("SQL", () => {
 
         const ids = await Silo.executeSQL<_album>(`SELECT _id FROM ${ALBUMS} LIMIT 1`) as _ulid[]
 
-        const file = Bun.file(`${process.env.DB_DIR}/${ALBUMS}/.schema.json`)
-
-        expect(await exists(`${process.env.DB_DIR}/${ALBUMS}`)).toBe(true)
-
-        expect(await file.exists()).toBe(true)
+        expect(await exists(`${process.env.DB_DIR}/${S3.getBucketFormat(ALBUMS)}`)).toBe(true)
 
         expect(ids.length).toBe(0)
     })

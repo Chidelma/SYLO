@@ -2,7 +2,6 @@ import { spawn } from 'bun'
 import Silo from '../src/Stawrij'
 import { readdir, opendir } from 'fs/promises'
 import Walker from '../src/Walker'
-import { ListObjectsV2Command, DeleteObjectsCommand } from '@aws-sdk/client-s3'
 
 let start = Date.now()
 

@@ -1,24 +1,27 @@
 import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import Silo from '../../src/Stawrij'
 import { albumURL, postsURL } from '../data'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, rm, exists } from 'node:fs/promises'
 
-const ALBUMS = 'albums'
-const POSTS = 'posts'
+const POSTS = `posts`
+const ALBUMS = `albums`
 
 let count = 0
 
 beforeAll(async () => {
-    await rm(process.env.DB_DIR!, {recursive:true})
+    if(await exists(process.env.DB_DIR!)) {
+        await rm(process.env.DB_DIR!, {recursive:true})
+    }
     await mkdir(process.env.DB_DIR!, {recursive:true})
-    await Promise.all([Silo.createSchema(ALBUMS), Silo.executeSQL<_post>(`CREATE TABLE ${POSTS}`)])
+    await Promise.all([Silo.createCollection(ALBUMS), Silo.executeSQL<_post>(`CREATE TABLE ${POSTS}`)])
 
     count = await Silo.importBulkData<_album>(ALBUMS, new URL(albumURL), 100)
     await Silo.importBulkData<_post>(POSTS, new URL(postsURL), 100)
 })
 
 afterAll(async () => {
-    await Promise.all([rm(process.env.DB_DIR!, {recursive:true}), Silo.dropSchema(ALBUMS), Silo.dropSchema(POSTS)])
+    await Promise.all([Silo.dropCollection(ALBUMS), Silo.dropCollection(POSTS)])
+    await rm(process.env.DB_DIR!, {recursive:true})
 })
 
 describe("NO-SQL", async() => {

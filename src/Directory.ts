@@ -1,13 +1,12 @@
 import { rm, exists, mkdir, readdir, opendir, rmdir, watch, stat, symlink } from "node:fs/promises"
-import { PutObjectCommand, GetObjectCommand, DeleteObjectCommand, DeleteObjectsCommand, ListObjectsV2Command } from "@aws-sdk/client-s3"
 import Walker from "./Walker"
 import ULID from "./ULID"
+import { $, S3Client } from "bun"
+import { S3 } from "./S3"
 
 export default class {
 
     private static readonly KEY_LIMIT = 1024
-
-    private static SCHEMA_PATH = process.env.SCHEMA_PATH || `${process.cwd()}/schemas`
 
     private static ALL_SCHEMAS = new Map<string, Map<string, string[]>>()
 
@@ -17,85 +16,12 @@ export default class {
 
         try {
 
-            const savedSchema = Bun.file(`${Walker.DSK_DB}/${collection}/.schema.json`)
+            await mkdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}`)
 
-            if(await savedSchema.exists()) throw new Error(`Cannot create schema for '${collection}' as it already exists`)
-
-            const schemaFile = Bun.file(`${this.SCHEMA_PATH}/${collection}.d.ts`)
-
-            if(!await schemaFile.exists()) throw new Error(`Cannot find declaration file for '${collection}'`)
-
-            const newSchema = this.getSchema(collection, await schemaFile.text())
-            
-            await Bun.write(savedSchema, JSON.stringify(Object.fromEntries(newSchema)))
-
-            this.ALL_SCHEMAS.set(collection, newSchema)
+            await $`aws s3 mb s3://${S3.getBucketFormat(collection)}`.quiet()
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.createSchema -> ${e.message}`)
-        }
-    }
-
-    static async modifySchema(collection: string) {
-
-        try {
-
-            const schemaFile = Bun.file(`${this.SCHEMA_PATH}/${collection}.d.ts`)
-
-            if(!await schemaFile.exists()) throw new Error(`Cannot find declaration file for '${collection}'`)
-
-            const savedSchemaFile = Bun.file(`${Walker.DSK_DB}/${collection}/.schema.json`)
-
-            if(!await savedSchemaFile.exists()) throw new Error(`Cannot find saved schema for '${collection}'`)
-
-            const savedSchemaData: Record<string, string[]> = await savedSchemaFile.json()
-
-            if(schemaFile.lastModified > savedSchemaFile.lastModified) {
-
-                const newSchemaData = this.getSchema(collection, await savedSchemaFile.text())
-
-                const newSchemaFields = new Set(Object.keys(newSchemaData))
-
-                const savedSchemaFields = new Set(Object.keys(savedSchemaData))
-
-                const removedFields = savedSchemaFields.difference(newSchemaFields)
-
-                for(const field of removedFields) {
-
-                    let idxToken: string | undefined
-
-                    do {
-
-                        const idxResults = await Walker.s3Client.send(new ListObjectsV2Command({
-                            Bucket: Walker.S3_IDX_DB,
-                            Prefix: `${collection}/${field}`,
-                            ContinuationToken: idxToken
-                        }))
-
-                        idxToken = idxResults.NextContinuationToken
-
-                        if(!idxResults.Contents) break
-
-                        await Walker.s3Client.send(new DeleteObjectsCommand({
-                            Bucket: Walker.S3_IDX_DB,
-                            Delete: {
-                                Objects: idxResults.Contents!.map(content => ({ Key: content.Key! })),
-                                Quiet: false
-                            }
-                        }))
-
-                    } while(idxToken)
-                }
-
-                await Bun.write(savedSchemaFile, JSON.stringify(Object.fromEntries(newSchemaData)))
-                
-                this.ALL_SCHEMAS.set(collection, newSchemaData)
-            }
-
-            if(!this.ALL_SCHEMAS.has(collection)) this.ALL_SCHEMAS.set(collection, new Map(Object.entries(savedSchemaData)))
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Dir.modifySchema -> ${e.message}`)
         }
     }
 
@@ -103,115 +29,15 @@ export default class {
 
         try {
 
-            let idxToken: string | undefined
+            await $`aws s3 rm s3://${S3.getBucketFormat(collection)} --recursive`.quiet()
 
-            do {
+            await $`aws s3 rb s3://${S3.getBucketFormat(collection)}`.quiet()
 
-                const data = await Walker.s3Client.send(new ListObjectsV2Command({
-                    Bucket: Walker.S3_IDX_DB,
-                    Prefix: collection,
-                    ContinuationToken: idxToken
-                }))
-
-                idxToken = data.NextContinuationToken
-
-                if(!data.Contents) break
-
-                await Walker.s3Client.send(new DeleteObjectsCommand({
-                    Bucket: Walker.S3_IDX_DB,
-                    Delete: {
-                        Objects: data.Contents!.map(content => ({ Key: content.Key! })),
-                        Quiet: false
-                    }
-                }))
-
-            } while(idxToken)
-
-            let dataToken: string | undefined
-
-            do {
-
-                const data = await Walker.s3Client.send(new ListObjectsV2Command({
-                    Bucket: Walker.S3_DATA_DB,
-                    Prefix: collection,
-                    ContinuationToken: idxToken
-                }))
-
-                dataToken = data.NextContinuationToken
-
-                if(!data.Contents) break
-
-                await Walker.s3Client.send(new DeleteObjectsCommand({
-                    Bucket: Walker.S3_DATA_DB,
-                    Delete: {
-                        Objects: data.Contents!.map(content => ({ Key: content.Key! })),
-                        Quiet: false
-                    }
-                }))
-
-            } while(dataToken)
-
-            await rmdir(`${Walker.DSK_DB}/${collection}`, { recursive: true })
+            await rmdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}`, { recursive: true })
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.dropSchema -> ${e.message}`)
         }
-    }
-
-    private static parseLines(lines: string[], startIndex: number = 0): [Record<string, any>, number] {
-    
-        const obj: Record<string, any> = {}
-        let i = startIndex
-    
-        while (i < lines.length) {
-            
-            const current = lines[i].trim()
-            
-            if (current === '}') return [obj, i]
-            
-            const colonIndex = current.indexOf(':')
-            if (colonIndex === -1) {
-                i++
-                continue
-            }
-            
-            const field = current.slice(0, colonIndex).trim();
-            const type = current.slice(colonIndex + 1).trim();
-            
-            if (type === '{') {
-                const [children, newIndex] = this.parseLines(lines, i + 1)
-                obj[field] = children
-                i = newIndex
-            } else obj[field] = type
-            
-            i++
-        }
-        
-        return [obj, i]
-    }
-    
-    private static constructSchema(tree: Record<string, any>, parentBranch?: string) {
-    
-        const schema = new Map<string, string[]>()
-    
-        function recursiveHelper(tree: Record<string, any>, parentBranch?: string) {
-
-            for (const branch in tree) {
-
-                const newKey = parentBranch ? `${parentBranch}/${branch}` : branch
-                
-                if (typeof tree[branch] === 'string') {
-                    const types = (tree[branch] as string).split('|').map(type => type.trim() === 'null' ? 'object' : type.trim())
-                    schema.set(newKey, types)
-                } else if (typeof tree[branch] === 'object') {
-                    recursiveHelper(tree[branch], newKey)
-                }
-            }
-        }
-    
-        recursiveHelper(tree, parentBranch)
-        
-        return schema
     }
 
     private static retrieveSchema<T extends Record<string, any>>(doc: T, parentBranch?: string) {
@@ -234,27 +60,10 @@ export default class {
         
         return schema
     }
-    
-    private static getSchema(collection: string, schemaData: string) {
-
-        const match = schemaData.match(/{([\s\S]*)}/)
-
-        if(!match) throw new Error(`declaration file for '${collection}' not formatted correctly`)
-
-        const [_, yaml] = match
-
-        const lines = yaml.replaceAll(',', '').split('\n').map(line => line.trim()).filter(line => line.length > 0)
-
-        const [ tree ] = this.parseLines(lines)
-
-        return this.constructSchema(tree)
-    }
 
     static async validateData<T extends Record<string, any>>(collection: string, data: T) {
 
         try {
-
-            await this.modifySchema(collection)
 
             const savedSchema = this.ALL_SCHEMAS.get(collection)!
 
@@ -280,7 +89,7 @@ export default class {
 
                 await this.queueProcess(collection, _id)
 
-                for await (const event of watch(`${Walker.DSK_DB}/${collection}/.${_id}/${process.pid}`)) {
+                for await (const event of watch(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${process.pid}`)) {
                     if(event.eventType !== "change") break
                 }
             }
@@ -297,17 +106,17 @@ export default class {
 
         try {
 
-            await rm(`${Walker.DSK_DB}/${collection}/.${_id}/${process.pid}`, { recursive: true })
+            await rm(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${process.pid}`, { recursive: true })
 
-            const results = await readdir(`${Walker.DSK_DB}/${collection}/.${_id}`, { withFileTypes: true })
+            const results = await readdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`, { withFileTypes: true })
 
             const timeSortedDir = results.sort((a, b) => {
-                const aTime = Bun.file(`${Walker.DSK_DB}/${collection}/.${_id}/${a.name}`).lastModified
-                const bTime = Bun.file(`${Walker.DSK_DB}/${collection}/.${_id}/${b.name}`).lastModified
+                const aTime = Bun.file(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${a.name}`).lastModified
+                const bTime = Bun.file(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${b.name}`).lastModified
                 return aTime - bTime
             })
 
-            if(timeSortedDir.length > 0) await rm(`${Walker.DSK_DB}/${collection}/.${_id}/${timeSortedDir[0].name}`, { recursive: true })
+            if(timeSortedDir.length > 0) await rm(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${timeSortedDir[0].name}`, { recursive: true })
             
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.releaseLock -> ${e.message}`)
@@ -320,9 +129,9 @@ export default class {
 
         try {
 
-            if(!await exists(`${Walker.DSK_DB}/${collection}/.${_id}`)) return locked
+            if(!await exists(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`)) return locked
 
-            const files = await opendir(`${Walker.DSK_DB}/${collection}/.${_id}`)
+            const files = await opendir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`)
 
             for await (const file of files) {
 
@@ -344,18 +153,18 @@ export default class {
 
         try {
 
-            await mkdir(`${Walker.DSK_DB}/${collection}/.${_id}`, { recursive: true })
+            await mkdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`, { recursive: true })
 
-            await Bun.file(`${Walker.DSK_DB}/${collection}/.${_id}/${process.pid}`).writer().end()
+            await Bun.file(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${process.pid}`).writer().end()
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Dir.queueProcess -> ${e.message}`)
         }
     }
 
-    static async reconstructData<T extends Record<string, any>>(items: string[]) {
+    static async reconstructData<T extends Record<string, any>>(collection: string, items: string[]) {
         
-        items = await this.readValues(items)
+        items = await this.readValues(collection, items)
 
         let fieldVal: Record<string, string> = {}
 
@@ -369,7 +178,7 @@ export default class {
         return this.constructData<T>(fieldVal)
     }
 
-    static async readValues(items: string[]) {
+    static async readValues(collection: string, items: string[]) {
 
         for(let i = 0; i < items.length; i++) {
 
@@ -379,12 +188,9 @@ export default class {
 
             if(ULID.isUUID(filename)) {
 
-                const data = await Walker.s3Client.send(new GetObjectCommand({
-                    Bucket: Walker.S3_DATA_DB,
-                    Key: items[i]
-                }))
-
-                const val = await data.Body?.transformToString('utf-8') || ''
+                const data = S3Client.file(items[i], { ...S3.CREDS, bucket: collection })
+                
+                const val = await data.text()
 
                 items[i] = `${segments.join('/')}/${val}`
             }
@@ -395,9 +201,9 @@ export default class {
 
     private static async filterByTimestamp(collection: string, _id: _ulid, indexes: string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }) {
 
-        if(updated && await exists(`${Walker.DSK_DB}/${collection}/.${_id}`)) {
+        if(updated && await exists(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`)) {
 
-            const metadata = await stat(`${Walker.DSK_DB}/${collection}/.${_id}`)
+            const metadata = await stat(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`)
 
             const lastModified = metadata.mtime.getMilliseconds()
 
@@ -490,7 +296,7 @@ export default class {
         return indexes.length > 0
     }
 
-    static async *searchDocs<T extends Record<string, any>>(pattern: string | string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }, { listen = false, skip = false }: { listen: boolean, skip: boolean }, deleted: boolean = false): AsyncGenerator<Map<_ulid, T> | _ulid | void, void, { count: number, limit?: number  }> {
+    static async *searchDocs<T extends Record<string, any>>(collection: string, pattern: string | string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }, { listen = false, skip = false }: { listen: boolean, skip: boolean }, deleted: boolean = false): AsyncGenerator<Map<_ulid, T> | _ulid | void, void, { count: number, limit?: number  }> {
         
         const data = yield
         let count = data.count
@@ -502,7 +308,7 @@ export default class {
 
                 if(await this.filterByTimestamp(collection, _id, items, { created, updated })) {
 
-                    const data = await this.reconstructData<T>(items)
+                    const data = await this.reconstructData<T>(collection, items)
 
                     return new Map([[_id, data]]) as Map<_ulid, T>
 
@@ -510,7 +316,7 @@ export default class {
 
             } else {
 
-                const data = await this.reconstructData<T>(items)
+                const data = await this.reconstructData<T>(collection, items)
 
                 return new Map([[_id, data]]) as Map<_ulid, T>
             }
@@ -522,7 +328,7 @@ export default class {
             
             if(listen && !deleted) {
 
-                const iter = Walker.search(p, { listen, skip })
+                const iter = Walker.search(collection, p, { listen, skip })
 
                 do {
 
@@ -540,7 +346,7 @@ export default class {
 
             } else if(listen && deleted) {
 
-                const iter = Walker.search(p, { listen, skip }, "delete")
+                const iter = Walker.search(collection, p, { listen, skip }, "delete")
 
                 do {
 
@@ -558,7 +364,7 @@ export default class {
 
             } else {
 
-                const iter = Walker.search(p, { listen, skip })
+                const iter = Walker.search(collection, p, { listen, skip })
 
                 do {
 
@@ -583,72 +389,60 @@ export default class {
         } else yield* processQuery(pattern)
     }
 
-    static async putKeys({ data, index }: { data: string, index: string }) {
-
+    static async putKeys(collection: string, { dataKey, indexKey }: { dataKey: string, indexKey: string }) {
+        
         let dataBody: string | undefined
         let indexBody: string | undefined
 
-        if(data.length > this.KEY_LIMIT) {
+        if(dataKey.length > this.KEY_LIMIT) {
 
-            const dataSegs = data.split('/')
+            const dataSegs = dataKey.split('/')
 
             dataBody = dataSegs.pop()!
             
-            index = `${dataSegs.join('/')}/${crypto.randomUUID()}`
+            indexKey = `${dataSegs.join('/')}/${crypto.randomUUID()}`
         } 
 
-        if(index.length > this.KEY_LIMIT) {
+        if(indexKey.length > this.KEY_LIMIT) {
 
-            const indexSegs = index.split('/')
+            const indexSegs = indexKey.split('/')
 
             const _id = indexSegs.pop()! as _ulid
 
             indexBody = indexSegs.pop()!
 
-            data = `${indexSegs.join('/')}/${_id}`
+            dataKey = `${indexSegs.join('/')}/${_id}`
         }
 
-        await Promise.allSettled([Walker.s3Client.send(new PutObjectCommand({
-            Bucket: Walker.S3_DATA_DB,
-            Key: data,
-            Body: dataBody,
-            ContentLength: dataBody ? dataBody.length : 0
-        })), Walker.s3Client.send(new PutObjectCommand({
-            Bucket: Walker.S3_IDX_DB,
-            Key: index,
-            Body: indexBody,
-            ContentLength: indexBody ? indexBody.length : 0
-        }))])
+        await Promise.allSettled([
+            S3.put(collection, dataKey, dataBody ?? ''),
+            S3.put(collection, indexKey, indexBody ?? '')
+        ])
 
-        const collection = index.split('/').shift()!
-        const _id = index.split('/').pop()! as _ulid
+        const _id = indexKey.split('/').pop()! as _ulid
 
-        await symlink(``, `${Walker.DSK_DB}/${collection}/.${_id}/${index.replaceAll('/', '\\')}`)
-        await rm(`${Walker.DSK_DB}/${collection}/.${_id}/${index.replaceAll('/', '\\')}`, { recursive: true })
+        await symlink(``, `${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${indexKey.replaceAll('/', '\\')}`)
+        await rm(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${indexKey.replaceAll('/', '\\')}`, { recursive: true })
     }
 
-    static async deleteKeys(dataKey: string) {
+    static async deleteKeys(collection: string, dataKey: string) {
 
         const segements = dataKey.split('/')
 
         const val = segements.pop()!
-        const collection = segements.shift()!
         const _id = segements.shift()! as _ulid
 
-        let index = `${collection}/${segements.join('/')}/${val}/${_id}`
+        let index = `${segements.join('/')}/${val}/${_id}`
 
-        if(ULID.isUUID(val)) index = `${collection}/${segements.join('/')}/${_id}`
+        if(ULID.isUUID(val)) index = `${segements.join('/')}/${_id}`
 
-        await Promise.allSettled([Walker.s3Client.send(new DeleteObjectCommand({
-            Bucket: Walker.S3_DATA_DB,
-            Key: dataKey
-        })), Walker.s3Client.send(new DeleteObjectCommand({
-            Bucket: Walker.S3_IDX_DB,
-            Key: index
-        }))])
+        await Promise.allSettled([
+            S3.delete(collection, dataKey),
+            S3.delete(collection, index)
+        ])
     }
 
-    static extractKeys<T>(collection: string, _id: _ulid, data: T, parentField?: string) {
+    static extractKeys<T>(_id: _ulid, data: T, parentField?: string) {
 
         const keys: { data: string[], indexes: string[] } = { data: [], indexes: [] }
 
@@ -659,17 +453,17 @@ export default class {
             const newField = parentField ? `${parentField}/${field}` : field
 
             if(typeof obj[field] === 'object' && !Array.isArray(obj[field])) {
-                const items = this.extractKeys(collection, _id, obj[field], newField)
+                const items = this.extractKeys(_id, obj[field], newField)
                 keys.data.push(...items.data)
                 keys.indexes.push(...items.indexes)
             } else if(typeof obj[field] === 'object' && Array.isArray(obj[field])) {
                 const items: (string | number | boolean)[] = obj[field]
                 if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
-                keys.data.push(`${collection}/${_id}/${newField}/${JSON.stringify(items).replaceAll('/', this.SLASH_ASCII)}`)
-                keys.indexes.push(`${collection}/${newField}/${JSON.stringify(items).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
+                keys.data.push(`${_id}/${newField}/${JSON.stringify(items).replaceAll('/', this.SLASH_ASCII)}`)
+                keys.indexes.push(`${newField}/${JSON.stringify(items).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
             } else {
-                keys.data.push(`${collection}/${_id}/${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}`)
-                keys.indexes.push(`${collection}/${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
+                keys.data.push(`${_id}/${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}`)
+                keys.indexes.push(`${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
             }
         }
 
@@ -682,7 +476,7 @@ export default class {
 
         for(let fullField in fieldVal) {
 
-            const fields = fullField.split('/').slice(2)
+            const fields = fullField.split('/').slice(1)
 
             let curr = data
 

@@ -1,30 +1,30 @@
 import { test, expect, describe, afterAll, beforeAll } from 'bun:test'
 import Silo from '../../src/Stawrij'
 import { exists, mkdir, rm } from 'node:fs/promises'
+import { S3 } from '../../src/S3'
 
-const POSTS = 'posts'
-const ALBUMS = 'albums'
+const POSTS = `posts`
+const ALBUMS = `albums`
 
 beforeAll(async () => {
-    await rm(process.env.DB_DIR!, {recursive:true})
+    if(await exists(process.env.DB_DIR!)) {
+        await rm(process.env.DB_DIR!, {recursive:true})
+    }
     await mkdir(process.env.DB_DIR!, {recursive:true})
 })
 
 afterAll(async () => {
-    await Promise.all([rm(process.env.DB_DIR!, {recursive:true}), Silo.dropSchema(ALBUMS), Silo.dropSchema(POSTS)])
+    await Promise.all([Silo.dropCollection(ALBUMS), Silo.dropCollection(POSTS)])
+    await rm(process.env.DB_DIR!, {recursive:true})
 })
 
 describe("NO-SQL", () => {
     
     test("CREATE", async () => {
 
-        await Silo.createSchema(POSTS)
+        await Silo.createCollection(POSTS)
 
-        const file = Bun.file(`${process.env.DB_DIR}/${POSTS}/.schema.json`)
-
-        expect(await exists(`${process.env.DB_DIR}/${POSTS}`)).toBe(true)
-
-        expect(await file.exists()).toBe(true)
+        expect(await exists(`${process.env.DB_DIR}/${S3.getBucketFormat(POSTS)}`)).toBe(true)
     })
 })
 
@@ -34,10 +34,6 @@ describe("SQL", () => {
 
         await Silo.executeSQL<_album>(`CREATE TABLE ${ALBUMS}`)
 
-        const file = Bun.file(`${process.env.DB_DIR}/${ALBUMS}/.schema.json`)
-
-        expect(await exists(`${process.env.DB_DIR}/${ALBUMS}`)).toBe(true)
-
-        expect(await file.exists()).toBe(true)
+        expect(await exists(`${process.env.DB_DIR}/${S3.getBucketFormat(ALBUMS)}`)).toBe(true)
     })
 })

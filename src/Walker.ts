@@ -1,5 +1,5 @@
 import { FileChangeInfo, watch, mkdir, exists } from "node:fs/promises"
-import { S3Client, ListObjectsV2Command, _Object } from "@aws-sdk/client-s3"
+import { S3 } from "./S3"
 import ULID from "./ULID"
 
 export default class Walker {
@@ -10,26 +10,13 @@ export default class Walker {
 
     static readonly MEM_DB = process.env.MEM_DIR
 
-    static readonly S3_IDX_DB = process.env.S3_INDEX_BUCKET
-
-    static readonly S3_DATA_DB = process.env.S3_DATA_BUCKET
-
     private static readonly MAX_KEYS = 1000
 
-    static readonly s3Client = new S3Client({ 
-        region: process.env.S3_REGION,
-        endpoint: process.env.S3_ENDPOINT
-    })
-
-    private static async *searchS3(bucket: string, prefix: string, pattern?: string): AsyncGenerator<{ _id: _ulid, data: string[] } | void, void, { count: number, limit?: number  }> {
-
+    private static async *searchS3(collection: string, prefix: string, pattern?: string): AsyncGenerator<{ _id: _ulid, data: string[] } | void, void, { count: number, limit?: number  }> {
+        
         const uniqueIds = new Set<string>()
 
         let token: string | undefined
-
-        const prefixSegments = prefix.split('/')
-
-        const collection = prefixSegments.shift()!
 
         let filter = yield
 
@@ -37,16 +24,15 @@ export default class Walker {
 
         do {
 
-            const res = await this.s3Client.send(new ListObjectsV2Command({
-                Bucket: bucket,
-                Prefix: prefix,
-                MaxKeys: pattern ? limit : undefined,
-                ContinuationToken: token,
-            }))
+            const res = await S3.list(collection, {
+                prefix,
+                maxKeys: pattern ? limit : undefined,
+                continuationToken: token
+            })
 
-            if(res.Contents === undefined) break
+            if(res.contents === undefined) break
 
-            const keys = res.Contents.map(item => item.Key!)
+            const keys = res.contents.map(item => item.key!)
 
             if(pattern) {
 
@@ -77,19 +63,19 @@ export default class Walker {
                 break
             }
 
-            token = res.NextContinuationToken
+            token = res.nextContinuationToken
 
         } while(token !== undefined)
     }
 
-    static async *search(pattern: string, { listen = false, skip = false }: { listen: boolean, skip: boolean }, action: "upsert" | "delete" = "upsert"): AsyncGenerator<{ _id: _ulid, data: string[] } | void, void, { count: number, limit?: number  }> {
+    static async *search(collection: string, pattern: string, { listen = false, skip = false }: { listen: boolean, skip: boolean }, action: "upsert" | "delete" = "upsert"): AsyncGenerator<{ _id: _ulid, data: string[] } | void, void, { count: number, limit?: number  }> {
 
         if(!skip) {
             const segments = pattern.split('/');
             const idx = segments.findIndex(seg => seg.includes('*'));
             const prefix = segments.slice(0, idx).join('/');
 
-            yield* this.searchS3(this.S3_IDX_DB!, prefix, pattern)
+            yield* this.searchS3(collection, prefix, pattern)
         }
 
         const eventIds = new Set<string>()
@@ -111,7 +97,7 @@ export default class Walker {
 
         let finished = false
 
-        const iter = this.searchS3(this.S3_DATA_DB!, `${collection}/${_id}`)
+        const iter = this.searchS3(collection, _id)
 
         do {
 

@@ -1,22 +1,25 @@
 import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import Silo from '../../src/Stawrij'
 import { photosURL, todosURL } from '../data'
-import { mkdir, rm } from 'node:fs/promises' 
+import { mkdir, rm, exists } from 'node:fs/promises' 
 
-const PHOTOS = 'photos'
-const TODOS = 'todos'
+const PHOTOS = `photos`
+const TODOS = `todos`
 
 beforeAll(async () => {
-    await rm(process.env.DB_DIR!, {recursive:true})
+    if(await exists(process.env.DB_DIR!)) {
+        await rm(process.env.DB_DIR!, {recursive:true})
+    }
     await mkdir(process.env.DB_DIR!, {recursive:true})
-    await Promise.all([Silo.createSchema(PHOTOS), Silo.executeSQL<_todo>(`CREATE TABLE ${TODOS}`)])
+    await Promise.all([Silo.createCollection(PHOTOS), Silo.executeSQL<_todo>(`CREATE TABLE ${TODOS}`)])
 
     await Silo.importBulkData<_photo>(PHOTOS, new URL(photosURL), 100)
     await Silo.importBulkData<_todo>(TODOS, new URL(todosURL), 100)
 })
 
 afterAll(async () => {
-    await Promise.all([rm(process.env.DB_DIR!, {recursive:true}), Silo.dropSchema(PHOTOS), Silo.executeSQL<_todo>(`DROP TABLE ${TODOS}`)])
+    await Promise.all([Silo.dropCollection(PHOTOS), Silo.executeSQL<_todo>(`DROP TABLE ${TODOS}`)])
+    await rm(process.env.DB_DIR!, {recursive:true})
 })
 
 describe("NO-SQL", async () => {
