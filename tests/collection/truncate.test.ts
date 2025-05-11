@@ -2,7 +2,7 @@ import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import Silo from '../../src/Stawrij'
 import { postsURL, albumURL } from '../data'
 import { exists, mkdir, rm } from 'node:fs/promises'
-import { S3 } from '../../src/S3'
+import S3 from '../../src/S3'
 
 const POSTS = `posts`
 const ALBUMS = `albums`

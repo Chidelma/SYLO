@@ -34,7 +34,7 @@ describe("NO-SQL", async () => {
         }
 
         await Silo.patchDoc<_photo>(PHOTOS, new Map([[ids[0], { title: "All Mighty" }]]))
-
+        
         const results = new Map<_ulid, _photo>()
 
         for await (const data of Silo.findDocs<_photo>(PHOTOS, { $ops: [{ title: { $eq: "All Mighty" } }]}).collect()) {

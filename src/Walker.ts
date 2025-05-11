@@ -1,5 +1,5 @@
 import { FileChangeInfo, watch, mkdir, exists } from "node:fs/promises"
-import { S3 } from "./S3"
+import S3 from "./S3"
 import ULID from "./ULID"
 
 export default class Walker {
@@ -7,8 +7,6 @@ export default class Walker {
     private static readonly listeners: Map<string, AsyncIterable<FileChangeInfo<string>>> = new Map()
 
     static readonly DSK_DB = process.env.DB_DIR
-
-    static readonly MEM_DB = process.env.MEM_DIR
 
     private static readonly MAX_KEYS = 1000
 
@@ -80,7 +78,7 @@ export default class Walker {
 
         const eventIds = new Set<string>()
 
-        if(listen) for await (const event of this.listen(pattern)) {
+        if(listen) for await (const event of this.listen(collection, pattern)) {
 
             if(event.action !== action && eventIds.has(event.id))  {
                 eventIds.delete(event.id)
@@ -119,24 +117,22 @@ export default class Walker {
         return data
     }
 
-    private static async *processPattern(pattern: string) {
+    private static async *processPattern(collection: string, pattern: string) {
 
-        const table = pattern.split('/').shift()!
+        if(!this.listeners.has(collection)) {
 
-        if(!this.listeners.has(table)) {
-
-            if(!await exists(`${this.DSK_DB}/${table}`)) await mkdir(`${this.DSK_DB}/${table}`, { recursive: true })
+            if(!await exists(`${this.DSK_DB}/${S3.getBucketFormat(collection)}`)) await mkdir(`${this.DSK_DB}/${S3.getBucketFormat(collection)}`, { recursive: true })
             
-            this.listeners.set(table, watch(`${this.DSK_DB}/${table}`, { recursive: true }))
+            this.listeners.set(collection, watch(`${this.DSK_DB}/${S3.getBucketFormat(collection)}`, { recursive: true }))
         }
 
-        const watcher = this.listeners.get(table)!
+        const watcher = this.listeners.get(collection)!
 
         const stackIds = new Set<string>()
 
         for await (const event of watcher) {
             
-            if(event.filename && event.eventType === 'rename' && event.filename.split('/').length === 2) {
+            if(event.filename && event.eventType === 'rename' && event.filename.split('/').length >= 2) {
 
                 const index = event.filename.split('/').pop()!.replaceAll('\\', '/')
 
@@ -146,9 +142,9 @@ export default class Walker {
 
                     stackIds.add(_id)
 
-                    yield { id: _id, action: "upsert", data: await this.getDocData(table, _id) }
+                    yield { id: _id, action: "upsert", data: await this.getDocData(collection, _id) }
 
-                } else if(!await exists(`${this.DSK_DB}/${table}/.${_id}`)) {
+                } else if(!await exists(`${this.DSK_DB}/${collection}/.${_id}`)) {
 
                     yield { id: _id, action: "delete", data: [] }
                 
@@ -160,16 +156,16 @@ export default class Walker {
         }
     }
 
-    static async *listen(pattern: string | string[]) {
+    static async *listen(collection: string, pattern: string | string[]) {
 
         if(Array.isArray(pattern)) {
 
             for(const p of pattern) {
-                for await (const event of this.processPattern(p)) yield event
+                for await (const event of this.processPattern(collection, p)) yield event
             }
       
         } else {
-            for await (const event of this.processPattern(pattern)) yield event
+            for await (const event of this.processPattern(collection, pattern)) yield event
         }
     }
 }

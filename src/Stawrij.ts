@@ -3,8 +3,9 @@ import Paser from './Paza'
 import Dir from "./Directory";
 import ULID from './ULID';
 import Walker from './Walker';
-import { rmdir } from 'node:fs/promises';
-import { S3 } from "./S3"
+import S3 from "./S3"
+import { $ } from "bun"
+import { mkdir, rmdir } from 'fs/promises';
 
 export default class Stawrij {
 
@@ -76,10 +77,12 @@ export default class Stawrij {
      */
     static async createCollection(collection: string) {
 
-        this.checkEnvironment()
-
         try {
-            await Dir.createSchema(collection)
+
+            await mkdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}`)
+            
+            await $`aws s3 mb s3://${S3.getBucketFormat(collection)}`.quiet()
+        
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.createCollection -> ${e.message}`)
         }
@@ -91,10 +94,14 @@ export default class Stawrij {
      */
     static async dropCollection(collection: string) {
 
-        this.checkEnvironment()
-
         try {
-            await Dir.dropSchema(collection)
+
+            await $`aws s3 rm s3://${S3.getBucketFormat(collection)} --recursive`.quiet()
+
+            await $`aws s3 rb s3://${S3.getBucketFormat(collection)}`.quiet()
+
+            await rmdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}`, { recursive: true })
+
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.dropCollection -> ${e.message}`)
         }
@@ -378,32 +385,21 @@ export default class Stawrij {
      * Puts a document into a collection.
      * @param collection The name of the collection.
      * @param data The document to put.
-     * @param items The keys to delete for update operations.
      * @returns The ID of the document.
      */
-    static async putData<T extends Record<string, any>>(collection: string, data: Map<_ulid, T> | T, items?: string[]) {
-
-        this.checkEnvironment()
+    static async putData<T extends Record<string, any>>(collection: string, data: Map<_ulid, T> | T) {
         
-        const _id = data instanceof Map ? Array.from((data as Map<_ulid, T>).keys())[0] : ULID.generate()
+        const _id = data instanceof Map ? ULID.update(Array.from(data.keys())[0]) : ULID.generate()
         
         try {
 
-            await Dir.aquireLock(collection, _id)
-
-            items ??= await Walker.getDocData(collection, _id)
-
-            await Promise.allSettled(items.map(key => Dir.deleteKeys(collection, key)))
-
-            const doc = data instanceof Map ? (data as Map<_ulid, T>).get(_id)! : data as T
+            const doc = data instanceof Map ? Array.from(data.values())[0] : data
 
             const keys = Dir.extractKeys(_id, doc)
 
             await Promise.allSettled(keys.data.map((item, i) => Dir.putKeys(collection, { dataKey: item, indexKey: keys.indexes[i] })))
 
             if(this.LOGGING) console.log(`Finished Writing ${_id}`)
-            
-            await Dir.releaseLock(collection, _id)
 
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.putData -> ${e.message}`)
@@ -421,11 +417,13 @@ export default class Stawrij {
      */
     static async patchDoc<T extends Record<string, any>>(collection: string, newDoc: Map<_ulid, Partial<T>>, oldDoc: Map<_ulid, T> = new Map<_ulid, T>()) {
         
+        const _id = Array.from(newDoc.keys())[0] as _ulid
+
+        let _newId = _id
+        
         this.checkEnvironment()
         
         try {
-
-            const _id = Array.from(newDoc.keys())[0] as _ulid
 
             if(!_id) throw new Error("Stawrij document does not contain an UUID")
 
@@ -439,7 +437,7 @@ export default class Stawrij {
 
                 const data = await Dir.reconstructData<T>(collection, items)
 
-                oldDoc = new Map([[_id, data]]) as Map<_ulid, T>
+                oldDoc = new Map<_ulid, T>([[_id, data]])
             }
 
             if(oldDoc.size > 0) {
@@ -449,8 +447,10 @@ export default class Stawrij {
                 const data = newDoc.get(_id)!
 
                 for(const field in data) currData[field] = data[field]!
+                
+                _newId = await this.putData(collection, new Map<_ulid, T>([[_id, currData]]))
 
-                await this.putData(collection, new Map([[_id, currData]]) as Map<_ulid, T>, keys)
+                await this.delDoc(collection, _id)
             }
 
             if(this.LOGGING) console.log(`Finished Updating ${_id}`)
@@ -458,6 +458,8 @@ export default class Stawrij {
         } catch(e) {
             if(e instanceof Error) throw new Error(`Stawrij.patchDoc -> ${e.message}`)
         }
+
+        return _newId
     }
 
     /**
@@ -482,7 +484,7 @@ export default class Stawrij {
         
         try {
 
-            const promises: Promise<void>[] = []
+            const promises: Promise<_ulid>[] = []
 
             let finished = false
 
@@ -528,7 +530,7 @@ export default class Stawrij {
             await Promise.allSettled(promises)
 
         } catch(e) {
-            if(e instanceof Error) throw new Error(`Stawrij.putDoc -> ${e.message}`)
+            if(e instanceof Error) throw new Error(`Stawrij.patchDocs -> ${e.message}`)
         }
 
         return count
@@ -542,17 +544,11 @@ export default class Stawrij {
      */
     static async delDoc(collection: string, _id: _ulid) {
 
-        this.checkEnvironment()
-
         try {
-
-            await Dir.aquireLock(collection, _id)
 
             const keys = await Walker.getDocData(collection, _id)
 
             await Promise.allSettled(keys.map(key => Dir.deleteKeys(collection, key)))
-
-            await rmdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`, { recursive: true })
 
             if(this.LOGGING) console.log(`Finished Deleting ${_id}`)
 

@@ -1,5 +1,9 @@
 export default class ULID {
 
+    private static multiple = 10000
+
+    private static minBase = 18
+
     static isULID(_id: string) {
 
         return _id.match(/^[A-Z0-9]+-(?:[2-9]|[1-2][0-9]|3[0-6])-[A-Z0-9]+$/i)
@@ -12,44 +16,54 @@ export default class ULID {
 
     static generate() {
 
-        const time = Date.now()
-
+        const time = (performance.now() + performance.timeOrigin) * ULID.multiple
+        
         const nums = String(time).split('').map(Number)
 
-        const base = ULID.calcLuhnBase(nums)
+        const base = ULID.getRandomBase(nums)
 
-        const prefix = time.toString(base)
+        const timeCode = time.toString(base)
 
-        const arr = new Uint8Array(nums.length)
-
-        crypto.getRandomValues(arr)
-
-        const suffix = Number(arr.join('').slice(0, nums.length)).toString(base)
-
-        return `${prefix}-${base}-${suffix}`.toUpperCase() as _ulid
+        return `${timeCode}-${base}-${timeCode}`.toUpperCase() as _ulid
     }
 
-    private static calcLuhnBase(nums: number[]) {
+    private static getRandomBase(nums: number[]) {
 
-        let sum = 0
-
-        for (let i = nums.length - 2; i >= 0; i -= 2) {
+        return nums.reverse().join('').split('').map(Number).reduce((prev, curr) => {
             
-            const doubled = nums[i] * 2
+            if(prev < ULID.minBase) prev += curr
 
-            if (doubled > 9) sum += doubled % 10 + 1
-            else sum += doubled
-        }
+            return prev
 
-        return sum > 36 ? 36 : sum
+        }, 0)
+    }
+
+    static update(_id: string) {
+
+        if (!ULID.isULID(_id)) throw new Error('Invalid ULID')
+
+        const [created, stringBase] = _id.split('-')
+
+        const time = (performance.now() + performance.timeOrigin) * ULID.multiple
+
+        const timeCode = time.toString(Number(stringBase))
+
+        return `${created}-${stringBase}-${timeCode}`.toUpperCase() as _ulid
     }
 
     static decodeTime(_id: string) {
 
         if (!ULID.isULID(_id)) throw new Error('Invalid ULID')
 
-        const segs = _id.split('-')
+        const [created, stringBase, updated] = _id.split('-')
 
-        return parseInt(segs[0], Number(segs[1]))
+        const base = Number(stringBase)
+
+        const convertToMilliseconds = (timeCode: string) => Number((parseInt(timeCode, base) / ULID.multiple).toFixed(0))
+
+        return {
+            createdAt: convertToMilliseconds(created),
+            updatedAt: convertToMilliseconds(updated)
+        }
     }
 }                                      

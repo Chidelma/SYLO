@@ -1,6 +1,6 @@
 import { S3Client } from "bun"
 
-export class S3 {
+export default class S3 {
 
     static readonly BUCKET_ENV = process.env.BUCKET_PREFIX
 

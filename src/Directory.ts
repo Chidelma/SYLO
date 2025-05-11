@@ -1,8 +1,8 @@
 import { rm, exists, mkdir, readdir, opendir, rmdir, watch, stat, symlink } from "node:fs/promises"
 import Walker from "./Walker"
 import ULID from "./ULID"
-import { $, S3Client } from "bun"
-import { S3 } from "./S3"
+import { S3Client } from "bun"
+import S3 from "./S3"
 
 export default class {
 
@@ -11,34 +11,6 @@ export default class {
     private static ALL_SCHEMAS = new Map<string, Map<string, string[]>>()
 
     private static readonly SLASH_ASCII = "%2F"
-
-    static async createSchema(collection: string) {
-
-        try {
-
-            await mkdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}`)
-
-            await $`aws s3 mb s3://${S3.getBucketFormat(collection)}`.quiet()
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Dir.createSchema -> ${e.message}`)
-        }
-    }
-
-    static async dropSchema(collection: string) {
-
-        try {
-
-            await $`aws s3 rm s3://${S3.getBucketFormat(collection)} --recursive`.quiet()
-
-            await $`aws s3 rb s3://${S3.getBucketFormat(collection)}`.quiet()
-
-            await rmdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}`, { recursive: true })
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Dir.dropSchema -> ${e.message}`)
-        }
-    }
 
     private static retrieveSchema<T extends Record<string, any>>(doc: T, parentBranch?: string) {
 
@@ -81,86 +53,86 @@ export default class {
         }
     }
 
-    static async aquireLock(collection: string, _id: _ulid) {
+    // static async aquireLock(collection: string, _id: _ulid) {
 
-        try {
+    //     try {
 
-            if(await this.isLocked(collection, _id)) {
+    //         if(await this.isLocked(collection, _id)) {
 
-                await this.queueProcess(collection, _id)
+    //             await this.queueProcess(collection, _id)
 
-                for await (const event of watch(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${process.pid}`)) {
-                    if(event.eventType !== "change") break
-                }
-            }
+    //             for await (const event of watch(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${process.pid}`)) {
+    //                 if(event.eventType !== "change") break
+    //             }
+    //         }
     
-            await this.queueProcess(collection, _id)
+    //         await this.queueProcess(collection, _id)
 
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Dir.aquireLock -> ${e.message}`)
-        }
+    //     } catch(e) {
+    //         if(e instanceof Error) throw new Error(`Dir.aquireLock -> ${e.message}`)
+    //     }
 
-    }
+    // }
 
-    static async releaseLock(collection: string, _id: _ulid) {
+    // static async releaseLock(collection: string, _id: _ulid) {
 
-        try {
+    //     try {
 
-            await rm(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${process.pid}`, { recursive: true })
+    //         await rm(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${process.pid}`, { recursive: true })
 
-            const results = await readdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`, { withFileTypes: true })
+    //         const results = await readdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`, { withFileTypes: true })
 
-            const timeSortedDir = results.sort((a, b) => {
-                const aTime = Bun.file(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${a.name}`).lastModified
-                const bTime = Bun.file(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${b.name}`).lastModified
-                return aTime - bTime
-            })
+    //         const timeSortedDir = results.sort((a, b) => {
+    //             const aTime = Bun.file(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${a.name}`).lastModified
+    //             const bTime = Bun.file(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${b.name}`).lastModified
+    //             return aTime - bTime
+    //         })
 
-            if(timeSortedDir.length > 0) await rm(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${timeSortedDir[0].name}`, { recursive: true })
+    //         if(timeSortedDir.length > 0) await rm(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${timeSortedDir[0].name}`, { recursive: true })
             
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Dir.releaseLock -> ${e.message}`)
-        }
-    }
+    //     } catch(e) {
+    //         if(e instanceof Error) throw new Error(`Dir.releaseLock -> ${e.message}`)
+    //     }
+    // }
 
-    private static async isLocked(collection: string, _id: _ulid) {
+    // private static async isLocked(collection: string, _id: _ulid) {
 
-        let locked = false
+    //     let locked = false
 
-        try {
+    //     try {
 
-            if(!await exists(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`)) return locked
+    //         if(!await exists(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`)) return locked
 
-            const files = await opendir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`)
+    //         const files = await opendir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`)
 
-            for await (const file of files) {
+    //         for await (const file of files) {
 
-                if(!file.isSymbolicLink()) {
-                    locked = true
-                    break
-                }
+    //             if(!file.isSymbolicLink()) {
+    //                 locked = true
+    //                 break
+    //             }
 
-            }
+    //         }
 
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Dir.isLocked -> ${e.message}`)
-        }
+    //     } catch(e) {
+    //         if(e instanceof Error) throw new Error(`Dir.isLocked -> ${e.message}`)
+    //     }
 
-        return locked
-    }
+    //     return locked
+    // }
 
-    private static async queueProcess(collection: string, _id: _ulid) {
+    // private static async queueProcess(collection: string, _id: _ulid) {
 
-        try {
+    //     try {
 
-            await mkdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`, { recursive: true })
+    //         await mkdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`, { recursive: true })
 
-            await Bun.file(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${process.pid}`).writer().end()
+    //         await Bun.file(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${process.pid}`).writer().end()
 
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Dir.queueProcess -> ${e.message}`)
-        }
-    }
+    //     } catch(e) {
+    //         if(e instanceof Error) throw new Error(`Dir.queueProcess -> ${e.message}`)
+    //     }
+    // }
 
     static async reconstructData<T extends Record<string, any>>(collection: string, items: string[]) {
         
@@ -178,7 +150,7 @@ export default class {
         return this.constructData<T>(fieldVal)
     }
 
-    static async readValues(collection: string, items: string[]) {
+    private static async readValues(collection: string, items: string[]) {
 
         for(let i = 0; i < items.length; i++) {
 
@@ -199,13 +171,11 @@ export default class {
         return items
     }
 
-    private static async filterByTimestamp(collection: string, _id: _ulid, indexes: string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }) {
+    private static async filterByTimestamp(_id: _ulid, indexes: string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }) {
 
-        if(updated && await exists(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`)) {
-
-            const metadata = await stat(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`)
-
-            const lastModified = metadata.mtime.getMilliseconds()
+        const { createdAt, updatedAt } = ULID.decodeTime(_id)
+        
+        if(updated) {
 
             if((updated.$gt || updated.$gte) && (updated.$lt || updated.$lte)) {
 
@@ -213,34 +183,34 @@ export default class {
 
                     if(updated.$gt! > updated.$lt!) throw new Error("Invalid updated query")
 
-                    indexes = lastModified > updated.$gt! && lastModified < updated.$lt! ? indexes : []
+                    indexes = updatedAt > updated.$gt! && updatedAt < updated.$lt! ? indexes : []
                 
                 } else if(updated.$gt && updated.$lte) {
 
                     if(updated.$gt! > updated.$lte!) throw new Error("Invalid updated query")
 
-                    indexes = lastModified > updated.$gt! && lastModified <= updated.$lte! ? indexes : []
+                    indexes = updatedAt > updated.$gt! && updatedAt <= updated.$lte! ? indexes : []
                 
                 } else if(updated.$gte && updated.$lt) {
 
                     if(updated.$gte! > updated.$lt!) throw new Error("Invalid updated query")
 
-                    indexes = lastModified >= updated.$gte! && lastModified < updated.$lt! ? indexes : []
+                    indexes = updatedAt >= updated.$gte! && updatedAt < updated.$lt! ? indexes : []
                 
                 } else if(updated.$gte && updated.$lte) {
 
                     if(updated.$gte! > updated.$lte!) throw new Error("Invalid updated query")
 
-                    indexes = lastModified >= updated.$gte! && lastModified <= updated.$lte! ? indexes : []
+                    indexes = updatedAt >= updated.$gte! && updatedAt <= updated.$lte! ? indexes : []
                 }
 
             } else if((updated.$gt || updated.$gte) && !updated.$lt && !updated.$lte) {
 
-                indexes = updated.$gt ? lastModified > updated.$gt! ? indexes : [] : lastModified >= updated.$gte! ? indexes : []
+                indexes = updated.$gt ? updatedAt > updated.$gt! ? indexes : [] : updatedAt >= updated.$gte! ? indexes : []
             
             } else if(!updated.$gt && !updated.$gte && (updated.$lt || updated.$lte)) {
 
-                indexes = updated.$lt ? lastModified < updated.$lt! ? indexes : [] : lastModified <= updated.$lte! ? indexes : []
+                indexes = updated.$lt ? updatedAt < updated.$lt! ? indexes : [] : updatedAt <= updated.$lte! ? indexes : []
             }
         }
 
@@ -252,44 +222,36 @@ export default class {
 
                     if(created.$gt! > created.$lt!) throw new Error("Invalid created query")
 
-                    const creation = ULID.decodeTime(_id)
-                    indexes = creation > created.$gt! && creation < created.$lt! ? indexes : []
+                    indexes = createdAt > created.$gt! && createdAt < created.$lt! ? indexes : []
                 
                 } else if(created.$gt && created.$lte) {
 
                     if(created.$gt! > created.$lte!) throw new Error("Invalid updated query")
 
-                    const creation = ULID.decodeTime(_id)
-                    indexes = creation > created.$gt! && creation <= created.$lte! ? indexes : []
+                    indexes = createdAt > created.$gt! && createdAt <= created.$lte! ? indexes : []
                 
                 } else if(created.$gte && created.$lt) {
 
                     if(created.$gte! > created.$lt!) throw new Error("Invalid updated query")
 
-                    const creation = ULID.decodeTime(_id)
-                    indexes = creation >= created.$gte! && creation < created.$lt! ? indexes : []
+                    indexes = createdAt >= created.$gte! && createdAt < created.$lt! ? indexes : []
                 
                 } else if(created.$gte && created.$lte) {
 
                     if(created.$gte! > created.$lte!) throw new Error("Invalid updated query")
 
-                    const creation = ULID.decodeTime(_id)
-                    indexes = creation >= created.$gte! && creation <= created.$lte! ? indexes : []
+                    indexes = createdAt >= created.$gte! && createdAt <= created.$lte! ? indexes : []
                 }
 
             } else if((created.$gt || created.$gte) && !created.$lt && !created.$lte) {
 
-                const creation = ULID.decodeTime(_id)
-
-                if(created.$gt) indexes = creation > created.$gt! ? indexes : []
-                else if(created.$gte) indexes = creation >= created.$gte! ? indexes : []
+                if(created.$gt) indexes = createdAt > created.$gt! ? indexes : []
+                else if(created.$gte) indexes = createdAt >= created.$gte! ? indexes : []
             
             } else if(!created.$gt && !created.$gte && (created.$lt || created.$lte)) {
 
-                const creation = ULID.decodeTime(_id)
-
-                if(created.$lt) indexes = creation < created.$lt! ? indexes : []
-                else if(created.$lte) indexes = creation <= created.$lte! ? indexes : []
+                if(created.$lt) indexes = createdAt < created.$lt! ? indexes : []
+                else if(created.$lte) indexes = createdAt <= created.$lte! ? indexes : []
             }
         }
 
@@ -306,7 +268,7 @@ export default class {
 
             if(created || updated) {
 
-                if(await this.filterByTimestamp(collection, _id, items, { created, updated })) {
+                if(await this.filterByTimestamp(_id, items, { created, updated })) {
 
                     const data = await this.reconstructData<T>(collection, items)
 
