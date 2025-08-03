@@ -1,16 +1,14 @@
-import { FileChangeInfo, watch, mkdir, exists } from "node:fs/promises"
 import S3 from "./S3"
-import ULID from "./ULID"
+import TTID from "@vyckr/ttid"
+import Redis from "./redis"
 
 export default class Walker {
 
-    private static readonly listeners: Map<string, AsyncIterable<FileChangeInfo<string>>> = new Map()
-
-    static readonly DSK_DB = process.env.DB_DIR
-
     private static readonly MAX_KEYS = 1000
 
-    private static async *searchS3(collection: string, prefix: string, pattern?: string): AsyncGenerator<{ _id: _ulid, data: string[] } | void, void, { count: number, limit?: number  }> {
+    private static readonly redis = new Redis()
+
+    private static async *searchS3(collection: string, prefix: string, pattern?: string): AsyncGenerator<{ _id: _ttid, data: string[] } | void, void, { count: number, limit?: number  }> {
         
         const uniqueIds = new Set<string>()
 
@@ -38,9 +36,9 @@ export default class Walker {
 
                     const segements = key.split('/')
 
-                    const _id = segements.pop()! as _ulid
+                    const _id = segements.pop()! as _ttid
 
-                    if((ULID.isULID(_id) && !uniqueIds.has(_id)) && new Bun.Glob(pattern).match(key)) {
+                    if((TTID.isTTID(_id) && !uniqueIds.has(_id)) && new Bun.Glob(pattern).match(key)) {
 
                         filter = yield { _id, data: await this.getDocData(collection, _id) }
 
@@ -54,7 +52,7 @@ export default class Walker {
 
             } else {
 
-                const _id = prefix.split('/').pop()! as _ulid
+                const _id = prefix.split('/').pop()! as _ttid
 
                 yield { _id, data: keys }
 
@@ -66,7 +64,7 @@ export default class Walker {
         } while(token !== undefined)
     }
 
-    static async *search(collection: string, pattern: string, { listen = false, skip = false }: { listen: boolean, skip: boolean }, action: "upsert" | "delete" = "upsert"): AsyncGenerator<{ _id: _ulid, data: string[] } | void, void, { count: number, limit?: number  }> {
+    static async *search(collection: string, pattern: string, { listen = false, skip = false }: { listen: boolean, skip: boolean }, action: "insert" | "delete" = "insert"): AsyncGenerator<{ _id: _ttid, data: string[] } | void, void, { count: number, limit?: number  }> {
 
         if(!skip) {
             const segments = pattern.split('/');
@@ -89,7 +87,9 @@ export default class Walker {
         }
     }
 
-    static async getDocData(collection: string, _id: _ulid) {
+    static async getDocData(collection: string, _id: _ttid) {
+
+        _id = _id.split('-')[0]
 
         const data: string[] = []
 
@@ -119,39 +119,28 @@ export default class Walker {
 
     private static async *processPattern(collection: string, pattern: string) {
 
-        if(!this.listeners.has(collection)) {
-
-            if(!await exists(`${this.DSK_DB}/${S3.getBucketFormat(collection)}`)) await mkdir(`${this.DSK_DB}/${S3.getBucketFormat(collection)}`, { recursive: true })
-            
-            this.listeners.set(collection, watch(`${this.DSK_DB}/${S3.getBucketFormat(collection)}`, { recursive: true }))
-        }
-
-        const watcher = this.listeners.get(collection)!
-
         const stackIds = new Set<string>()
 
-        for await (const event of watcher) {
+        for await (const { action, keyId } of Walker.redis.subscribe(collection)) {
             
-            if(event.filename && event.eventType === 'rename' && event.filename.split('/').length >= 2) {
+            if(action === 'insert' && !TTID.isTTID(keyId) && new Bun.Glob(pattern).match(keyId)) {
 
-                const index = event.filename.split('/').pop()!.replaceAll('\\', '/')
+                const _id = keyId.split('/').pop()! as _ttid
 
-                const _id = index.split('/').pop()! as _ulid
-
-                if(ULID.isULID(_id) && new Bun.Glob(pattern).match(index) && !stackIds.has(_id)) {
+                if(!stackIds.has(_id)) {
 
                     stackIds.add(_id)
 
-                    yield { id: _id, action: "upsert", data: await this.getDocData(collection, _id) }
-
-                } else if(!await exists(`${this.DSK_DB}/${collection}/.${_id}`)) {
-
-                    yield { id: _id, action: "delete", data: [] }
-                
-                } else if(ULID.isULID(_id) && stackIds.has(_id)) {
-
-                    stackIds.delete(_id)
+                    yield { id: _id, action: "insert", data: await this.getDocData(collection, _id) }
                 }
+
+            } else if(action === 'delete' && TTID.isTTID(keyId)) {
+
+                yield { id: keyId as _ttid, action: "delete", data: [] }
+            
+            } else if(TTID.isTTID(keyId) && stackIds.has(keyId)) {
+
+                stackIds.delete(keyId)
             }
         }
     }

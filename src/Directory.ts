@@ -1,140 +1,23 @@
-import { rm, exists, mkdir, readdir, opendir, rmdir, watch, stat, symlink } from "node:fs/promises"
-import Walker from "./Walker"
-import ULID from "./ULID"
-import { S3Client } from "bun"
+import Walker from "./walker"
+import TTID from "@vyckr/ttid"
 import S3 from "./S3"
+import Redis from "./redis"
 
-export default class {
+export default class Dir {
 
     private static readonly KEY_LIMIT = 1024
 
-    private static ALL_SCHEMAS = new Map<string, Map<string, string[]>>()
-
     private static readonly SLASH_ASCII = "%2F"
 
-    private static retrieveSchema<T extends Record<string, any>>(doc: T, parentBranch?: string) {
+    private readonly transactions: Array<{ action: Function, args: string[] }>;
 
-        const schema = new Map<string, string>()
+    private static readonly redis = new Redis()
     
-        function recursiveHelper(tree: Record<string, any>, parentBranch?: string) {
-
-            for (const branch in tree) {
-
-                const newKey = parentBranch ? `${parentBranch}/${branch}` : branch
-
-                if(typeof tree[branch] === "object" && !Array.isArray(tree[branch])) {
-                    recursiveHelper(tree[branch], newKey)
-                } else schema.set(newKey, typeof tree[branch])
-            }
-        }
-    
-        recursiveHelper(doc, parentBranch)
-        
-        return schema
+    constructor() {
+        this.transactions = []
     }
 
-    static async validateData<T extends Record<string, any>>(collection: string, data: T) {
-
-        try {
-
-            const savedSchema = this.ALL_SCHEMAS.get(collection)!
-
-            const dataSchema = this.retrieveSchema(data)
-
-            for(const [field, type] of dataSchema) {
-
-                if(!savedSchema.has(field)) throw new Error(`Field '${field.split('/').pop()}' does not exist in '${collection}'`)
-
-                if(!savedSchema.get(field)!.includes(type)) throw new Error(`Field '${field.split('/').pop()}' is not of type '${type}' in '${collection}'`)
-            }
-
-        } catch(e) {
-            if(e instanceof Error) throw new Error(`Dir.validateData -> ${e.message}`)
-        }
-    }
-
-    // static async aquireLock(collection: string, _id: _ulid) {
-
-    //     try {
-
-    //         if(await this.isLocked(collection, _id)) {
-
-    //             await this.queueProcess(collection, _id)
-
-    //             for await (const event of watch(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${process.pid}`)) {
-    //                 if(event.eventType !== "change") break
-    //             }
-    //         }
-    
-    //         await this.queueProcess(collection, _id)
-
-    //     } catch(e) {
-    //         if(e instanceof Error) throw new Error(`Dir.aquireLock -> ${e.message}`)
-    //     }
-
-    // }
-
-    // static async releaseLock(collection: string, _id: _ulid) {
-
-    //     try {
-
-    //         await rm(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${process.pid}`, { recursive: true })
-
-    //         const results = await readdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`, { withFileTypes: true })
-
-    //         const timeSortedDir = results.sort((a, b) => {
-    //             const aTime = Bun.file(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${a.name}`).lastModified
-    //             const bTime = Bun.file(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${b.name}`).lastModified
-    //             return aTime - bTime
-    //         })
-
-    //         if(timeSortedDir.length > 0) await rm(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${timeSortedDir[0].name}`, { recursive: true })
-            
-    //     } catch(e) {
-    //         if(e instanceof Error) throw new Error(`Dir.releaseLock -> ${e.message}`)
-    //     }
-    // }
-
-    // private static async isLocked(collection: string, _id: _ulid) {
-
-    //     let locked = false
-
-    //     try {
-
-    //         if(!await exists(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`)) return locked
-
-    //         const files = await opendir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`)
-
-    //         for await (const file of files) {
-
-    //             if(!file.isSymbolicLink()) {
-    //                 locked = true
-    //                 break
-    //             }
-
-    //         }
-
-    //     } catch(e) {
-    //         if(e instanceof Error) throw new Error(`Dir.isLocked -> ${e.message}`)
-    //     }
-
-    //     return locked
-    // }
-
-    // private static async queueProcess(collection: string, _id: _ulid) {
-
-    //     try {
-
-    //         await mkdir(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}`, { recursive: true })
-
-    //         await Bun.file(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${process.pid}`).writer().end()
-
-    //     } catch(e) {
-    //         if(e instanceof Error) throw new Error(`Dir.queueProcess -> ${e.message}`)
-    //     }
-    // }
-
-    static async reconstructData<T extends Record<string, any>>(collection: string, items: string[]) {
+    static async reconstructData(collection: string, items: string[]) {
         
         items = await this.readValues(collection, items)
 
@@ -147,7 +30,7 @@ export default class {
             fieldVal = { ...fieldVal, [field]: val }
         })
         
-        return this.constructData<T>(fieldVal)
+        return this.constructData(fieldVal)
     }
 
     private static async readValues(collection: string, items: string[]) {
@@ -158,11 +41,10 @@ export default class {
 
             const filename = segments.pop()!
 
-            if(ULID.isUUID(filename)) {
+            if(TTID.isUUID(filename)) {
 
-                const data = S3Client.file(items[i], { ...S3.CREDS, bucket: collection })
-                
-                const val = await data.text()
+                const file = S3.file(collection, items[i])
+                const val = await file.text()
 
                 items[i] = `${segments.join('/')}/${val}`
             }
@@ -171,9 +53,9 @@ export default class {
         return items
     }
 
-    private static async filterByTimestamp(_id: _ulid, indexes: string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }) {
+    private static async filterByTimestamp(_id: _ttid, indexes: string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }) {
 
-        const { createdAt, updatedAt } = ULID.decodeTime(_id)
+        const { createdAt, updatedAt } = TTID.decodeTime(_id)
         
         if(updated) {
 
@@ -258,33 +140,33 @@ export default class {
         return indexes.length > 0
     }
 
-    static async *searchDocs<T extends Record<string, any>>(collection: string, pattern: string | string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }, { listen = false, skip = false }: { listen: boolean, skip: boolean }, deleted: boolean = false): AsyncGenerator<Map<_ulid, T> | _ulid | void, void, { count: number, limit?: number  }> {
+    static async *searchDocs<T extends Record<string, any>>(collection: string, pattern: string | string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }, { listen = false, skip = false }: { listen: boolean, skip: boolean }, deleted: boolean = false): AsyncGenerator<Record<_ttid, T> | _ttid | void, void, { count: number, limit?: number  }> {
         
         const data = yield
         let count = data.count
         let limit = data.limit
         
-        const constructData = async (collection: string, _id: _ulid, items: string[]) => {
+        const constructData = async (collection: string, _id: _ttid, items: string[]) => {
 
             if(created || updated) {
 
                 if(await this.filterByTimestamp(_id, items, { created, updated })) {
 
-                    const data = await this.reconstructData<T>(collection, items)
+                    const data = await this.reconstructData(collection, items)
 
-                    return new Map([[_id, data]]) as Map<_ulid, T>
+                    return { [_id]: data } as Record<_ttid, T>
 
-                } else return new Map<_ulid, T>()
+                } else return {}
 
             } else {
 
-                const data = await this.reconstructData<T>(collection, items)
+                const data = await this.reconstructData(collection, items)
 
-                return new Map([[_id, data]]) as Map<_ulid, T>
+                return { [_id]: data } as Record<_ttid, T>
             }
         }
 
-        const processQuery = async function*(p: string): AsyncGenerator<Map<_ulid, T> | _ulid | void, void, { count: number, limit?: number  }> {
+        const processQuery = async function*(p: string): AsyncGenerator<Record<_ttid, T> | _ttid | void, void, { count: number, limit?: number  }> {
 
             let finished = false
             
@@ -351,60 +233,101 @@ export default class {
         } else yield* processQuery(pattern)
     }
 
-    static async putKeys(collection: string, { dataKey, indexKey }: { dataKey: string, indexKey: string }) {
+    async putKeys(collection: string, { dataKey, indexKey }: { dataKey: string, indexKey: string }) {
         
         let dataBody: string | undefined
         let indexBody: string | undefined
 
-        if(dataKey.length > this.KEY_LIMIT) {
+        if(dataKey.length > Dir.KEY_LIMIT) {
 
             const dataSegs = dataKey.split('/')
 
             dataBody = dataSegs.pop()!
             
-            indexKey = `${dataSegs.join('/')}/${crypto.randomUUID()}`
+            indexKey = `${dataSegs.join('/')}/${Bun.randomUUIDv7()}`
         } 
 
-        if(indexKey.length > this.KEY_LIMIT) {
+        if(indexKey.length > Dir.KEY_LIMIT) {
 
             const indexSegs = indexKey.split('/')
 
-            const _id = indexSegs.pop()! as _ulid
+            const _id = indexSegs.pop()! as _ttid
 
             indexBody = indexSegs.pop()!
 
             dataKey = `${indexSegs.join('/')}/${_id}`
         }
 
-        await Promise.allSettled([
+        await Promise.all([
             S3.put(collection, dataKey, dataBody ?? ''),
             S3.put(collection, indexKey, indexBody ?? '')
         ])
 
-        const _id = indexKey.split('/').pop()! as _ulid
+        this.transactions.push({
+            action: S3.delete,
+            args: [collection, dataKey]
+        })
 
-        await symlink(``, `${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${indexKey.replaceAll('/', '\\')}`)
-        await rm(`${Walker.DSK_DB}/${S3.getBucketFormat(collection)}/.${_id}/${indexKey.replaceAll('/', '\\')}`, { recursive: true })
+        this.transactions.push({
+            action: S3.delete,
+            args: [collection, indexKey]
+        })
+
+        await Dir.redis.publish(collection, 'insert', indexKey)
     }
 
-    static async deleteKeys(collection: string, dataKey: string) {
+    async executeRollback() {
+
+        do {
+
+            const transaction = this.transactions.pop()
+
+            if(transaction) {
+
+                const { action, args } = transaction
+
+                await action(...args)
+            }
+
+        } while(this.transactions.length > 0)
+    }
+
+    async deleteKeys(collection: string, dataKey: string) {
 
         const segements = dataKey.split('/')
 
-        const val = segements.pop()!
-        const _id = segements.shift()! as _ulid
+        const _id = segements.shift()!
 
-        let index = `${segements.join('/')}/${val}/${_id}`
+        const indexKey = `${segements.join('/')}/${_id}`
 
-        if(ULID.isUUID(val)) index = `${segements.join('/')}/${_id}`
+        const dataFile = S3.file(collection, dataKey)
+        const indexFile = S3.file(collection, indexKey)
 
-        await Promise.allSettled([
-            S3.delete(collection, dataKey),
-            S3.delete(collection, index)
+        let dataBody: string | undefined
+        let indexBody: string | undefined
+
+        if(dataFile.size > 0) dataBody = await dataFile.text()
+        if(indexFile.size > 0) indexBody = await indexFile.text()
+
+        await Promise.all([
+            S3.delete(collection, indexKey),
+            S3.delete(collection, dataKey)
         ])
+
+        this.transactions.push({
+            action: S3.put,
+            args: [collection, indexKey, dataBody ?? '']
+        })
+
+        this.transactions.push({
+            action: S3.put,
+            args: [collection, indexKey,  indexBody ?? '']
+        })
+
+        await Dir.redis.publish(collection, 'delete', _id)
     }
 
-    static extractKeys<T>(_id: _ulid, data: T, parentField?: string) {
+    static extractKeys<T>(_id: _ttid, data: T, parentField?: string) {
 
         const keys: { data: string[], indexes: string[] } = { data: [], indexes: [] }
 
@@ -432,7 +355,7 @@ export default class {
         return keys
     }
 
-    static constructData<T>(fieldVal: Record<string, string>) {
+    static constructData(fieldVal: Record<string, string>) {
 
         const data: Record<string, any> = {}
 
@@ -456,7 +379,7 @@ export default class {
             curr[lastKey] = this.parseValue(fieldVal[fullField].replaceAll(this.SLASH_ASCII, '/'))
         }
 
-        return data as T
+        return data
     }
 
     static parseValue(value: string) {

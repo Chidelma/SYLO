@@ -1,6 +1,6 @@
-# BYOS - Bring Your Own Storage
+# Silo
 
-BYOS is a customizable storage solution built with TypeScript (Bun), providing an interface to interact with various AWS S3-Compactable storage services. It allows you to easily integrate your own storage solution with your application, providing a simple and intuitive interface for managing and accessing your data.
+Silo is a customizable storage solution built with TypeScript (Bun), providing an interface to interact with various AWS S3-Compactable storage services. It allows you to easily integrate your own storage solution with your application, providing a simple and intuitive interface for managing and accessing your data.
 
 ## Features
 
@@ -12,7 +12,7 @@ BYOS is a customizable storage solution built with TypeScript (Bun), providing a
 ## Installation
 
 ```bash
-npm install @vyckr/byos
+npm install @vyckr/silo
 ```
 
 ## Configuration
@@ -20,10 +20,8 @@ npm install @vyckr/byos
 The .env file should be in the root directory of your project. The following environment variables:
 ```
 DB_DIR=/path/to/disk/database (required)
-SCHEMA=LOOSE|STRICT (optional)
 LOGGING=true|false (optional)
 SCHEMA_PATH=/path/to/schema/directory (required if SCHEMA is set to STRICT)
-MEM_DR=/path/to/memory/database (optional)
 S3_REGION=region (optional)
 S3_INDEX_BUCKET=bucket (required)
 S3_DATA_BUCKET=bucket (required)
@@ -40,7 +38,7 @@ Make sure you have set the 'SCHEMA_PATH' if 'SCHEMA' is set to 'STRICT'. The sch
 ```
 
 ```typescript
-import Silo from "@vyckr/byos";
+import Silo from "@vyckr/silo";
 
 await Silo.createSchema("users")
 
@@ -74,7 +72,7 @@ await Silo.dropSchema("users")
 The equivalent of the above code using SQL syntax would be:
 
 ```typescript
-import Silo from "@vyckr/byos";
+import Silo from "@vyckr/silo";
 
 await Silo.executeSQL<_user>(`CREATE TABLE users`)
 
@@ -102,7 +100,7 @@ await Silo.executeSQL<_user>(`DROP TABLE users`)
 For streaming (listening) data, you can use the following methods:
 
 ```typescript
-import Silo from "@vyckr/byos";
+import Silo from "@vyckr/silo";
 
 for await (const user of Silo.findDocs<_user>("users", { $limit: 10 })) {
     console.log(user)

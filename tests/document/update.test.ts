@@ -1,91 +1,106 @@
-import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
-import Silo from '../../src/Stawrij'
+import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
+import Sylo from '../../src'
 import { photosURL, todosURL } from '../data'
-import { mkdir, rm, exists } from 'node:fs/promises' 
 
-const PHOTOS = `photos`
-const TODOS = `todos`
+const PHOTOS = `photo`
+const TODOS = `todo`
+
+const sylo = new Sylo()
+
+class RedisClass {
+
+    static async publish(collection: string, action: 'insert' | 'delete', keyId: string | _ttid) {
+        
+    }
+}
+
+mock.module('../../src/Redis', () => {
+    return {
+        default: RedisClass
+    }
+})
 
 beforeAll(async () => {
-    if(await exists(process.env.DB_DIR!)) {
-        await rm(process.env.DB_DIR!, {recursive:true})
-    }
-    await mkdir(process.env.DB_DIR!, {recursive:true})
-    await Promise.all([Silo.createCollection(PHOTOS), Silo.executeSQL<_todo>(`CREATE TABLE ${TODOS}`)])
 
-    await Silo.importBulkData<_photo>(PHOTOS, new URL(photosURL), 100)
-    await Silo.importBulkData<_todo>(TODOS, new URL(todosURL), 100)
+    await Promise.all([Sylo.createCollection(PHOTOS), sylo.executeSQL<_todo>(`CREATE TABLE ${TODOS}`)])
+
+    try {
+        await sylo.importBulkData<_photo>(PHOTOS, new URL(photosURL), 100)
+        await sylo.importBulkData<_todo>(TODOS, new URL(todosURL), 100)
+    } catch {
+        await sylo.rollback()
+    }
 })
 
 afterAll(async () => {
-    await Promise.all([Silo.dropCollection(PHOTOS), Silo.executeSQL<_todo>(`DROP TABLE ${TODOS}`)])
-    await rm(process.env.DB_DIR!, {recursive:true})
+    await Promise.all([Sylo.dropCollection(PHOTOS), sylo.executeSQL<_todo>(`DROP TABLE ${TODOS}`)])
 })
 
 describe("NO-SQL", async () => {
 
     test("UPDATE ONE", async () => {
 
-        const ids: _ulid[] = []
+        const ids: _ttid[] = []
 
-        for await (const data of Silo.findDocs<_photo>(PHOTOS, { $limit: 1, $onlyIds: true }).collect()) {
+        for await (const data of Sylo.findDocs<_photo>(PHOTOS, { $limit: 1, $onlyIds: true }).collect()) {
 
-            ids.push(data as _ulid)
+            ids.push(data as _ttid)
         }
 
-        await Silo.patchDoc<_photo>(PHOTOS, new Map([[ids[0], { title: "All Mighty" }]]))
-        
-        const results = new Map<_ulid, _photo>()
-
-        for await (const data of Silo.findDocs<_photo>(PHOTOS, { $ops: [{ title: { $eq: "All Mighty" } }]}).collect()) {
-
-            const doc = data as Map<_ulid, _photo>
-
-            for(const [id, photo] of doc) {
-
-                results.set(id, photo)
-            }
+        try {
+            await sylo.patchDoc<_photo>(PHOTOS, { [ids.shift() as _ttid]: { title: "All Mighty" }})
+        } catch {
+            await sylo.rollback()
         }
 
-        expect(results.size).toBe(1)
+        let results: Record<_ttid, _photo> = {}
+
+        for await (const data of Sylo.findDocs<_photo>(PHOTOS, { $ops: [{ title: { $eq: "All Mighty" } }]}).collect()) {
+            
+            results = { ...results, ...data as Record<_ttid, _photo> }
+        }
+
+        expect(Object.keys(results).length).toBe(1)
     })
 
     test("UPDATE CLAUSE", async () => {
 
-        const count = await Silo.patchDocs<_photo>(PHOTOS, { $set: { title: "All Mighti" }, $where: { $ops: [{ title: { $like: "%est%" } }] } })
+        let count = -1
 
-        const results = new Map<_ulid, _photo>()
+        try {
+            count = await sylo.patchDocs<_photo>(PHOTOS, { $set: { title: "All Mighti" }, $where: { $ops: [{ title: { $like: "%est%" } }] } })
+        } catch {
+            await sylo.rollback()
+        }
 
-        for await (const data of Silo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighti" } } ] }).collect()) {
+        let results: Record<_ttid, _photo> = {}
 
-            const doc = data as Map<_ulid, _photo>
+        for await (const data of Sylo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighti" } } ] }).collect()) {
 
-            for(const [id, photo] of doc) {
-
-                results.set(id, photo)
-            }
+            results = { ...results, ...data as Record<_ttid, _photo> }
         }
         
-        expect(results.size).toBe(count)
+        expect(Object.keys(results).length).toBe(count)
     })
 
     test("UPDATE ALL", async () => {
 
-        const count = await Silo.patchDocs<_photo>(PHOTOS, { $set: { title: "All Mighter" } })
+        let count = -1
 
-        const results = new Map<_ulid, _photo>()
-
-        for await (const data of Silo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighter" } } ] }).collect()) {
-
-            const doc = data as Map<_ulid, _photo>
-
-            for(const [id, photo] of doc) {
-
-                results.set(id, photo)
-            }
+        try {
+            count = await sylo.patchDocs<_photo>(PHOTOS, { $set: { title: "All Mighter" } })
+        } catch {
+            await sylo.rollback()
         }
 
-        expect(results.size).toBe(count)
+        let results: Record<_ttid, _photo> = {}
+
+        for await (const data of Sylo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighter" } } ] }).collect()) {
+
+            results = { ...results, ...data as Record<_ttid, _photo> }
+        }
+
+        expect(Object.keys(results).length).toBe(count)
     }, 20000)
 })
 
@@ -93,19 +108,31 @@ describe("SQL", async () => {
 
     test("UPDATE CLAUSE", async () => {
 
-        const count = await Silo.executeSQL<_todo>(`UPDATE ${TODOS} SET title = 'All Mighty' WHERE title LIKE '%est%'`) as number
-
-        const results = await Silo.executeSQL<_todo>(`SELECT * FROM ${TODOS} WHERE title = 'All Mighty'`) as Map<_ulid, _todo>
+        let count = -1
         
-        expect(results.size).toBe(count)
+        try {
+            count = await sylo.executeSQL<_todo>(`UPDATE ${TODOS} SET title = 'All Mighty' WHERE title LIKE '%est%'`) as number
+        } catch {
+            await sylo.rollback()
+        }
+
+        const results = await sylo.executeSQL<_todo>(`SELECT * FROM ${TODOS} WHERE title = 'All Mighty'`) as Record<_ttid, _todo>
+        
+        expect(Object.keys(results).length).toBe(count)
     })
 
     test("UPDATE ALL", async () => {
 
-        const count = await Silo.executeSQL<_todo>(`UPDATE ${TODOS} SET title = 'All Mightier'`) as number
+        let count = -1
 
-        const results = await Silo.executeSQL<_todo>(`SELECT * FROM ${TODOS} WHERE title = 'All Mightier'`) as Map<_ulid, _todo>
+        try {
+            count = await sylo.executeSQL<_todo>(`UPDATE ${TODOS} SET title = 'All Mightier'`) as number
+        } catch {
+            await sylo.rollback()
+        }
         
-        expect(results.size).toBe(count)
+        const results = await sylo.executeSQL<_todo>(`SELECT * FROM ${TODOS} WHERE title = 'All Mightier'`) as Record<_ttid, _todo>
+        
+        expect(Object.keys(results).length).toBe(count)
     }, 20000)
 })

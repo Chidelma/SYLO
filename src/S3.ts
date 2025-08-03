@@ -15,6 +15,14 @@ export default class S3 {
         return S3.BUCKET_ENV ? `${S3.BUCKET_ENV}-${collection}` : collection
     }
 
+    static file(collection: string, path: string) {
+
+        return S3Client.file(path, {
+            bucket: S3.getBucketFormat(collection),
+            ...S3.CREDS
+        })
+    }
+
     static async list(collection: string, options?: Bun.S3ListObjectsOptions) {
 
         return await S3Client.list(options, {
