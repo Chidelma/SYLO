@@ -1,6 +1,6 @@
-# Silo
+# Sylo
 
-Silo is a customizable storage solution built with TypeScript (Bun), providing an interface to interact with various AWS S3-Compactable storage services. It allows you to easily integrate your own storage solution with your application, providing a simple and intuitive interface for managing and accessing your data.
+Sylo is a customizable storage solution built with TypeScript (Bun), providing an interface to interact with various AWS S3-Compactable storage services. It allows you to easily integrate your own storage solution with your application, providing a simple and intuitive interface for managing and accessing your data.
 
 ## Features
 
@@ -12,7 +12,7 @@ Silo is a customizable storage solution built with TypeScript (Bun), providing a
 ## Installation
 
 ```bash
-npm install @vyckr/silo
+npm install @vyckr/sylo
 ```
 
 ## Configuration
@@ -38,87 +38,91 @@ Make sure you have set the 'SCHEMA_PATH' if 'SCHEMA' is set to 'STRICT'. The sch
 ```
 
 ```typescript
-import Silo from "@vyckr/silo";
+import Sylo from "@vyckr/sylo";
 
-await Silo.createSchema("users")
+const sylo = new Sylo()
 
-const _id = await Silo.putData<_user>("users", { name: "John Doe", age: 30 })
+await Sylo.createSchema("users")
 
-const user = await Silo.getDoc<_user>("users", _id).once()
+const _id = await sylo.putData<_user>("users", { name: "John Doe", age: 30 })
+
+const user = await sylo.getDoc<_user>("users", _id).once()
 
 console.log(user)
 
-await Silo.importBulkData<_user>("users", new URL("https://example.com/users.json"), 100)
+await Sylo.importBulkData<_user>("users", new URL("https://example.com/users.json"), 100)
 
-for await (const user of Silo.findDocs<_user>("users", { $limit: 10 }).collect()) {
+for await (const user of Sylo.findDocs<_user>("users", { $limit: 10 }).collect()) {
     console.log(user)
 }
 
-await Silo.patchDoc<_user>("users", new Map([[_id, { name: "Jane Doe" }]]))
+await sylo.patchDoc<_user>("users", new Map([[_id, { name: "Jane Doe" }]]))
 
-const count = await Silo.patchDocs<_user>("users", { $set: { age: 31 } })
+const count = await sylo.patchDocs<_user>("users", { $set: { age: 31 } })
 
 console.log("Updated", count)
 
-await Silo.delDoc<_user>("users", _id)
+await sylo.delDoc<_user>("users", _id)
 
-const count = await Silo.delDocs<_user>("users", { $ops: [ { name: { $like: "%Doe%" } } ] })
+const count = await sylo.delDocs<_user>("users", { $ops: [ { name: { $like: "%Doe%" } } ] })
 
 console.log("Deleted", count)
 
-await Silo.dropSchema("users")
+await Sylo.dropSchema("users")
 ```
 
 The equivalent of the above code using SQL syntax would be:
 
 ```typescript
-import Silo from "@vyckr/silo";
+import Sylo from "@vyckr/sylo";
 
-await Silo.executeSQL<_user>(`CREATE TABLE users`)
+const sylo = new Sylo()
 
-const _id = await Silo.executeSQL<_user>(`INSERT INTO users (name, age) VALUES ('John Doe'|30)`)
+await sylo.executeSQL<_user>(`CREATE TABLE users`)
 
-let docs = await Silo.executeSQL<_user>(`SELECT * FROM users WHERE id = ${_id}`)
+const _id = await sylo.executeSQL<_user>(`INSERT INTO users (name, age) VALUES ('John Doe'|30)`)
 
-console.log(docs)
-
-docs = await Silo.executeSQL<_user>(`SELECT * FROM users LIMIT 10`)
+let docs = await sylo.executeSQL<_user>(`SELECT * FROM users WHERE id = ${_id}`)
 
 console.log(docs)
 
-let count = await Silo.executeSQL<_user>(`UPDATE users SET age = 31 WHERE id = ${_id}`)
+docs = await sylo.executeSQL<_user>(`SELECT * FROM users LIMIT 10`)
+
+console.log(docs)
+
+let count = await sylo.executeSQL<_user>(`UPDATE users SET age = 31 WHERE id = ${_id}`)
 
 console.log("Updated", count)
 
-const count = await Silo.executeSQL<_user>(`DELETE FROM users WHERE name LIKE '%Doe%'`)
+const count = await sylo.executeSQL<_user>(`DELETE FROM users WHERE name LIKE '%Doe%'`)
 
 console.log("Deleted", count)
 
-await Silo.executeSQL<_user>(`DROP TABLE users`)
+await sylo.executeSQL<_user>(`DROP TABLE users`)
 ```
 
 For streaming (listening) data, you can use the following methods:
 
 ```typescript
-import Silo from "@vyckr/silo";
+import Sylo from "@vyckr/sylo";
 
-for await (const user of Silo.findDocs<_user>("users", { $limit: 10 })) {
+for await (const user of Sylo.findDocs<_user>("users", { $limit: 10 })) {
     console.log(user)
 }
 
-for await (const _id of Silo.findDocs<_user>("users", { $limit: 10 }).onDelete()) {
+for await (const _id of Sylo.findDocs<_user>("users", { $limit: 10 }).onDelete()) {
     console.log(_id)
 }
 
-for await (const user of Silo.getDoc<_user>("users", _id)) {
+for await (const user of Sylo.getDoc<_user>("users", _id)) {
     console.log(user)
 }
 
-for await (const _id of Silo.getDoc<_user>("users", _id).onDelete()) {
+for await (const _id of Sylo.getDoc<_user>("users", _id).onDelete()) {
     console.log(_id)
 }
 ```
 
 # License
 
-BYOS is licensed under the MIT License.
+Sylo is licensed under the MIT License.

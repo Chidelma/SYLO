@@ -49,7 +49,7 @@ describe("NO-SQL", async () => {
             results = { ...results, ... data as Record<_ttid, _album> }
         }
 
-        console.format(results)
+        //console.format(results)
 
         expect(Object.keys(results).length).toBe(count)
     })
@@ -63,11 +63,11 @@ describe("NO-SQL", async () => {
             results = { ...results, ... data as Record<_ttid, _album> }
         }
 
-        console.format(results)
+        //console.format(results)
         
         const allAlbums = Object.values(results)
 
-        const onlyTtitle = allAlbums.every(user => user.title && !user.user_id)
+        const onlyTtitle = allAlbums.every(user => user.title && !user.userId)
 
         expect(onlyTtitle).toBe(true)
 
@@ -93,16 +93,16 @@ describe("NO-SQL", async () => {
 
         let results: Record<_ttid, _album> = {}
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $ops: [{ user_id: { $eq: 2 } }] }).collect()) {
+        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $eq: 2 } }] }).collect()) {
 
             results = { ...results, ...data as Record<_ttid, _album> }
         }
 
-        console.format(results)
+        //console.format(results)
 
         const allAlbums = Object.values(results)
         
-        const onlyUserId = allAlbums.every(user => user.user_id === 2)
+        const onlyUserId = allAlbums.every(user => user.userId === 2)
 
         expect(onlyUserId).toBe(true)
     })
@@ -116,7 +116,7 @@ describe("NO-SQL", async () => {
             results = { ...results, ...data as Record<_ttid, _album> }
         }
 
-        console.format(results)
+        //console.format(results)
 
         expect(Object.keys(results).length).toBe(5)
     })
@@ -125,27 +125,21 @@ describe("NO-SQL", async () => {
 
         let results: Record<_album[keyof _album], Record<_ttid, Partial<_album>>> = {} as Record<_album[keyof _album], Record<_ttid, Partial<_album>>>
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $groupby: "user_id", $onlyIds: true }).collect()) {
-
-            // console.log(data)
+        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $groupby: "userId", $onlyIds: true }).collect()) {
             
             results = Object.appendGroup(results, (data as unknown as Record<string, Record<string, Record<_ttid, null>>>)) 
-            
-            //results = { ...results, ...data as Record<keyof _album, Record<_album[keyof _album], Record<_ttid, Partial<_album>>>>  }
         }
 
-        console.log(results)
-
-        console.format(results)
+        //console.format(results)
 
         expect(Object.keys(results).length).toBeGreaterThan(0)
     })
 
     test("SELECT JOIN", async () => {
 
-        const results = await Sylo.joinDocs<_album, _post>({ $leftCollection: ALBUMS, $rightCollection: POSTS, $mode: "inner",  $on: { "user_id": { $eq: "id" } } }) as Record<`${_ttid}, ${_ttid}`, _album | _post>
+        const results = await Sylo.joinDocs<_album, _post>({ $leftCollection: ALBUMS, $rightCollection: POSTS, $mode: "inner",  $on: { "userId": { $eq: "id" } } }) as Record<`${_ttid}, ${_ttid}`, _album | _post>
         
-        console.format(results)
+        //console.format(results)
         
         expect(Object.keys(results).length).toBeGreaterThan(0)
     })
@@ -157,11 +151,11 @@ describe("SQL", async () => {
 
         const results = await sylo.executeSQL<_album>(`SELECT title FROM ${ALBUMS}`) as Record<_ttid, _album>
         
-        console.format(results)
+        //console.format(results)
         
         const allAlbums = Object.values(results)
         
-        const onlyTtitle = allAlbums.every(user => user.title && !user.user_id)
+        const onlyTtitle = allAlbums.every(user => user.title && !user.userId)
 
         expect(onlyTtitle).toBe(true)
     })
@@ -170,11 +164,11 @@ describe("SQL", async () => {
 
         const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} WHERE user_id = 2`) as Record<_ttid, _album>
         
-        console.format(results)
+        //console.format(results)
         
         const allAlbums = Object.values(results)
         
-        const onlyUserId = allAlbums.every(user => user.user_id === 2)
+        const onlyUserId = allAlbums.every(user => user.userId === 2)
 
         expect(onlyUserId).toBe(true)
     })
@@ -183,7 +177,7 @@ describe("SQL", async () => {
 
         const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as Record<_ttid, _album>
         
-        console.format(results)
+        //console.format(results)
         
         expect(Object.keys(results).length).toBe(count)
     })
@@ -192,27 +186,25 @@ describe("SQL", async () => {
 
         const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} LIMIT 5`) as Record<_ttid, _album>
         
-        console.format(results)
+        //console.format(results)
         
         expect(Object.keys(results).length).toBe(5)
     })
 
     test("SELECT GROUP BY", async () => {
 
-        const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} GROUP BY user_id`) as unknown as Record<string, Record<keyof _album, Record<_album[keyof _album], _album>>>
+        const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} GROUP BY userId`) as unknown as Record<string, Record<keyof _album, Record<_album[keyof _album], _album>>>
         
-        console.log(JSON.stringify(results, null, 2))
-        
-        console.format(results)
+        //console.format(results)
         
         expect(Object.keys(results).length).toBeGreaterThan(0)
     })
 
     test("SELECT JOIN", async () => {
 
-        const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} INNER JOIN ${POSTS} ON user_id = id`) as Record<`${_ttid}, ${_ttid}`, _album | _post>
+        const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} INNER JOIN ${POSTS} ON userId = id`) as Record<`${_ttid}, ${_ttid}`, _album | _post>
         
-        console.format(results)
+        //console.format(results)
         
         expect(Object.keys(results).length).toBeGreaterThan(0)
     })

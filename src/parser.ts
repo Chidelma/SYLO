@@ -375,7 +375,8 @@ class SQLParser {
         
         const query: _storeQuery<T> = {
             $collection: collection,
-            $select: select.includes('*') ? undefined : select as Array<keyof T>
+            $select: select.includes('*') ? undefined : select as Array<keyof T>,
+            $onlyIds: select.includes('_id')
         }
         
         if (this.match(TokenType.WHERE)) {

@@ -1,5 +1,5 @@
 interface _album {
     id: number
-    user_id: number
+    userId: number
     title: string
 }

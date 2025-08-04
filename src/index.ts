@@ -841,7 +841,7 @@ export default class Sylo {
 
                 if(query && query.$groupby) {
 
-                    const docGroup: Record<T[keyof T], Record<string, Partial<T>>> = { } as Record<T[keyof T], Record<string, Partial<T>>>
+                    const docGroup: Record<T[keyof T], Record<string, Partial<T>>> = {} as Record<T[keyof T], Record<string, Partial<T>>>
 
                     for(const [id, data] of Object.entries(doc)) {
 
