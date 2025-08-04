@@ -1,57 +1,79 @@
-import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
-import Silo from '../../src/Stawrij'
+import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
+import Sylo from '../../src'
 import { commentsURL, usersURL } from '../data'
-import { mkdir, rm } from 'node:fs/promises'
 
-const COMMENTS = 'comments'
-const USERS = 'users'
+const COMMENTS = `comment`
+const USERS = `user`
+
+let commentsResults: Record<_ttid, _comment> = {}
+let usersResults: Record<_ttid, _user> = {}
+
+const sylo = new Sylo()
+
+class RedisClass {
+
+    static async publish(collection: string, action: 'insert' | 'delete', keyId: string | _ttid) {
+        
+    }
+}
+
+mock.module('../../src/Redis', () => {
+    return {
+        default: RedisClass
+    }
+})
 
 beforeAll(async () => {
-    await rm(process.env.DB_DIR!, {recursive:true})
-    await mkdir(process.env.DB_DIR!, {recursive:true})
-    await Promise.all([Silo.createSchema(COMMENTS), Silo.executeSQL<_user>(`CREATE TABLE ${USERS}`)])
 
-    await Silo.importBulkData<_comment>(COMMENTS, new URL(commentsURL), 100)
-    await Silo.importBulkData<_user>(USERS, new URL(usersURL), 100)
+    await Promise.all([
+        Sylo.createCollection(COMMENTS), 
+        sylo.executeSQL<_post>(`CREATE TABLE ${USERS}`)
+    ])
+
+    try {
+        
+        await Promise.all([
+            sylo.importBulkData<_comment>(COMMENTS, new URL(commentsURL), 100),
+            sylo.importBulkData<_user>(USERS, new URL(usersURL), 100)
+        ])
+
+    } catch {
+        await sylo.rollback()
+    }
+
+    for await (const data of Sylo.findDocs<_comment>(COMMENTS, { $limit: 1 }).collect()) {
+
+        commentsResults = { ...commentsResults, ...data as Record<_ttid, _comment> }
+        
+    }
+
+    usersResults = await sylo.executeSQL<_user>(`SELECT * FROM ${USERS} LIMIT 1`) as Record<_ttid, _user>
 })
 
 afterAll(async () => {
-    await Promise.all([await rm(process.env.DB_DIR!, {recursive:true}), Silo.dropSchema(COMMENTS), Silo.executeSQL<_user>(`DROP TABLE ${USERS}`)])
+    await Promise.all([Sylo.dropCollection(COMMENTS), sylo.executeSQL<_user>(`DROP TABLE ${USERS}`)])
 })
 
 describe("NO-SQL", async () => {
 
-    let results = new Map<_ulid, _comment>()
-
-    for await (const data of Silo.findDocs<_comment>(COMMENTS, { $limit: 1 }).collect()) {
-
-        const doc = data as Map<_ulid, _comment>
-
-        for(const [id, comment] of doc) {
-
-            results.set(id, comment)
-        }
-    }
-
     test("DELETE ONE", async () => {
 
-        const id = Array.from(results.keys())[0]
+        const id = Object.keys(commentsResults).shift()!
 
-        await Silo.delDoc(COMMENTS, id)
-
-        results = new Map<_ulid, _comment>()
-
-        for await (const data of Silo.findDocs<_comment>(COMMENTS).collect()) {
-
-            const doc = data as Map<_ulid, _comment>
-
-            for(const [id, comment] of doc) {
-
-                results.set(id, comment)
-            }
+        try {
+            await sylo.delDoc(COMMENTS, id)
+        } catch {
+            await sylo.rollback()
         }
 
-        const idx = Array.from(results.keys()).findIndex(_id => _id === id)
+        commentsResults = {}
+
+        for await (const data of Sylo.findDocs<_comment>(COMMENTS).collect()) {
+
+            commentsResults = { ...commentsResults, ...data as Record<_ttid, _comment> }
+        }
+
+        const idx = Object.keys(commentsResults).findIndex(_id => _id === id)
 
         expect(idx).toEqual(-1)
 
@@ -59,69 +81,75 @@ describe("NO-SQL", async () => {
 
     test("DELETE CLAUSE", async () => {
 
-        await Silo.delDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] })
+        try {
+            await sylo.delDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] })
+            //console.log
+        } catch(e) {
+            console.error(e)
+            await sylo.rollback()
+        }
+        
+        commentsResults = {}
 
-        results = new Map<_ulid, _comment>()
+        for await (const data of Sylo.findDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] }).collect()) {
 
-        for await (const data of Silo.findDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] }).collect()) {
-
-            const doc = data as Map<_ulid, _comment>
-
-            for(const [id, comment] of doc) {
-
-                results.set(id, comment)
-            }
+            // console.log(data)
+            
+            commentsResults = { ...commentsResults, ...data as Record<_ttid, _comment> }
         }
 
-        expect(results.size).toEqual(0)
-
+        expect(Object.keys(commentsResults).length).toEqual(0)
     })
 
     test("DELETE ALL", async () => {
 
-        await Silo.delDocs<_comment>(COMMENTS)
-
-        results = new Map<_ulid, _comment>()
-
-        for await (const data of Silo.findDocs<_comment>(COMMENTS).collect()) {
-
-            const doc = data as Map<_ulid, _comment>
-
-            for(const [id, comment] of doc) {
-
-                results.set(id, comment)
-            }
+        try {
+            await sylo.delDocs<_comment>(COMMENTS)
+        } catch {
+            await sylo.rollback()
         }
 
-        expect(results.size).toBe(0)
+        commentsResults = {}
 
+        for await (const data of Sylo.findDocs<_comment>(COMMENTS).collect()) {
+
+            commentsResults = { ...commentsResults, ...data as Record<_ttid, _comment> }
+        }
+
+        expect(Object.keys(commentsResults).length).toEqual(0)
     })
 })
 
 
 describe("SQL", async () => {
 
-    let results = await Silo.executeSQL<_user>(`SELECT * FROM ${USERS} LIMIT 1`) as Map<_ulid, _user>
-
     test("DELETE CLAUSE", async () => {
 
-        const name = Array.from(results.values())[0].name
+        const name = Object.values(usersResults).shift()!.name
 
-        await Silo.executeSQL<_user>(`DELETE FROM ${USERS} WHERE name = '${name}'`)
+        try {
+            await sylo.executeSQL<_user>(`DELETE FROM ${USERS} WHERE name = '${name}'`)
+        } catch {
+            await sylo.rollback()
+        } 
 
-        results = await Silo.executeSQL<_user>(`SELECT * FROM ${USERS} WHERE name = '${name}'`) as Map<_ulid, _user>
+        usersResults = await sylo.executeSQL<_user>(`SELECT * FROM ${USERS} WHERE name = '${name}'`) as Record<_ttid, _user>
         
-        const idx = Array.from(results.values()).findIndex(com => com.name === name)
+        const idx = Object.values(usersResults).findIndex(com => com.name === name)
 
         expect(idx).toBe(-1)
     })
 
     test("DELETE ALL", async () => {
 
-        await Silo.executeSQL<_user>(`DELETE FROM ${USERS}`)
+        try {
+            await sylo.executeSQL<_user>(`DELETE FROM ${USERS}`)
+        } catch {
+            await sylo.rollback()
+        }
 
-        results = await Silo.executeSQL<_user>(`SELECT * FROM ${USERS}`) as Map<_ulid, _user>
+        usersResults = await sylo.executeSQL<_user>(`SELECT * FROM ${USERS}`) as Record<_ttid, _user>
 
-        expect(results.size).toBe(0)
+        expect(Object.keys(usersResults).length).toBe(0)
     })
 })

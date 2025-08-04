@@ -1,21 +1,18 @@
 {
-  "name": "@vyckr/byos",
+  "name": "@vyckr/sylo",
   "version": "0.1.0",
-  "exports": { 
-    "." : {
-      "import": "./src/Stawrij.ts",
-      "types": "./types/index.d.ts"
-    }
-  },
+  "main": "./src/index.ts",
+  "types": "./src/types/index.d.ts",
   "bin": {
-    "byos": "./src/CLI.ts"
-  },
-  "dependencies": {
-    "@aws-sdk/client-s3": "^3.368.0"
+    "sylo.query": "./src/CLI"
   },
   "devDependencies": {
-    "@types/node": "^16",
-    "bun-types": "latest"
+    "@types/bun": "^1.2.10",
+    "@types/node": "^20.4.2"
+  },
+  "dependencies": {
+    "@vyckr/ttid": "1.2.5",
+    "@vyckr/chex": "0.2.1"
   },
   "type": "module",
   "peerDependencies": {
@@ -23,7 +20,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Chidelma/BYOS.git"
+    "url": "git+https://github.com/Chidelma/Silo.git"
   },
   "license": "MIT",
   "keywords": [
@@ -36,6 +33,6 @@
   ],
   "author": "Chidelma",
   "bugs": {
-    "url": "https://github.com/Chidelma/BYOS/issues"
+    "url": "https://github.com/Chidelma/Silo/issues"
   }
 }

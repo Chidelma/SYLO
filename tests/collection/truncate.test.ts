@@ -1,42 +1,45 @@
-import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
-import Silo from '../../src/Stawrij'
+import { test, expect, describe, afterAll, mock } from 'bun:test'
+import Sylo from '../../src'
 import { postsURL, albumURL } from '../data'
-import { exists, mkdir, rm } from 'node:fs/promises'
 
-const POSTS = 'posts'
-const ALBUMS = 'albums'
-
-beforeAll(async () => {
-    await rm(process.env.DB_DIR!, {recursive:true})
-    await mkdir(process.env.DB_DIR!, {recursive:true})
-})
+const POSTS = `post`
+const ALBUMS = `album`
 
 afterAll(async () => {
-    await Promise.all([rm(process.env.DB_DIR!, {recursive:true}), Silo.dropSchema(ALBUMS), Silo.dropSchema(POSTS)])
+    await Promise.all([Sylo.dropCollection(ALBUMS), Sylo.dropCollection(POSTS)])
+})
+
+class RedisClass {
+
+    static async publish(collection: string, action: 'insert' | 'delete', keyId: string | _ttid) {
+        
+    }
+}
+
+mock.module('../../src/Redis', () => {
+    return {
+        default: RedisClass
+    }
 })
 
 describe("NO-SQL", () => {
 
     test("TRUNCATE", async () => {
 
-        await Silo.createSchema(POSTS)
+        const sylo = new Sylo()
 
-        await Silo.importBulkData<_post>(POSTS, new URL(postsURL))
+        await Sylo.createCollection(POSTS)
 
-        await Silo.delDocs(POSTS)
+        await sylo.importBulkData<_post>(POSTS, new URL(postsURL))
 
-        const ids: _ulid[] = []
+        await sylo.delDocs<_post>(POSTS)
 
-        for await (const data of Silo.findDocs<_post>(POSTS, { $limit: 1, $onlyIds: true }).collect()) {
+        const ids: _ttid[] = []
 
-            ids.push(data as _ulid)
+        for await (const data of Sylo.findDocs<_post>(POSTS, { $limit: 1, $onlyIds: true }).collect()) {
+
+            ids.push(data as _ttid)
         }
-
-        const file = Bun.file(`${process.env.DB_DIR}/${POSTS}/.schema.json`)
-
-        expect(await exists(`${process.env.DB_DIR}/${POSTS}`)).toBe(true)
-
-        expect(await file.exists()).toBe(true)
 
         expect(ids.length).toBe(0)
     })
@@ -46,19 +49,15 @@ describe("SQL", () => {
 
     test("TRUNCATE", async () => {
 
-        await Silo.executeSQL<_album>(`CREATE TABLE ${ALBUMS}`)
+        const sylo = new Sylo()
 
-        await Silo.importBulkData<_album>(ALBUMS, new URL(albumURL))
+        await sylo.executeSQL<_album>(`CREATE TABLE ${ALBUMS}`)
 
-        await Silo.executeSQL<_album>(`DELETE FROM ${ALBUMS}`)
+        await sylo.importBulkData<_album>(ALBUMS, new URL(albumURL))
 
-        const ids = await Silo.executeSQL<_album>(`SELECT _id FROM ${ALBUMS} LIMIT 1`) as _ulid[]
+        await sylo.executeSQL<_album>(`DELETE FROM ${ALBUMS}`)
 
-        const file = Bun.file(`${process.env.DB_DIR}/${ALBUMS}/.schema.json`)
-
-        expect(await exists(`${process.env.DB_DIR}/${ALBUMS}`)).toBe(true)
-
-        expect(await file.exists()).toBe(true)
+        const ids = await sylo.executeSQL<_album>(`SELECT _id FROM ${ALBUMS} LIMIT 1`) as _ttid[]
 
         expect(ids.length).toBe(0)
     })

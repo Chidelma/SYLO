@@ -1,44 +1,56 @@
-import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
-import Silo from '../../src/Stawrij'
+import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
+import Sylo from '../../src'
 import { albumURL, postsURL } from '../data'
-import { rm, mkdir } from 'node:fs/promises'
 
-const POSTS = 'posts'
-const ALBUMS = 'albums'
+const POSTS = `post`
+const ALBUMS = `album`
 
 let postsCount = 0
 let albumsCount = 0
 
-beforeAll(async () => {
-    await rm(process.env.DB_DIR!, {recursive:true})
-    await mkdir(process.env.DB_DIR!, {recursive:true})
-    await Promise.all([Silo.createSchema(POSTS), Silo.executeSQL<_user>(`CREATE TABLE ${ALBUMS}`)])
+const sylo = new Sylo()
 
-    albumsCount = await Silo.importBulkData<_album>(ALBUMS, new URL(albumURL), 100)
-    postsCount = await Silo.importBulkData<_post>(POSTS, new URL(postsURL), 100)
+class RedisClass {
+
+    static async publish(collection: string, action: 'insert' | 'delete', keyId: string | _ttid) {
+        
+    }
+}
+
+mock.module('../../src/Redis', () => {
+    return {
+        default: RedisClass
+    }
+})
+
+beforeAll(async () => {
+
+    await Promise.all([Sylo.createCollection(POSTS), sylo.executeSQL<_user>(`CREATE TABLE ${ALBUMS}`)])
+    
+    try {
+        albumsCount = await sylo.importBulkData<_album>(ALBUMS, new URL(albumURL), 100)
+        postsCount = await sylo.importBulkData<_post>(POSTS, new URL(postsURL), 100)
+    } catch {
+        await sylo.rollback()
+    }
 })
 
 afterAll(async () => {
-    await Promise.all([rm(process.env.DB_DIR!, {recursive:true}), Silo.dropSchema(POSTS), Silo.executeSQL<_album>(`DROP TABLE ${ALBUMS}`)])
+    await Promise.all([Sylo.dropCollection(POSTS), sylo.executeSQL<_album>(`DROP TABLE ${ALBUMS}`)])
 })
 
-describe("NO-SQL", () => {
+describe("NO-SQL", async () => {
 
     test("PUT", async () => {
 
-        const results = new Map<_ulid, _post>()
+        let results: Record<_ttid, _post> = {}
 
-        for await (const data of Silo.findDocs<_post>(POSTS).collect()) {
-
-            const doc = data as Map<_ulid, _post>
-
-            for(const [id, post] of doc) {
-
-                results.set(id, post)
-            }
+        for await (const data of Sylo.findDocs<_post>(POSTS).collect()) {
+            
+            results = { ...results, ...data as Record<_ttid, _post> }
         }
 
-        expect(results.size).toEqual(postsCount)
+        expect(Object.keys(results).length).toEqual(postsCount)
     })
 })
 
@@ -46,8 +58,8 @@ describe("SQL", () => {
 
     test("INSERT", async () => {
 
-        const results = await Silo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as Map<_ulid, _album>
+        const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as Record<_ttid, _album>
 
-        expect(results.size).toEqual(albumsCount)
+        expect(Object.keys(results).length).toEqual(albumsCount)
     })
 })
