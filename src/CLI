@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+/// <reference path="./types/index.d.ts" />
 import Silo from '.'
 
 const SQL = process.argv[process.argv.length - 1]
@@ -9,7 +10,7 @@ if(!op) throw new Error("Missing SQL Operation")
 
 const res = await new Silo().executeSQL(SQL)
 
-const cmnd = op.shift()
+const cmnd = op.shift()!
 
 switch(cmnd.toUpperCase()) {
     case "CREATE":

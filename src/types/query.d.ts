@@ -22,6 +22,7 @@ interface _operand {
     $gte?: number
     $lte?: number
     $like?: string
+    $contains?: string | number | boolean
 }
 
 type _op<T> = Partial<Record<keyof T, _operand>>

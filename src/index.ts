@@ -1,12 +1,13 @@
-import Query from './query'
-import Parser from './parser'
-import Dir from "./Directory";
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { Query } from './core/query'
+import { Parser } from './core/parser'
+import { Dir } from "./core/directory";
 import TTID from '@vyckr/ttid';
 import Gen from "@vyckr/chex"
-import Walker from './Walker';
-import S3 from "./S3"
-import { $ } from "bun"
-import './format'
+import { Walker } from './core/walker';
+import { S3 } from "./adapters/s3"
+import './core/format'
+import './core/extensions'
 
 export default class Sylo {
 
@@ -15,6 +16,8 @@ export default class Sylo {
     private static MAX_CPUS = navigator.hardwareConcurrency
 
     private static readonly STRICT = process.env.STRICT
+
+    private static ttidLock: Promise<void> = Promise.resolve()
 
     private dir: Dir;
 
@@ -27,7 +30,7 @@ export default class Sylo {
      * @param SQL The SQL query to execute.
      * @returns The results of the query.
      */
-    async executeSQL<T extends Record<string, any>, U extends Record<string, any> = Record<string, any>>(SQL: string) {
+    async executeSQL<T extends Record<string, any>, U extends Record<string, any> = Record<string, unknown>>(SQL: string) {
         
         const op = SQL.match(/^(SELECT|INSERT|UPDATE|DELETE|CREATE|DROP)/i)
 
@@ -43,7 +46,7 @@ export default class Sylo {
                 if(SQL.includes('JOIN')) return await Sylo.joinDocs(query as _join<T, U>)
                 const selCol = (query as _storeQuery<T>).$collection
                 delete (query as _storeQuery<T>).$collection
-                let docs: Record<string, any> | Array<_ttid> = query.$onlyIds ? new Array<_ttid> : {}
+                let docs: Record<string, unknown> | Array<_ttid> = query.$onlyIds ? new Array<_ttid> : {}
                 for await (const data of Sylo.findDocs(selCol! as string, query as _storeQuery<T>).collect()) {
                     if(typeof data === 'object') {
                         docs = Object.appendGroup(docs, data)
@@ -76,7 +79,7 @@ export default class Sylo {
      */
     static async createCollection(collection: string) {
 
-        await $`aws s3 mb s3://${S3.getBucketFormat(collection)}`.quiet()
+        await S3.createBucket(collection)
     }
 
     /**
@@ -85,9 +88,7 @@ export default class Sylo {
      */
     static async dropCollection(collection: string) {
 
-        await $`aws s3 rm s3://${S3.getBucketFormat(collection)} --recursive`.quiet()
-
-        await $`aws s3 rb s3://${S3.getBucketFormat(collection)}`.quiet()
+        await S3.deleteBucket(collection)
     }
 
     /**
@@ -104,104 +105,102 @@ export default class Sylo {
      * @param limit The maximum number of documents to import.
      */
     async importBulkData<T extends Record<string, any>>(collection: string, url: URL, limit?: number) {
-        
+
         const res = await fetch(url)
 
         if(!res.headers.get('content-type')?.includes('application/json')) throw new Error(`Invalid content type: ${res.headers.get('content-type')}`)
 
-        const allData: T[] = []
-
-        let batch = 0
         let count = 0
+        let batchNum = 0
 
-        let isIncomplete = false
-        let incompleteData = ''
+        const flush = async (batch: T[]) => {
 
-        const batchWrite = async () => {
+            if(!batch.length) return
 
-            batch++
+            const items = limit && count + batch.length > limit ? batch.slice(0, limit - count) : batch
 
-            if(limit && count + allData.length > limit) {
-                await this.batchPutData(collection, allData.slice(0, limit - count))
-                allData.length = 0
-                count = limit
-                return 
-            }
+            batchNum++
 
-            count += allData.length
+            const start = Date.now()
+            await this.batchPutData(collection, items)
+            count += items.length
 
             if(count % 10000 === 0) console.log("Count:", count)
 
-            const start = Date.now()
-            await this.batchPutData(collection, allData)
-            const bytes = allData.toString().length
-            const elapsed = Date.now() - start
-            const bytesPerSec = (bytes / (elapsed / 1000)).toFixed(2)
             if(Sylo.LOGGING) {
-                console.log(`Batch ${batch} of ${JSON.stringify(allData).length} bytes took ${elapsed === Infinity ? 'Infinity' : elapsed}ms (${bytesPerSec} bytes/sec)`)
+                const bytes = JSON.stringify(items).length
+                const elapsed = Date.now() - start
+                const bytesPerSec = (bytes / (elapsed / 1000)).toFixed(2)
+                console.log(`Batch ${batchNum} of ${bytes} bytes took ${elapsed === Infinity ? 'Infinity' : elapsed}ms (${bytesPerSec} bytes/sec)`)
             }
-
-            allData.length = 0
         }
 
-        const processParquet = async (parquet: string) => {
+        // Detect format from the first byte of the body:
+        //   0x5b ('[') → JSON array: buffer the full body, then parse and process in slices.
+        //   Otherwise  → NDJSON stream: parse incrementally with Bun.JSONL.parseChunk, which
+        //                accepts Uint8Array directly (zero-copy for ASCII) and tracks the split-line
+        //                remainder internally via the returned `read` offset — no manual incomplete-
+        //                line state machine needed.
+        let isJsonArray: boolean | null = null
+        const jsonArrayChunks: Uint8Array[] = []
+        let jsonArrayLength = 0
 
-            const lines = parquet.split('\n')
+        let pending = new Uint8Array(0)
+        let batch: T[] = []
 
-            for(let line of lines) {
+        for await (const chunk of res.body as AsyncIterable<Uint8Array>) {
 
-                try {
+            if(isJsonArray === null) isJsonArray = chunk[0] === 0x5b
 
-                    if(isIncomplete) {
-                        line = incompleteData + line
-                        isIncomplete = false
-                    }
+            if(isJsonArray) {
+                jsonArrayChunks.push(chunk)
+                jsonArrayLength += chunk.length
+                continue
+            }
 
-                    allData.push(JSON.parse(line))
+            // Prepend any leftover bytes from the previous iteration (an unterminated line),
+            // then parse. `read` points past the last complete line; `pending` holds the rest.
+            const merged = new Uint8Array(pending.length + chunk.length)
+            merged.set(pending)
+            merged.set(chunk, pending.length)
 
-                    if(allData.length === Sylo.MAX_CPUS) await batchWrite()
+            const { values, read } = Bun.JSONL.parseChunk(merged)
+            pending = merged.subarray(read)
 
-                } catch(e) {
-
-                    incompleteData = line
-                    isIncomplete = true
+            for(const item of values) {
+                batch.push(item as T)
+                if(batch.length === Sylo.MAX_CPUS) {
+                    await flush(batch)
+                    batch = []
+                    if(limit && count >= limit) return count
                 }
             }
-
-            if(allData.length > 0) await batchWrite()
         }
 
-        const clone = res.clone()
+        if(isJsonArray) {
 
-        try {
+            // Reassemble buffered chunks into a single Uint8Array and parse as JSON.
+            const body = new Uint8Array(jsonArrayLength)
+            let offset = 0
+            for(const c of jsonArrayChunks) { body.set(c, offset); offset += c.length }
 
-            const data = await res.json()
+            const data = JSON.parse(new TextDecoder().decode(body))
+            const items: T[] = Array.isArray(data) ? data : [data]
 
-            if(Array.isArray(data)) {
+            for(let i = 0; i < items.length; i += Sylo.MAX_CPUS) {
+                if(limit && count >= limit) break
+                await flush(items.slice(i, i + Sylo.MAX_CPUS))
+            }
 
-                let parquetData = ''
+        } else {
 
-                for(const datum of data) parquetData += JSON.stringify(datum) + '\n'
+            // Flush the in-progress batch and any final line that had no trailing newline.
+            if(pending.length > 0) {
+                const { values } = Bun.JSONL.parseChunk(pending)
+                for(const item of values) batch.push(item as T)
+            }
 
-                await processParquet(parquetData)
-
-            } else await processParquet(JSON.stringify(data))
-            
-        } catch(e) {
-
-            let finished = false
-
-            const reader = clone.body!.getReader()
-
-            do {
-
-                const { done, value } = await reader.read()
-
-                if(done) finished = true
-
-                await processParquet(new TextDecoder('utf-8').decode(value))
-
-            }  while(!finished)
+            if(batch.length > 0) await flush(batch)
         }
 
         return count
@@ -214,32 +213,33 @@ export default class Sylo {
      */
     static async *exportBulkData<T extends Record<string, any>>(collection: string) {
 
-        let token: string | undefined
+        // Kick off the first S3 list immediately so there is no idle time at the start.
+        let listPromise: Promise<Bun.S3ListObjectsResponse> | null = S3.list(collection, { delimiter: '/' })
 
-        do {
+        while(listPromise !== null) {
 
-            const data = await S3.list(collection, {
-                continuationToken: token,
-                delimiter: '/'
-            })
+            const data: Bun.S3ListObjectsResponse = await listPromise
 
-            if(!data.commonPrefixes) break
+            if(!data.commonPrefixes?.length) break
 
-            const ids = data.commonPrefixes.map(item => item.prefix!.split('/')[1]!) as _ttid[]
+            const ids = data.commonPrefixes
+                .map(item => item.prefix!.split('/')[0]!)
+                .filter(key => TTID.isTTID(key)) as _ttid[]
 
-            const res = await Promise.allSettled(ids.map(id => this.getDoc<T>(collection, id).once()))
+            // Start fetching the next page immediately — before awaiting doc reads —
+            // so the S3 list round-trip overlaps with document reconstruction.
+            listPromise = data.isTruncated && data.nextContinuationToken
+                ? S3.list(collection, { delimiter: '/', continuationToken: data.nextContinuationToken })
+                : null
 
-            const docs = res.filter(item => item.status === 'fulfilled').map(item => item.value)
+            const results = await Promise.allSettled(ids.map(id => this.getDoc<T>(collection, id).once()))
 
-            for(const doc of docs) {
-                for(const id in doc) {
-                    yield doc[id]
+            for(const result of results) {
+                if(result.status === 'fulfilled') {
+                    for(const id in result.value) yield result.value[id]
                 }
             }
-
-            token = data.nextContinuationToken
-
-        } while(token !== undefined)
+        }
     }
 
     /**
@@ -342,7 +342,7 @@ export default class Sylo {
      */
     async batchPutData<T extends Record<string, any>>(collection: string, batch: Array<T>) {
 
-        const batches: T[][] = []
+        const batches: Array<Array<T>> = []
         const ids: _ttid[] = []
 
         if(batch.length > navigator.hardwareConcurrency) {
@@ -371,11 +371,27 @@ export default class Sylo {
      * @param data The document to put.
      * @returns The ID of the document.
      */
+    private static async uniqueTTID(existingId?: string): Promise<_ttid> {
+
+        // Serialize TTID generation so concurrent callers (e.g. batchPutData)
+        // never invoke TTID.generate() at the same sub-millisecond instant.
+        let _id!: _ttid
+        const prev = Sylo.ttidLock
+        Sylo.ttidLock = prev.then(async () => {
+            _id = existingId ? TTID.generate(existingId) : TTID.generate()
+            // Claim in Redis for cross-process uniqueness (no-op if Redis unavailable)
+            if(!(await Dir.claimTTID(_id))) return
+        })
+        await Sylo.ttidLock
+
+        return _id
+    }
+
     async putData<T extends Record<string, any>>(collection: string, data: Record<_ttid, T> | T) {
 
         const currId = Object.keys(data).shift()!
         
-        const _id = TTID.isTTID(currId) ? TTID.generate(currId) : TTID.generate()
+        const _id = TTID.isTTID(currId) ? await Sylo.uniqueTTID(currId) : await Sylo.uniqueTTID()
         
         let doc = TTID.isTTID(currId) ? Object.values(data).shift() as T : data as T
 
@@ -403,41 +419,49 @@ export default class Sylo {
      * @returns The number of documents patched.
      */
     async patchDoc<T extends Record<string, any>>(collection: string, newDoc: Record<_ttid, Partial<T>>, oldDoc: Record<_ttid, T> = {}) {
-        
+
         const _id = Object.keys(newDoc).shift() as _ttid
 
         let _newId = _id
-        
+
         if(!_id) throw new Error("this document does not contain an TTID")
 
-        const keys: string[] = []
+        // Fetch data keys once — needed for deletion and, when oldDoc is absent, reconstruction.
+        // Previously, delDoc re-fetched these internally, causing a redundant S3 list call per document.
+        const dataKeys = await Walker.getDocData(collection, _id)
 
-        let size = Object.keys(oldDoc).length
+        if(dataKeys.length === 0) return _newId
 
-        if(size === 0) {
+        if(Object.keys(oldDoc).length === 0) {
 
-            const items = await Walker.getDocData(collection, _id)
-
-            keys.push(...items)
-
-            const data = await Dir.reconstructData(collection, items)
+            const data = await Dir.reconstructData(collection, dataKeys)
 
             oldDoc = { [_id]: data } as Record<_ttid, T>
-
-            size = Object.keys(oldDoc).length
         }
 
-        if(size > 0) {
+        if(Object.keys(oldDoc).length === 0) return _newId
 
-            const currData = oldDoc[_id]
+        const currData = { ...oldDoc[_id] }
 
-            const data = newDoc[_id]
+        for(const field in newDoc[_id]) currData[field] = newDoc[_id][field]!
 
-            for(const field in data) currData[field] = data[field]!
+        // Generate new TTID upfront so that delete and write can proceed in parallel.
+        _newId = await Sylo.uniqueTTID(_id)
 
-            await this.delDoc(collection, _id)
-            
-            _newId = await this.putData(collection, { [_id]: currData })
+        let docToWrite: T = currData as T
+
+        if(Sylo.STRICT) docToWrite = await Gen.validateData(collection, currData) as T
+
+        const newKeys = Dir.extractKeys(_newId, docToWrite)
+
+        const [deleteResults, putResults] = await Promise.all([
+            Promise.allSettled(dataKeys.map(key => this.dir.deleteKeys(collection, key))),
+            Promise.allSettled(newKeys.data.map((item, i) => this.dir.putKeys(collection, { dataKey: item, indexKey: newKeys.indexes[i] })))
+        ])
+
+        if(deleteResults.some(r => r.status === 'rejected') || putResults.some(r => r.status === 'rejected')) {
+            await this.dir.executeRollback()
+            throw new Error(`Unable to update ${collection} collection`)
         }
 
         if(Sylo.LOGGING) console.log(`Finished Updating ${_id} to ${_newId}`)
@@ -675,7 +699,7 @@ export default class Sylo {
                 const left_id = leftSegs.pop()! as _ttid
                 const leftVal = leftSegs.pop()!
 
-                const leftCollection = leftSegs.shift()!
+                const leftCollection = join.$leftCollection
 
                 const allVals = new Set<string>()
 
@@ -685,7 +709,7 @@ export default class Sylo {
                     const right_id = rightSegs.pop()! as _ttid
                     const rightVal = rightSegs.pop()!
 
-                    const rightCollection = rightSegs.shift()!
+                    const rightCollection = join.$rightCollection
 
                     if(compare(rightVal, leftVal) && !allVals.has(rightVal)) {
 
@@ -771,7 +795,7 @@ export default class Sylo {
 
                 const data = docs[ids as `${_ttid}, ${_ttid}`]
 
-                // @ts-ignore
+                // @ts-expect-error
                 const grouping = Object.groupBy([data], elem => elem[join.$groupby!])
 
                 for(const group in grouping) {
@@ -783,11 +807,11 @@ export default class Sylo {
 
             if(join.$onlyIds) {
 
-                const groupedIds: Record<T[keyof T] | U[keyof U], _ttid[]> = {} as Record<T[keyof T] | U[keyof U], _ttid[]>
+                const groupedIds: Record<string, _ttid[]> = {}
 
                 for(const group in groupedDocs) {
                     const doc = groupedDocs[group]
-                    groupedIds[group as T[keyof T] | U[keyof U]] = Object.keys(doc).flat()
+                    groupedIds[group] = Object.keys(doc).flat()
                 }
 
                 return groupedIds
@@ -827,6 +851,29 @@ export default class Sylo {
 
             if(Object.keys(doc).length > 0) {
 
+                // Post-filter for operators that cannot be expressed as globs ($ne, $gt, $gte, $lt, $lte).
+                // $ops use OR semantics: a document passes if it matches at least one op.
+                if(query?.$ops) {
+                    for(const [_id, data] of Object.entries(doc)) {
+                        let matchesAny = false
+                        for(const op of query.$ops) {
+                            let opMatches = true
+                            for(const col in op) {
+                                const val = (data as Record<string, unknown>)[col]
+                                const cond = op[col as keyof T]!
+                                if(cond.$ne !== undefined && val == cond.$ne) { opMatches = false; break }
+                                if(cond.$gt !== undefined && !(Number(val) > cond.$gt)) { opMatches = false; break }
+                                if(cond.$gte !== undefined && !(Number(val) >= cond.$gte)) { opMatches = false; break }
+                                if(cond.$lt !== undefined && !(Number(val) < cond.$lt)) { opMatches = false; break }
+                                if(cond.$lte !== undefined && !(Number(val) <= cond.$lte)) { opMatches = false; break }
+                            }
+                            if(opMatches) { matchesAny = true; break }
+                        }
+                        if(!matchesAny) delete doc[_id as _ttid]
+                    }
+                    if(Object.keys(doc).length === 0) return
+                }
+
                 for(let [_id, data] of Object.entries(doc)) {
 
                     if(query && query.$select && query.$select.length > 0) {
@@ -841,11 +888,11 @@ export default class Sylo {
 
                 if(query && query.$groupby) {
 
-                    const docGroup: Record<T[keyof T], Record<string, Partial<T>>> = {} as Record<T[keyof T], Record<string, Partial<T>>>
+                    const docGroup: Record<string, Record<string, Partial<T>>> = {}
 
                     for(const [id, data] of Object.entries(doc)) {
 
-                        const groupValue = data[query.$groupby]
+                        const groupValue = data[query.$groupby] as string
 
                         if(groupValue) {
 
@@ -863,7 +910,7 @@ export default class Sylo {
 
                             for(const id in doc as Record<_ttid, T>) {
 
-                                //@ts-ignore
+                                // @ts-expect-error
                                 docGroup[groupValue][id] = null
                             }
                         }
@@ -913,9 +960,11 @@ export default class Sylo {
                         break
                     }
 
-                    count++
-
-                    yield processDoc(value as Record<_ttid, T>, query)
+                    const result = processDoc(value as Record<_ttid, T>, query)
+                    if(result !== undefined) {
+                        count++
+                        yield result
+                    }
 
                 } while(!finished)
             },
@@ -949,9 +998,11 @@ export default class Sylo {
                             break
                         }
 
-                        count++
-
-                        yield processDoc(value as Record<_ttid, T>, query)
+                        const result = processDoc(value as Record<_ttid, T>, query)
+                        if(result !== undefined) {
+                            count++
+                            yield result
+                        }
 
                     } while(!finished)
                 }

@@ -1,6 +1,8 @@
 import { test, expect, describe, afterAll, mock } from 'bun:test'
 import Sylo from '../../src'
 import { postsURL, albumURL } from '../data'
+import S3Mock from '../mocks/s3'
+import RedisMock from '../mocks/redis'
 
 const POSTS = `post`
 const ALBUMS = `album`
@@ -9,18 +11,8 @@ afterAll(async () => {
     await Promise.all([Sylo.dropCollection(ALBUMS), Sylo.dropCollection(POSTS)])
 })
 
-class RedisClass {
-
-    static async publish(collection: string, action: 'insert' | 'delete', keyId: string | _ttid) {
-        
-    }
-}
-
-mock.module('../../src/Redis', () => {
-    return {
-        default: RedisClass
-    }
-})
+mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
+mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
 
 describe("NO-SQL", () => {
 

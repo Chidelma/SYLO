@@ -1,15 +1,20 @@
-import S3 from "./S3"
+import { S3 } from "../adapters/s3"
 import TTID from "@vyckr/ttid"
-import Redis from "./redis"
+import { Redis } from "../adapters/redis"
 
-export default class Walker {
+export class Walker {
 
     private static readonly MAX_KEYS = 1000
 
-    private static readonly redis = new Redis()
+    private static _redis: Redis | null = null
+
+    private static get redis(): Redis {
+        if (!Walker._redis) Walker._redis = new Redis()
+        return Walker._redis
+    }
 
     private static async *searchS3(collection: string, prefix: string, pattern?: string): AsyncGenerator<{ _id: _ttid, data: string[] } | void, void, { count: number, limit?: number  }> {
-        
+
         const uniqueIds = new Set<string>()
 
         let token: string | undefined
@@ -89,13 +94,13 @@ export default class Walker {
 
     static async getDocData(collection: string, _id: _ttid) {
 
-        _id = _id.split('-')[0]
+        const prefix = _id.split('-')[0]
 
         const data: string[] = []
 
         let finished = false
 
-        const iter = this.searchS3(collection, _id)
+        const iter = this.searchS3(collection, prefix)
 
         do {
 
@@ -107,7 +112,9 @@ export default class Walker {
             }
 
             if(value) {
-                data.push(...value.data)
+                for(const key of value.data) {
+                    if(key.startsWith(_id + '/')) data.push(key)
+                }
                 finished = true
                 break
             }
@@ -122,7 +129,7 @@ export default class Walker {
         const stackIds = new Set<string>()
 
         for await (const { action, keyId } of Walker.redis.subscribe(collection)) {
-            
+
             if(action === 'insert' && !TTID.isTTID(keyId) && new Bun.Glob(pattern).match(keyId)) {
 
                 const _id = keyId.split('/').pop()! as _ttid
@@ -137,7 +144,7 @@ export default class Walker {
             } else if(action === 'delete' && TTID.isTTID(keyId)) {
 
                 yield { id: keyId as _ttid, action: "delete", data: [] }
-            
+
             } else if(TTID.isTTID(keyId) && stackIds.has(keyId)) {
 
                 stackIds.delete(keyId)
@@ -152,7 +159,7 @@ export default class Walker {
             for(const p of pattern) {
                 for await (const event of this.processPattern(collection, p)) yield event
             }
-      
+
         } else {
             for await (const event of this.processPattern(collection, pattern)) yield event
         }

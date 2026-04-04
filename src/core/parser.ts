@@ -102,7 +102,7 @@ class SQLLexer {
 
     private readIdentifier(): string {
         let result = ''
-        while (this.current && /[a-zA-Z0-9_]/.test(this.current)) {
+        while (this.current && /[a-zA-Z0-9_\-]/.test(this.current)) {
             result += this.current
             this.advance()
         }
@@ -167,7 +167,12 @@ class SQLLexer {
 
             // Identifiers and keywords
             if (/[a-zA-Z_]/.test(this.current)) {
-                const value = this.readIdentifier()
+                let value = this.readIdentifier()
+                // Support dot notation for nested fields (e.g. address.city → address/city)
+                while (this.current === '.' && this.position + 1 < this.input.length && /[a-zA-Z_]/.test(this.input[this.position + 1])) {
+                    this.advance() // skip '.'
+                    value += '/' + this.readIdentifier()
+                }
                 const type = this.getKeywordType(value)
                 tokens.push({ type, value, position })
                 continue
@@ -525,7 +530,7 @@ class SQLParser {
             this.advance()
             do {
                 columns.push(this.expect(TokenType.IDENTIFIER).value)
-                // @ts-ignore
+                // @ts-expect-error
                 if (this.current.type === TokenType.COMMA) {
                     this.advance()
                 } else {
@@ -616,7 +621,7 @@ class SQLParser {
 }
 
 // Main SQL to AST converter
-export default class {
+export class Parser {
     static parse<T extends Record<string, any>, U extends Record<string, any> = any>(sql: string): 
         _storeQuery<T> | _storeInsert<T> | _storeUpdate<T> | _storeDelete<T> | _join<T, U> {
         
