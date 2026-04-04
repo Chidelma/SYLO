@@ -1,8 +1,9 @@
 {
     "compilerOptions": {
         "strict": true,
-        "outDir": "bin",
+        "outDir": "dist",
         "target": "ESNext",
+        "lib": ["ESNext"],
         "module": "ES2022",
         "moduleResolution": "node",
         "sourceMap": true,
@@ -12,6 +13,7 @@
         "noImplicitReturns": true,
         "forceConsistentCasingInFileNames": true,
         "types": ["bun-types", "node", "@vyckr/ttid"],
-        "isolatedModules": true
+        "isolatedModules": true,
+        "skipLibCheck": true
     }
 }

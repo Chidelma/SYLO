@@ -3,3 +3,6 @@ node_modules
 db
 docker-compose.yml
 Dockerfile
+.vscode
+bin
+.DS_Store

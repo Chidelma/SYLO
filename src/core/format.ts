@@ -15,7 +15,7 @@ class Format {
     if(TTID.isTTID(key) || keys.some(key => TTID.isTTID(key ?? ''))) {
       key = '_id'
     } else key = '_key'
-    
+
     // Add the _id column to the front of maxWidths
     const fullWidths = {
       [key]: idColumnWidth,
@@ -187,15 +187,15 @@ class Format {
   ): string {
     const lines: string[] = [];
     const columns = this.flattenColumns(widths);
+    const entries = Object.entries(docs);
 
-    for (const [docId, doc] of Object.entries(docs)) {
+    for (let i = 0; i < entries.length; i++) {
+      const [docId, doc] = entries[i];
       // Render data row
       lines.push(this.renderDataRow(docId, doc, widths, columns, idColumnKey));
 
       // Add separator between rows (except for last row)
-      const entries = Object.entries(docs);
-      const isLastRow = entries[entries.length - 1][0] === docId;
-      if (!isLastRow) {
+      if (i < entries.length - 1) {
         lines.push(this.renderRowSeparator(columns));
       }
     }
@@ -483,23 +483,4 @@ class Format {
 
 console.format = function(docs: Record<string, any>) {
   Format.table(docs)
-}
-
-Object.appendGroup = function (target: Record<string, any>, source: Record<string, any>) {
-  // TODO: implement mergeGroup logic
-  const result = { ...target }
-        
-  for (const [sourceId, sourceGroup] of Object.entries(source)) {
-
-      if(!result[sourceId]) {
-          result[sourceId] = sourceGroup
-          break
-      }
-
-      for(const [groupId, groupDoc] of Object.entries(sourceGroup)) {
-          result[sourceId][groupId] = groupDoc
-      }
-  }
-  
-  return result
 }

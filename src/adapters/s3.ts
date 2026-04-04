@@ -1,6 +1,6 @@
-import { S3Client } from "bun"
+import { $, S3Client } from "bun"
 
-export default class S3 {
+export class S3 {
 
     static readonly BUCKET_ENV = process.env.BUCKET_PREFIX
 
@@ -45,5 +45,16 @@ export default class S3 {
             bucket: S3.getBucketFormat(collection),
             ...S3.CREDS
         })
+    }
+
+    static async createBucket(collection: string) {
+        const endpoint = S3.CREDS.endpoint
+        await $`aws s3 mb s3://${S3.getBucketFormat(collection)} ${endpoint ? `--endpoint-url=${endpoint}` : ""}`.quiet()
+    }
+
+    static async deleteBucket(collection: string) {
+        const endpoint = S3.CREDS.endpoint
+        await $`aws s3 rm s3://${S3.getBucketFormat(collection)} --recursive ${endpoint ? `--endpoint-url=${endpoint}` : ""}`.quiet()
+        await $`aws s3 rb s3://${S3.getBucketFormat(collection)} ${endpoint ? `--endpoint-url=${endpoint}` : ""}`.quiet()
     }
 }
