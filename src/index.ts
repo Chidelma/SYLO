@@ -6,6 +6,7 @@ import TTID from '@vyckr/ttid';
 import Gen from "@vyckr/chex"
 import { Walker } from './core/walker';
 import { S3 } from "./adapters/s3"
+import { Cipher } from "./adapters/cipher"
 import './core/format'
 import './core/extensions'
 
@@ -18,6 +19,11 @@ export default class Sylo {
     private static readonly STRICT = process.env.STRICT
 
     private static ttidLock: Promise<void> = Promise.resolve()
+
+    private static readonly SCHEMA_DIR = process.env.SCHEMA_DIR
+
+    /** Collections whose schema `$encrypted` config has already been loaded. */
+    private static readonly loadedEncryption: Set<string> = new Set()
 
     private dir: Dir;
 
@@ -89,6 +95,35 @@ export default class Sylo {
     static async dropCollection(collection: string) {
 
         await S3.deleteBucket(collection)
+    }
+
+    /**
+     * Loads encrypted field config from a collection's JSON schema if not already loaded.
+     * Reads the `$encrypted` array from the schema and registers fields with Cipher.
+     * Auto-configures the Cipher key from `ENCRYPTION_KEY` env var on first use.
+     */
+    private static async loadEncryption(collection: string): Promise<void> {
+        if (Sylo.loadedEncryption.has(collection)) return
+        Sylo.loadedEncryption.add(collection)
+
+        if (!Sylo.SCHEMA_DIR) return
+
+        try {
+            const res = await import(`${Sylo.SCHEMA_DIR}/${collection}.json`)
+            const schema = res.default as Record<string, unknown>
+            const encrypted = schema.$encrypted
+
+            if (Array.isArray(encrypted) && encrypted.length > 0) {
+                if (!Cipher.isConfigured()) {
+                    const secret = process.env.ENCRYPTION_KEY
+                    if (!secret) throw new Error('Schema declares $encrypted fields but ENCRYPTION_KEY env var is not set')
+                    await Cipher.configure(secret)
+                }
+                Cipher.registerFields(collection, encrypted as string[])
+            }
+        } catch {
+            // No schema file found — no encryption for this collection
+        }
     }
 
     /**
@@ -389,6 +424,8 @@ export default class Sylo {
 
     async putData<T extends Record<string, any>>(collection: string, data: Record<_ttid, T> | T) {
 
+        await Sylo.loadEncryption(collection)
+
         const currId = Object.keys(data).shift()!
         
         const _id = TTID.isTTID(currId) ? await Sylo.uniqueTTID(currId) : await Sylo.uniqueTTID()
@@ -397,7 +434,7 @@ export default class Sylo {
 
         if(Sylo.STRICT) doc = await Gen.validateData(collection, doc) as T
         
-        const keys = Dir.extractKeys(_id, doc)
+        const keys = await Dir.extractKeys(collection, _id, doc)
 
         const results = await Promise.allSettled(keys.data.map((item, i) => this.dir.putKeys(collection, { dataKey: item, indexKey: keys.indexes[i] })))
 
@@ -419,6 +456,8 @@ export default class Sylo {
      * @returns The number of documents patched.
      */
     async patchDoc<T extends Record<string, any>>(collection: string, newDoc: Record<_ttid, Partial<T>>, oldDoc: Record<_ttid, T> = {}) {
+
+        await Sylo.loadEncryption(collection)
 
         const _id = Object.keys(newDoc).shift() as _ttid
 
@@ -452,7 +491,7 @@ export default class Sylo {
 
         if(Sylo.STRICT) docToWrite = await Gen.validateData(collection, currData) as T
 
-        const newKeys = Dir.extractKeys(_newId, docToWrite)
+        const newKeys = await Dir.extractKeys(collection, _newId, docToWrite)
 
         const [deleteResults, putResults] = await Promise.all([
             Promise.allSettled(dataKeys.map(key => this.dir.deleteKeys(collection, key))),
@@ -476,6 +515,8 @@ export default class Sylo {
      * @returns The number of documents patched.
      */
     async patchDocs<T extends Record<string, any>>(collection: string, updateSchema: _storeUpdate<T>) {
+
+        await Sylo.loadEncryption(collection)
         
         const processDoc = (doc: Record<_ttid, T>, updateSchema: _storeUpdate<T>) => {
 
@@ -491,7 +532,7 @@ export default class Sylo {
 
         let finished = false
 
-        const exprs = Query.getExprs(updateSchema.$where ?? {})
+        const exprs = await Query.getExprs(collection, updateSchema.$where ?? {})
 
         if(exprs.length === 1 && exprs[0] === `**/*`) {
 
@@ -562,6 +603,8 @@ export default class Sylo {
      * @returns The number of documents deleted.
      */
     async delDocs<T extends Record<string, any>>(collection: string, deleteSchema?: _storeDelete<T>) {
+
+        await Sylo.loadEncryption(collection)
         
         const processDoc = (doc: Record<_ttid, T>) => {
 
@@ -581,7 +624,7 @@ export default class Sylo {
 
         let finished = false
 
-        const exprs = Query.getExprs(deleteSchema ?? {})
+        const exprs = await Query.getExprs(collection, deleteSchema ?? {})
 
         if(exprs.length === 1 && exprs[0] === `**/*`) {
 
@@ -938,7 +981,9 @@ export default class Sylo {
              */
             async *[Symbol.asyncIterator]() {
 
-                const expression = Query.getExprs(query ?? {})
+                await Sylo.loadEncryption(collection)
+
+                const expression = await Query.getExprs(collection, query ?? {})
 
                 if(expression.length === 1 && expression[0] === `**/*`) {
                     for(const doc of await Sylo.allDocs<T>(collection, query)) yield processDoc(doc, query)
@@ -974,7 +1019,9 @@ export default class Sylo {
              */
             async *collect() {
 
-                const expression = Query.getExprs(query ?? {})
+                await Sylo.loadEncryption(collection)
+
+                const expression = await Query.getExprs(collection, query ?? {})
 
                 if(expression.length === 1 && expression[0] === `**/*`) {
 
@@ -1013,10 +1060,12 @@ export default class Sylo {
              */
             async *onDelete() {
 
+                await Sylo.loadEncryption(collection)
+
                 let count = 0
                 let finished = false
 
-                const iter = Dir.searchDocs<T>(collection, Query.getExprs(query ?? {}), {}, { listen: true, skip: true }, true)
+                const iter = Dir.searchDocs<T>(collection, await Query.getExprs(collection, query ?? {}), {}, { listen: true, skip: true }, true)
 
                 do {
 
