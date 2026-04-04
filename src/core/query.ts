@@ -1,6 +1,10 @@
+import { Cipher } from "../adapters/cipher"
+
+const ENCRYPTED_FIELD_OPS = ['$ne', '$gt', '$gte', '$lt', '$lte', '$like', '$contains'] as const
+
 export class Query {
 
-    static getExprs<T extends Record<string, any>>(query: _storeQuery<T>) {
+    static async getExprs<T extends Record<string, any>>(collection: string, query: _storeQuery<T>) {
 
         let exprs = new Set<string>()
 
@@ -12,7 +16,21 @@ export class Query {
 
                     const col = op[column as keyof T]!
 
-                    if(col.$eq) exprs.add(`${column}/${col.$eq}/**/*`)
+                    const fieldPath = String(column).replaceAll('.', '/')
+                    const encrypted = Cipher.isConfigured() && Cipher.isEncryptedField(collection, fieldPath)
+
+                    if(encrypted) {
+                        for(const opKey of ENCRYPTED_FIELD_OPS) {
+                            if(col[opKey] !== undefined) {
+                                throw new Error(`Operator ${opKey} is not supported on encrypted field "${String(column)}"`)
+                            }
+                        }
+                    }
+
+                    if(col.$eq) {
+                        const val = encrypted ? await Cipher.encrypt(String(col.$eq).replaceAll('/', '%2F')) : col.$eq
+                        exprs.add(`${column}/${val}/**/*`)
+                    }
                     if(col.$ne) exprs.add(`${column}/**/*`)
                     if(col.$gt) exprs.add(`${column}/**/*`)
                     if(col.$gte) exprs.add(`${column}/**/*`)

@@ -2,6 +2,7 @@ import { Walker } from "./walker"
 import TTID from "@vyckr/ttid"
 import { S3 } from "../adapters/s3"
 import { Redis } from "../adapters/redis"
+import { Cipher } from "../adapters/cipher"
 
 export class Dir {
 
@@ -35,7 +36,16 @@ export class Dir {
         for (const data of items) {
             const segs = data.split('/')
             const val = segs.pop()!
-            fieldVal[segs.join('/')] = val
+            const fieldPath = segs.join('/')
+
+            // Decrypt value if field is encrypted — fieldPath starts with TTID segment
+            // so strip it to get the actual field name for the check
+            const fieldOnly = segs.slice(1).join('/')
+            if(Cipher.isConfigured() && Cipher.isEncryptedField(collection, fieldOnly)) {
+                fieldVal[fieldPath] = await Cipher.decrypt(val)
+            } else {
+                fieldVal[fieldPath] = val
+            }
         }
 
         return this.constructData(fieldVal)
@@ -189,7 +199,7 @@ export class Dir {
                     if(done) finished = true
 
                     if(value) {
-                        const data = yield await constructData(p.split('/').shift()!, value._id, value.data)
+                        const data = yield await constructData(collection, value._id, value.data)
                         count = data.count
                         limit = data.limit
                     }
@@ -225,7 +235,7 @@ export class Dir {
                     if(done) finished = true
 
                     if(value) {
-                        const data = yield await constructData(p.split('/').shift()!, value._id, value.data)
+                        const data = yield await constructData(collection, value._id, value.data)
                         count = data.count
                         limit = data.limit
                     }
@@ -335,7 +345,7 @@ export class Dir {
         await Dir.redis.publish(collection, 'delete', _id)
     }
 
-    static extractKeys<T>(_id: _ttid, data: T, parentField?: string) {
+    static async extractKeys<T>(collection: string, _id: _ttid, data: T, parentField?: string) {
 
         const keys: { data: string[], indexes: string[] } = { data: [], indexes: [] }
 
@@ -346,20 +356,23 @@ export class Dir {
             const newField = parentField ? `${parentField}/${field}` : field
 
             if(typeof obj[field] === 'object' && !Array.isArray(obj[field])) {
-                const items = this.extractKeys(_id, obj[field], newField)
+                const items = await this.extractKeys(collection, _id, obj[field], newField)
                 keys.data.push(...items.data)
                 keys.indexes.push(...items.indexes)
             } else if(typeof obj[field] === 'object' && Array.isArray(obj[field])) {
                 const items: (string | number | boolean)[] = obj[field]
                 if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
                 for(let i = 0; i < items.length; i++) {
-                    const val = String(items[i]).split('/').join(this.SLASH_ASCII)
+                    let val = String(items[i]).split('/').join(this.SLASH_ASCII)
+                    if(Cipher.isConfigured() && Cipher.isEncryptedField(collection, newField)) val = await Cipher.encrypt(val)
                     keys.data.push(`${_id}/${newField}/${i}/${val}`)
                     keys.indexes.push(`${newField}/${i}/${val}/${_id}`)
                 }
             } else {
-                keys.data.push(`${_id}/${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}`)
-                keys.indexes.push(`${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
+                let val = String(obj[field]).replaceAll('/', this.SLASH_ASCII)
+                if(Cipher.isConfigured() && Cipher.isEncryptedField(collection, newField)) val = await Cipher.encrypt(val)
+                keys.data.push(`${_id}/${newField}/${val}`)
+                keys.indexes.push(`${newField}/${val}/${_id}`)
             }
         }
 
