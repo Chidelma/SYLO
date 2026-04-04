@@ -1,128 +1,206 @@
 # Sylo
 
-Sylo is a customizable storage solution built with TypeScript (Bun), providing an interface to interact with various AWS S3-Compactable storage services. It allows you to easily integrate your own storage solution with your application, providing a simple and intuitive interface for managing and accessing your data.
+S3-backed NoSQL document store with SQL parsing, Redis pub/sub for real-time events, and a CLI.
 
-## Features
+Documents are stored as **S3 key paths** — not file contents. Each document produces two keys per field: a **data key** (`{ttid}/{field}/{value}`) for full-doc retrieval and an **index key** (`{field}/{value}/{ttid}`) for query lookups. This enables fast reads and filtered queries without a traditional database engine.
 
-- Support for various AWS S3-Compactable storage services
-- Customizable storage solutions
-- Easy integration with your application
-- Simple and intuitive CLI interface for managing and accessing your data
+Built for **serverless** runtimes (AWS Lambda, Cloudflare Workers) — no persistent in-memory state, lazy connections, minimal cold-start overhead.
 
-## Installation
+## Install
 
 ```bash
-npm install @vyckr/sylo
+bun add @vyckr/sylo
 ```
 
-## Configuration
+## Environment Variables
 
-The .env file should be in the root directory of your project. The following environment variables:
-```
-DB_DIR=/path/to/disk/database (required)
-LOGGING=true|false (optional)
-SCHEMA_PATH=/path/to/schema/directory (required if SCHEMA is set to STRICT)
-S3_REGION=region (optional)
-S3_INDEX_BUCKET=bucket (required)
-S3_DATA_BUCKET=bucket (required)
-S3_ENDPOINT=https//example.com (optional)
-```
+| Variable | Purpose |
+|----------|---------|
+| `BUCKET_PREFIX` | S3 bucket name prefix |
+| `S3_ACCESS_KEY_ID` / `AWS_ACCESS_KEY_ID` | S3 credentials |
+| `S3_SECRET_ACCESS_KEY` / `AWS_SECRET_ACCESS_KEY` | S3 credentials |
+| `S3_REGION` / `AWS_REGION` | S3 region |
+| `S3_ENDPOINT` / `AWS_ENDPOINT` | S3 endpoint (for LocalStack, MinIO, etc.) |
+| `REDIS_URL` | Redis connection URL (default: `redis://localhost:6379`) |
+| `LOGGING` | Enable debug logging |
+| `STRICT` | Enable schema validation via CHEX |
 
-## Usage/Example
+## Usage
 
-Make sure you have set the 'SCHEMA_PATH' if 'SCHEMA' is set to 'STRICT'. The schema path should be a directory containing the declaration files. for example:
-
-```
-/path/to/schema/directory
-    /users.d.ts
-```
+### CRUD — NoSQL API
 
 ```typescript
-import Sylo from "@vyckr/sylo";
+import Sylo from "@vyckr/sylo"
 
 const sylo = new Sylo()
 
-await Sylo.createSchema("users")
+// Collections
+await Sylo.createCollection("users")
 
+// Create
 const _id = await sylo.putData<_user>("users", { name: "John Doe", age: 30 })
 
-const user = await sylo.getDoc<_user>("users", _id).once()
+// Read one
+const user = await Sylo.getDoc<_user>("users", _id).once()
 
-console.log(user)
-
-await Sylo.importBulkData<_user>("users", new URL("https://example.com/users.json"), 100)
-
-for await (const user of Sylo.findDocs<_user>("users", { $limit: 10 }).collect()) {
-    console.log(user)
+// Read many
+for await (const doc of Sylo.findDocs<_user>("users", { $limit: 10 }).collect()) {
+    console.log(doc)
 }
 
-await sylo.patchDoc<_user>("users", new Map([[_id, { name: "Jane Doe" }]]))
+// Update one
+await sylo.patchDoc<_user>("users", { [_id]: { age: 31 } })
 
-const count = await sylo.patchDocs<_user>("users", { $set: { age: 31 } })
+// Update many
+const updated = await sylo.patchDocs<_user>("users", {
+    $where: { $ops: [{ age: { $gte: 30 } }] },
+    $set: { age: 31 }
+})
 
-console.log("Updated", count)
+// Delete one
+await sylo.delDoc("users", _id)
 
-await sylo.delDoc<_user>("users", _id)
+// Delete many
+const deleted = await sylo.delDocs<_user>("users", {
+    $ops: [{ name: { $like: "%Doe%" } }]
+})
 
-const count = await sylo.delDocs<_user>("users", { $ops: [ { name: { $like: "%Doe%" } } ] })
-
-console.log("Deleted", count)
-
-await Sylo.dropSchema("users")
+// Drop
+await Sylo.dropCollection("users")
 ```
 
-The equivalent of the above code using SQL syntax would be:
+### CRUD — SQL API
 
 ```typescript
-import Sylo from "@vyckr/sylo";
-
 const sylo = new Sylo()
 
-await sylo.executeSQL<_user>(`CREATE TABLE users`)
+await sylo.executeSQL(`CREATE TABLE users`)
 
-const _id = await sylo.executeSQL<_user>(`INSERT INTO users (name, age) VALUES ('John Doe'|30)`)
+const _id = await sylo.executeSQL<_user>(`INSERT INTO users (name, age) VALUES ('John Doe', 30)`)
 
-let docs = await sylo.executeSQL<_user>(`SELECT * FROM users WHERE id = ${_id}`)
+const docs = await sylo.executeSQL<_user>(`SELECT * FROM users LIMIT 10`)
 
-console.log(docs)
+await sylo.executeSQL<_user>(`UPDATE users SET age = 31 WHERE name = 'John Doe'`)
 
-docs = await sylo.executeSQL<_user>(`SELECT * FROM users LIMIT 10`)
+await sylo.executeSQL<_user>(`DELETE FROM users WHERE name LIKE '%Doe%'`)
 
-console.log(docs)
-
-let count = await sylo.executeSQL<_user>(`UPDATE users SET age = 31 WHERE id = ${_id}`)
-
-console.log("Updated", count)
-
-const count = await sylo.executeSQL<_user>(`DELETE FROM users WHERE name LIKE '%Doe%'`)
-
-console.log("Deleted", count)
-
-await sylo.executeSQL<_user>(`DROP TABLE users`)
+await sylo.executeSQL(`DROP TABLE users`)
 ```
 
-For streaming (listening) data, you can use the following methods:
+### Query Operators
 
 ```typescript
-import Sylo from "@vyckr/sylo";
+// Equality
+{ $ops: [{ status: { $eq: "active" } }] }
 
-for await (const user of Sylo.findDocs<_user>("users", { $limit: 10 })) {
-    console.log(user)
+// Not equal
+{ $ops: [{ status: { $ne: "archived" } }] }
+
+// Numeric range
+{ $ops: [{ age: { $gte: 18, $lt: 65 } }] }
+
+// Pattern matching
+{ $ops: [{ email: { $like: "%@gmail.com" } }] }
+
+// Array contains
+{ $ops: [{ tags: { $contains: "urgent" } }] }
+
+// Multiple ops use OR semantics — matches if any op is satisfied
+{ $ops: [
+    { status: { $eq: "active" } },
+    { priority: { $gte: 5 } }
+]}
+```
+
+### Joins
+
+```typescript
+const results = await Sylo.joinDocs<_post, _user>({
+    $leftCollection: "posts",
+    $rightCollection: "users",
+    $mode: "inner",       // "inner" | "left" | "right" | "outer"
+    $on: { userId: { $eq: "id" } },
+    $select: ["title", "name"],
+    $limit: 50
+})
+```
+
+### Real-Time Streaming
+
+```typescript
+// Stream new/updated documents
+for await (const doc of Sylo.findDocs<_user>("users")) {
+    console.log(doc)
 }
 
-for await (const _id of Sylo.findDocs<_user>("users", { $limit: 10 }).onDelete()) {
-    console.log(_id)
+// Stream deletions
+for await (const _id of Sylo.findDocs<_user>("users").onDelete()) {
+    console.log("deleted:", _id)
 }
 
-for await (const user of Sylo.getDoc<_user>("users", _id)) {
-    console.log(user)
-}
-
-for await (const _id of Sylo.getDoc<_user>("users", _id).onDelete()) {
-    console.log(_id)
+// Watch a single document
+for await (const doc of Sylo.getDoc<_user>("users", _id)) {
+    console.log(doc)
 }
 ```
 
-# License
+### Bulk Import / Export
 
-Sylo is licensed under the MIT License.
+```typescript
+const sylo = new Sylo()
+
+// Import from JSON array or NDJSON URL
+const count = await sylo.importBulkData<_user>("users", new URL("https://example.com/users.json"), 1000)
+
+// Export all documents
+for await (const doc of Sylo.exportBulkData<_user>("users")) {
+    console.log(doc)
+}
+```
+
+### Rollback
+
+Every write is tracked as a transaction. If a batch write partially fails, Sylo automatically rolls back. You can also trigger it manually:
+
+```typescript
+const sylo = new Sylo()
+await sylo.putData("users", { name: "test" })
+await sylo.rollback() // undoes all writes in this instance
+```
+
+### CLI
+
+```bash
+sylo.query "SELECT * FROM users WHERE age > 25 LIMIT 10"
+```
+
+### Schema Validation
+
+When `STRICT` is set, documents are validated against CHEX schemas before writes:
+
+```bash
+STRICT=true bun run start
+```
+
+Schemas are `.d.ts` interface declarations generated by [`@vyckr/chex`](https://github.com/vyckr/chex).
+
+## Development
+
+```bash
+bun test           # Run all tests
+bun run build      # Compile TypeScript
+bun run typecheck  # Type-check without emitting
+bun run lint       # ESLint
+```
+
+### Local S3 (LocalStack)
+
+```bash
+docker compose up aws
+```
+
+This starts LocalStack on `localhost:4566`. Set `S3_ENDPOINT=http://localhost:4566` to route S3 calls locally.
+
+## License
+
+MIT

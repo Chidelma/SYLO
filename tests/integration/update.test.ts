@@ -1,24 +1,16 @@
 import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
 import Sylo from '../../src'
 import { photosURL, todosURL } from '../data'
+import S3Mock from '../mocks/s3'
+import RedisMock from '../mocks/redis'
 
 const PHOTOS = `photo`
 const TODOS = `todo`
 
 const sylo = new Sylo()
 
-class RedisClass {
-
-    static async publish(collection: string, action: 'insert' | 'delete', keyId: string | _ttid) {
-        
-    }
-}
-
-mock.module('../../src/Redis', () => {
-    return {
-        default: RedisClass
-    }
-})
+mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
+mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
 
 beforeAll(async () => {
 

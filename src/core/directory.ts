@@ -1,35 +1,43 @@
-import Walker from "./Walker.js"
+import { Walker } from "./walker"
 import TTID from "@vyckr/ttid"
-import S3 from "./S3"
-import Redis from "./redis"
+import { S3 } from "../adapters/s3"
+import { Redis } from "../adapters/redis"
 
-export default class Dir {
+export class Dir {
 
     private static readonly KEY_LIMIT = 1024
 
     private static readonly SLASH_ASCII = "%2F"
 
-    private readonly transactions: Array<{ action: Function, args: string[] }>;
+    private readonly transactions: Array<{ action: (...args: string[]) => Promise<void>, args: string[] }>;
 
-    private static readonly redis = new Redis()
-    
+    private static _redis: Redis | null = null
+
+    private static get redis(): Redis {
+        if (!Dir._redis) Dir._redis = new Redis()
+        return Dir._redis
+    }
+
     constructor() {
         this.transactions = []
     }
 
+    static async claimTTID(_id: _ttid, ttlSeconds: number = 10): Promise<boolean> {
+        return await Dir.redis.claimTTID(_id, ttlSeconds)
+    }
+
     static async reconstructData(collection: string, items: string[]) {
-        
+
         items = await this.readValues(collection, items)
 
         let fieldVal: Record<string, string> = {}
 
-        items.forEach(data => {
+        for (const data of items) {
             const segs = data.split('/')
             const val = segs.pop()!
-            const field = segs.join('/')
-            fieldVal = { ...fieldVal, [field]: val }
-        })
-        
+            fieldVal[segs.join('/')] = val
+        }
+
         return this.constructData(fieldVal)
     }
 
@@ -56,8 +64,8 @@ export default class Dir {
     private static async filterByTimestamp(_id: _ttid, indexes: string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }) {
 
         const { createdAt, updatedAt } = TTID.decodeTime(_id)
-        
-        if(updated) {
+
+        if(updated && updatedAt) {
 
             if((updated.$gt || updated.$gte) && (updated.$lt || updated.$lte)) {
 
@@ -66,19 +74,19 @@ export default class Dir {
                     if(updated.$gt! > updated.$lt!) throw new Error("Invalid updated query")
 
                     indexes = updatedAt > updated.$gt! && updatedAt < updated.$lt! ? indexes : []
-                
+
                 } else if(updated.$gt && updated.$lte) {
 
                     if(updated.$gt! > updated.$lte!) throw new Error("Invalid updated query")
 
                     indexes = updatedAt > updated.$gt! && updatedAt <= updated.$lte! ? indexes : []
-                
+
                 } else if(updated.$gte && updated.$lt) {
 
                     if(updated.$gte! > updated.$lt!) throw new Error("Invalid updated query")
 
                     indexes = updatedAt >= updated.$gte! && updatedAt < updated.$lt! ? indexes : []
-                
+
                 } else if(updated.$gte && updated.$lte) {
 
                     if(updated.$gte! > updated.$lte!) throw new Error("Invalid updated query")
@@ -89,7 +97,7 @@ export default class Dir {
             } else if((updated.$gt || updated.$gte) && !updated.$lt && !updated.$lte) {
 
                 indexes = updated.$gt ? updatedAt > updated.$gt! ? indexes : [] : updatedAt >= updated.$gte! ? indexes : []
-            
+
             } else if(!updated.$gt && !updated.$gte && (updated.$lt || updated.$lte)) {
 
                 indexes = updated.$lt ? updatedAt < updated.$lt! ? indexes : [] : updatedAt <= updated.$lte! ? indexes : []
@@ -105,19 +113,19 @@ export default class Dir {
                     if(created.$gt! > created.$lt!) throw new Error("Invalid created query")
 
                     indexes = createdAt > created.$gt! && createdAt < created.$lt! ? indexes : []
-                
+
                 } else if(created.$gt && created.$lte) {
 
                     if(created.$gt! > created.$lte!) throw new Error("Invalid updated query")
 
                     indexes = createdAt > created.$gt! && createdAt <= created.$lte! ? indexes : []
-                
+
                 } else if(created.$gte && created.$lt) {
 
                     if(created.$gte! > created.$lt!) throw new Error("Invalid updated query")
 
                     indexes = createdAt >= created.$gte! && createdAt < created.$lt! ? indexes : []
-                
+
                 } else if(created.$gte && created.$lte) {
 
                     if(created.$gte! > created.$lte!) throw new Error("Invalid updated query")
@@ -129,7 +137,7 @@ export default class Dir {
 
                 if(created.$gt) indexes = createdAt > created.$gt! ? indexes : []
                 else if(created.$gte) indexes = createdAt >= created.$gte! ? indexes : []
-            
+
             } else if(!created.$gt && !created.$gte && (created.$lt || created.$lte)) {
 
                 if(created.$lt) indexes = createdAt < created.$lt! ? indexes : []
@@ -141,11 +149,11 @@ export default class Dir {
     }
 
     static async *searchDocs<T extends Record<string, any>>(collection: string, pattern: string | string[], { updated, created }: { updated?: _timestamp, created?: _timestamp }, { listen = false, skip = false }: { listen: boolean, skip: boolean }, deleted: boolean = false): AsyncGenerator<Record<_ttid, T> | _ttid | void, void, { count: number, limit?: number  }> {
-        
+
         const data = yield
         let count = data.count
         let limit = data.limit
-        
+
         const constructData = async (collection: string, _id: _ttid, items: string[]) => {
 
             if(created || updated) {
@@ -169,7 +177,7 @@ export default class Dir {
         const processQuery = async function*(p: string): AsyncGenerator<Record<_ttid, T> | _ttid | void, void, { count: number, limit?: number  }> {
 
             let finished = false
-            
+
             if(listen && !deleted) {
 
                 const iter = Walker.search(collection, p, { listen, skip })
@@ -234,7 +242,7 @@ export default class Dir {
     }
 
     async putKeys(collection: string, { dataKey, indexKey }: { dataKey: string, indexKey: string }) {
-        
+
         let dataBody: string | undefined
         let indexBody: string | undefined
 
@@ -243,9 +251,9 @@ export default class Dir {
             const dataSegs = dataKey.split('/')
 
             dataBody = dataSegs.pop()!
-            
+
             indexKey = `${dataSegs.join('/')}/${Bun.randomUUIDv7()}`
-        } 
+        }
 
         if(indexKey.length > Dir.KEY_LIMIT) {
 
@@ -294,11 +302,11 @@ export default class Dir {
 
     async deleteKeys(collection: string, dataKey: string) {
 
-        const segements = dataKey.split('/')
+        const segments = dataKey.split('/')
 
-        const _id = segements.shift()!
+        const _id = segments.shift()!
 
-        const indexKey = `${segements.join('/')}/${_id}`
+        const indexKey = `${segments.join('/')}/${_id}`
 
         const dataFile = S3.file(collection, dataKey)
         const indexFile = S3.file(collection, indexKey)
@@ -316,12 +324,12 @@ export default class Dir {
 
         this.transactions.push({
             action: S3.put,
-            args: [collection, indexKey, dataBody ?? '']
+            args: [collection, dataKey, dataBody ?? '']
         })
 
         this.transactions.push({
             action: S3.put,
-            args: [collection, indexKey,  indexBody ?? '']
+            args: [collection, indexKey, indexBody ?? '']
         })
 
         await Dir.redis.publish(collection, 'delete', _id)
@@ -344,8 +352,11 @@ export default class Dir {
             } else if(typeof obj[field] === 'object' && Array.isArray(obj[field])) {
                 const items: (string | number | boolean)[] = obj[field]
                 if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
-                keys.data.push(`${_id}/${newField}/${JSON.stringify(items).replaceAll('/', this.SLASH_ASCII)}`)
-                keys.indexes.push(`${newField}/${JSON.stringify(items).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
+                for(let i = 0; i < items.length; i++) {
+                    const val = String(items[i]).split('/').join(this.SLASH_ASCII)
+                    keys.data.push(`${_id}/${newField}/${i}/${val}`)
+                    keys.indexes.push(`${newField}/${i}/${val}/${_id}`)
+                }
             } else {
                 keys.data.push(`${_id}/${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}`)
                 keys.indexes.push(`${newField}/${String(obj[field]).replaceAll('/', this.SLASH_ASCII)}/${_id}`)
@@ -369,7 +380,8 @@ export default class Dir {
 
                 const field = fields.shift()!
 
-                if(typeof curr[field] !== 'object' || curr[field] === null) curr[field] = {}
+                if(typeof curr[field] !== 'object' || curr[field] === null)
+                    curr[field] = isNaN(Number(fields[0])) ? {} : []
 
                 curr = curr[field]
             }
@@ -386,7 +398,7 @@ export default class Dir {
 
         try {
             return JSON.parse(value)
-        } catch(e) {
+        } catch {
             return value
         }
     }
