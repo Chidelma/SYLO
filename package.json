@@ -1,6 +1,6 @@
 {
   "name": "@vyckr/fylo",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "main": "./dist/index.js",
   "types": "./dist/types/index.d.ts",
   "bin": {
@@ -32,7 +32,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Chidelma/FYLO.git"
+    "url": "git+https://github.com/Chidelma/Fylo.git"
   },
   "license": "MIT",
   "keywords": [
@@ -45,6 +45,6 @@
   ],
   "author": "Chidelma",
   "bugs": {
-    "url": "https://github.com/Chidelma/FYLO/issues"
+    "url": "https://github.com/Chidelma/Fylo/issues"
   }
 }
