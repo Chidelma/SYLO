@@ -1,26 +1,26 @@
 import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
-import Sylo from '../../src'
+import Fylo from '../../src'
 import S3Mock from '../mocks/s3'
 import RedisMock from '../mocks/redis'
 import { CipherMock } from '../mocks/cipher'
 
 const COLLECTION = 'encrypted-test'
 
-const sylo = new Sylo()
+const fylo = new Fylo()
 
 mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
 mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
 mock.module('../../src/adapters/cipher', () => ({ Cipher: CipherMock }))
 
 beforeAll(async () => {
-    await Sylo.createCollection(COLLECTION)
+    await Fylo.createCollection(COLLECTION)
     await CipherMock.configure('test-secret-key')
     CipherMock.registerFields(COLLECTION, ['email', 'ssn', 'address'])
 })
 
 afterAll(async () => {
     CipherMock.reset()
-    await Sylo.dropCollection(COLLECTION)
+    await Fylo.dropCollection(COLLECTION)
 })
 
 describe("Encryption", () => {
@@ -29,7 +29,7 @@ describe("Encryption", () => {
 
     test("PUT encrypted document", async () => {
 
-        docId = await sylo.putData(COLLECTION, {
+        docId = await fylo.putData(COLLECTION, {
             name: 'Alice',
             email: 'alice@example.com',
             ssn: '123-45-6789',
@@ -41,7 +41,7 @@ describe("Encryption", () => {
 
     test("GET decrypts fields transparently", async () => {
 
-        const result = await Sylo.getDoc(COLLECTION, docId).once()
+        const result = await Fylo.getDoc(COLLECTION, docId).once()
         const doc = Object.values(result)[0]
 
         expect(doc.name).toBe('Alice')
@@ -63,7 +63,7 @@ describe("Encryption", () => {
 
         let found = false
 
-        for await (const data of Sylo.findDocs(COLLECTION, {
+        for await (const data of Fylo.findDocs(COLLECTION, {
             $ops: [{ email: { $eq: 'alice@example.com' } }]
         }).collect()) {
 
@@ -80,7 +80,7 @@ describe("Encryption", () => {
     test("$ne throws on encrypted field", async () => {
 
         try {
-            const iter = Sylo.findDocs(COLLECTION, {
+            const iter = Fylo.findDocs(COLLECTION, {
                 $ops: [{ email: { $ne: 'bob@example.com' } }]
             }).collect()
             await iter.next()
@@ -93,7 +93,7 @@ describe("Encryption", () => {
     test("$gt throws on encrypted field", async () => {
 
         try {
-            const iter = Sylo.findDocs(COLLECTION, {
+            const iter = Fylo.findDocs(COLLECTION, {
                 $ops: [{ ssn: { $gt: 0 } }]
             }).collect()
             await iter.next()
@@ -106,7 +106,7 @@ describe("Encryption", () => {
     test("$like throws on encrypted field", async () => {
 
         try {
-            const iter = Sylo.findDocs(COLLECTION, {
+            const iter = Fylo.findDocs(COLLECTION, {
                 $ops: [{ email: { $like: '%@example.com' } }]
             }).collect()
             await iter.next()
@@ -120,7 +120,7 @@ describe("Encryption", () => {
 
         let found = false
 
-        for await (const data of Sylo.findDocs(COLLECTION, {
+        for await (const data of Fylo.findDocs(COLLECTION, {
             $ops: [{ name: { $eq: 'Alice' } }]
         }).collect()) {
 
@@ -136,7 +136,7 @@ describe("Encryption", () => {
 
     test("nested encrypted field (address.city)", async () => {
 
-        const id = await sylo.putData(COLLECTION, {
+        const id = await fylo.putData(COLLECTION, {
             name: 'Bob',
             email: 'bob@example.com',
             ssn: '987-65-4321',
@@ -144,7 +144,7 @@ describe("Encryption", () => {
             address: { city: 'Toronto', zip: 'M5V 2T6' }
         })
 
-        const result = await Sylo.getDoc(COLLECTION, id).once()
+        const result = await Fylo.getDoc(COLLECTION, id).once()
         const doc = Object.values(result)[0]
 
         expect(doc.address.city).toBe('Toronto')
@@ -153,14 +153,14 @@ describe("Encryption", () => {
 
     test("UPDATE preserves encryption", async () => {
 
-        await sylo.patchDoc(COLLECTION, {
+        await fylo.patchDoc(COLLECTION, {
             [docId]: { email: 'alice-new@example.com' }
         } as Record<_ttid, Record<string, string>>)
 
         // Find the updated doc (patchDoc generates new TTID)
         let found = false
 
-        for await (const data of Sylo.findDocs(COLLECTION, {
+        for await (const data of Fylo.findDocs(COLLECTION, {
             $ops: [{ email: { $eq: 'alice-new@example.com' } }]
         }).collect()) {
 

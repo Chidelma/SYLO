@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
-import Sylo from '../../src'
+import Fylo from '../../src'
 import { albumURL, postsURL } from '../data'
 import S3Mock from '../mocks/s3'
 import RedisMock from '../mocks/redis'
@@ -8,7 +8,7 @@ import RedisMock from '../mocks/redis'
  * Albums (userId 1–10) and posts (userId 1–10) share a userId field,
  * making them a natural fit for join tests across all four join modes.
  *
- * Join semantics in Sylo:
+ * Join semantics in Fylo:
  *   inner  → only the join field values
  *   left   → full left-collection document
  *   right  → full right-collection document
@@ -18,32 +18,32 @@ import RedisMock from '../mocks/redis'
 const ALBUMS = 'jm-album'
 const POSTS  = 'jm-post'
 
-const sylo = new Sylo()
+const fylo = new Fylo()
 
 mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
 mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
 
 beforeAll(async () => {
-    await Promise.all([Sylo.createCollection(ALBUMS), Sylo.createCollection(POSTS)])
+    await Promise.all([Fylo.createCollection(ALBUMS), Fylo.createCollection(POSTS)])
     try {
         await Promise.all([
-            sylo.importBulkData<_album>(ALBUMS, new URL(albumURL), 100),
-            sylo.importBulkData<_post>(POSTS, new URL(postsURL), 100)
+            fylo.importBulkData<_album>(ALBUMS, new URL(albumURL), 100),
+            fylo.importBulkData<_post>(POSTS, new URL(postsURL), 100)
         ])
     } catch {
-        await sylo.rollback()
+        await fylo.rollback()
     }
 })
 
 afterAll(async () => {
-    await Promise.all([Sylo.dropCollection(ALBUMS), Sylo.dropCollection(POSTS)])
+    await Promise.all([Fylo.dropCollection(ALBUMS), Fylo.dropCollection(POSTS)])
 })
 
 describe("NO-SQL", async () => {
 
     test("INNER JOIN — returns only join field values", async () => {
 
-        const results = await Sylo.joinDocs<_album, _post>({
+        const results = await Fylo.joinDocs<_album, _post>({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'inner',
@@ -63,7 +63,7 @@ describe("NO-SQL", async () => {
 
     test("LEFT JOIN — returns full left-collection document", async () => {
 
-        const results = await Sylo.joinDocs<_album, _post>({
+        const results = await Fylo.joinDocs<_album, _post>({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'left',
@@ -83,7 +83,7 @@ describe("NO-SQL", async () => {
 
     test("RIGHT JOIN — returns full right-collection document", async () => {
 
-        const results = await Sylo.joinDocs<_album, _post>({
+        const results = await Fylo.joinDocs<_album, _post>({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'right',
@@ -104,7 +104,7 @@ describe("NO-SQL", async () => {
 
     test("OUTER JOIN — returns merged left + right document", async () => {
 
-        const results = await Sylo.joinDocs<_album, _post>({
+        const results = await Fylo.joinDocs<_album, _post>({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'outer',
@@ -123,7 +123,7 @@ describe("NO-SQL", async () => {
 
     test("JOIN with $limit — respects the result cap", async () => {
 
-        const results = await Sylo.joinDocs<_album, _post>({
+        const results = await Fylo.joinDocs<_album, _post>({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'inner',
@@ -136,7 +136,7 @@ describe("NO-SQL", async () => {
 
     test("JOIN with $select — only requested fields are returned", async () => {
 
-        const results = await Sylo.joinDocs<_album, _post>({
+        const results = await Fylo.joinDocs<_album, _post>({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'left',
@@ -157,7 +157,7 @@ describe("NO-SQL", async () => {
 
     test("JOIN with $groupby — groups results by field value", async () => {
 
-        const results = await Sylo.joinDocs<_album, _post>({
+        const results = await Fylo.joinDocs<_album, _post>({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'inner',
@@ -170,7 +170,7 @@ describe("NO-SQL", async () => {
 
     test("JOIN with $onlyIds — returns IDs only", async () => {
 
-        const results = await Sylo.joinDocs<_album, _post>({
+        const results = await Fylo.joinDocs<_album, _post>({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'inner',
@@ -188,7 +188,7 @@ describe("SQL", async () => {
 
     test("INNER JOIN", async () => {
 
-        const results = await sylo.executeSQL<_album>(
+        const results = await fylo.executeSQL<_album>(
             `SELECT * FROM ${ALBUMS} INNER JOIN ${POSTS} ON userId = userId`
         ) as Record<`${_ttid}, ${_ttid}`, _album | _post>
 
@@ -197,7 +197,7 @@ describe("SQL", async () => {
 
     test("LEFT JOIN", async () => {
 
-        const results = await sylo.executeSQL<_album>(
+        const results = await fylo.executeSQL<_album>(
             `SELECT * FROM ${ALBUMS} LEFT JOIN ${POSTS} ON userId = userId`
         ) as Record<`${_ttid}, ${_ttid}`, _album>
 
@@ -209,7 +209,7 @@ describe("SQL", async () => {
 
     test("RIGHT JOIN", async () => {
 
-        const results = await sylo.executeSQL<_post>(
+        const results = await fylo.executeSQL<_post>(
             `SELECT * FROM ${ALBUMS} RIGHT JOIN ${POSTS} ON userId = userId`
         ) as Record<`${_ttid}, ${_ttid}`, _post>
 

@@ -14,5 +14,5 @@ Create a pull request for the current branch into `main`.
    - A body with three sections:
      - **Summary** — bullet list of what changed and why.
      - **Test plan** — checklist of how to verify the changes (reference `bun test` where relevant).
-     - **Breaking changes** — any changes to public API in [src/types/sylo.d.ts](src/types/sylo.d.ts) or [src/types/query.d.ts](src/types/query.d.ts); write "None" if there are none.
+     - **Breaking changes** — any changes to public API in [src/types/fylo.d.ts](src/types/fylo.d.ts) or [src/types/query.d.ts](src/types/query.d.ts); write "None" if there are none.
 6. Print the PR URL.

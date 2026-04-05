@@ -1,4 +1,4 @@
-# Sylo
+# Fylo
 
 S3-backed NoSQL document store with SQL parsing, Redis pub/sub for real-time events, and a CLI.
 
@@ -9,7 +9,7 @@ Built for **serverless** runtimes (AWS Lambda, Cloudflare Workers) — no persis
 ## Install
 
 ```bash
-bun add @vyckr/sylo
+bun add @vyckr/fylo
 ```
 
 ## Environment Variables
@@ -30,61 +30,61 @@ bun add @vyckr/sylo
 ### CRUD — NoSQL API
 
 ```typescript
-import Sylo from "@vyckr/sylo"
+import Fylo from "@vyckr/fylo"
 
-const sylo = new Sylo()
+const fylo = new Fylo()
 
 // Collections
-await Sylo.createCollection("users")
+await Fylo.createCollection("users")
 
 // Create
-const _id = await sylo.putData<_user>("users", { name: "John Doe", age: 30 })
+const _id = await fylo.putData<_user>("users", { name: "John Doe", age: 30 })
 
 // Read one
-const user = await Sylo.getDoc<_user>("users", _id).once()
+const user = await Fylo.getDoc<_user>("users", _id).once()
 
 // Read many
-for await (const doc of Sylo.findDocs<_user>("users", { $limit: 10 }).collect()) {
+for await (const doc of Fylo.findDocs<_user>("users", { $limit: 10 }).collect()) {
     console.log(doc)
 }
 
 // Update one
-await sylo.patchDoc<_user>("users", { [_id]: { age: 31 } })
+await fylo.patchDoc<_user>("users", { [_id]: { age: 31 } })
 
 // Update many
-const updated = await sylo.patchDocs<_user>("users", {
+const updated = await fylo.patchDocs<_user>("users", {
     $where: { $ops: [{ age: { $gte: 30 } }] },
     $set: { age: 31 }
 })
 
 // Delete one
-await sylo.delDoc("users", _id)
+await fylo.delDoc("users", _id)
 
 // Delete many
-const deleted = await sylo.delDocs<_user>("users", {
+const deleted = await fylo.delDocs<_user>("users", {
     $ops: [{ name: { $like: "%Doe%" } }]
 })
 
 // Drop
-await Sylo.dropCollection("users")
+await Fylo.dropCollection("users")
 ```
 
 ### CRUD — SQL API
 
 ```typescript
-const sylo = new Sylo()
+const fylo = new Fylo()
 
-await sylo.executeSQL(`CREATE TABLE users`)
+await fylo.executeSQL(`CREATE TABLE users`)
 
-const _id = await sylo.executeSQL<_user>(`INSERT INTO users (name, age) VALUES ('John Doe', 30)`)
+const _id = await fylo.executeSQL<_user>(`INSERT INTO users (name, age) VALUES ('John Doe', 30)`)
 
-const docs = await sylo.executeSQL<_user>(`SELECT * FROM users LIMIT 10`)
+const docs = await fylo.executeSQL<_user>(`SELECT * FROM users LIMIT 10`)
 
-await sylo.executeSQL<_user>(`UPDATE users SET age = 31 WHERE name = 'John Doe'`)
+await fylo.executeSQL<_user>(`UPDATE users SET age = 31 WHERE name = 'John Doe'`)
 
-await sylo.executeSQL<_user>(`DELETE FROM users WHERE name LIKE '%Doe%'`)
+await fylo.executeSQL<_user>(`DELETE FROM users WHERE name LIKE '%Doe%'`)
 
-await sylo.executeSQL(`DROP TABLE users`)
+await fylo.executeSQL(`DROP TABLE users`)
 ```
 
 ### Query Operators
@@ -115,7 +115,7 @@ await sylo.executeSQL(`DROP TABLE users`)
 ### Joins
 
 ```typescript
-const results = await Sylo.joinDocs<_post, _user>({
+const results = await Fylo.joinDocs<_post, _user>({
     $leftCollection: "posts",
     $rightCollection: "users",
     $mode: "inner",       // "inner" | "left" | "right" | "outer"
@@ -129,17 +129,17 @@ const results = await Sylo.joinDocs<_post, _user>({
 
 ```typescript
 // Stream new/updated documents
-for await (const doc of Sylo.findDocs<_user>("users")) {
+for await (const doc of Fylo.findDocs<_user>("users")) {
     console.log(doc)
 }
 
 // Stream deletions
-for await (const _id of Sylo.findDocs<_user>("users").onDelete()) {
+for await (const _id of Fylo.findDocs<_user>("users").onDelete()) {
     console.log("deleted:", _id)
 }
 
 // Watch a single document
-for await (const doc of Sylo.getDoc<_user>("users", _id)) {
+for await (const doc of Fylo.getDoc<_user>("users", _id)) {
     console.log(doc)
 }
 ```
@@ -147,31 +147,31 @@ for await (const doc of Sylo.getDoc<_user>("users", _id)) {
 ### Bulk Import / Export
 
 ```typescript
-const sylo = new Sylo()
+const fylo = new Fylo()
 
 // Import from JSON array or NDJSON URL
-const count = await sylo.importBulkData<_user>("users", new URL("https://example.com/users.json"), 1000)
+const count = await fylo.importBulkData<_user>("users", new URL("https://example.com/users.json"), 1000)
 
 // Export all documents
-for await (const doc of Sylo.exportBulkData<_user>("users")) {
+for await (const doc of Fylo.exportBulkData<_user>("users")) {
     console.log(doc)
 }
 ```
 
 ### Rollback
 
-Every write is tracked as a transaction. If a batch write partially fails, Sylo automatically rolls back. You can also trigger it manually:
+Every write is tracked as a transaction. If a batch write partially fails, Fylo automatically rolls back. You can also trigger it manually:
 
 ```typescript
-const sylo = new Sylo()
-await sylo.putData("users", { name: "test" })
-await sylo.rollback() // undoes all writes in this instance
+const fylo = new Fylo()
+await fylo.putData("users", { name: "test" })
+await fylo.rollback() // undoes all writes in this instance
 ```
 
 ### CLI
 
 ```bash
-sylo.query "SELECT * FROM users WHERE age > 25 LIMIT 10"
+fylo.query "SELECT * FROM users WHERE age > 25 LIMIT 10"
 ```
 
 ### Schema Validation
@@ -203,12 +203,12 @@ This starts LocalStack on `localhost:4566`. Set `S3_ENDPOINT=http://localhost:45
 
 ## Security
 
-### What Sylo does NOT provide
+### What Fylo does NOT provide
 
-Sylo is a low-level storage abstraction. The following must be implemented by the integrating application:
+Fylo is a low-level storage abstraction. The following must be implemented by the integrating application:
 
-- **Authentication** — Sylo has no concept of users or sessions. Any caller with access to the Sylo instance can read and write any collection.
-- **Authorization** — `executeSQL` and all document operations accept any collection name with no permission check. In multi-tenant applications, a caller can access any collection unless the integrator enforces a boundary above Sylo.
+- **Authentication** — Fylo has no concept of users or sessions. Any caller with access to the Fylo instance can read and write any collection.
+- **Authorization** — `executeSQL` and all document operations accept any collection name with no permission check. In multi-tenant applications, a caller can access any collection unless the integrator enforces a boundary above Fylo.
 - **Rate limiting** — There is no built-in request throttling. An attacker with access to the instance can flood S3 with requests or trigger expensive operations without restriction. Add rate limiting and document-size limits in your service layer.
 
 ### Secure configuration

@@ -1,5 +1,5 @@
 import { test, expect, describe, afterAll, mock } from 'bun:test'
-import Sylo from '../../src'
+import Fylo from '../../src'
 import { postsURL, albumURL } from '../data'
 import S3Mock from '../mocks/s3'
 import RedisMock from '../mocks/redis'
@@ -8,7 +8,7 @@ const POSTS = `post`
 const ALBUMS = `album`
 
 afterAll(async () => {
-    await Promise.all([Sylo.dropCollection(ALBUMS), Sylo.dropCollection(POSTS)])
+    await Promise.all([Fylo.dropCollection(ALBUMS), Fylo.dropCollection(POSTS)])
 })
 
 mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
@@ -18,17 +18,17 @@ describe("NO-SQL", () => {
 
     test("TRUNCATE", async () => {
 
-        const sylo = new Sylo()
+        const fylo = new Fylo()
 
-        await Sylo.createCollection(POSTS)
+        await Fylo.createCollection(POSTS)
 
-        await sylo.importBulkData<_post>(POSTS, new URL(postsURL))
+        await fylo.importBulkData<_post>(POSTS, new URL(postsURL))
 
-        await sylo.delDocs<_post>(POSTS)
+        await fylo.delDocs<_post>(POSTS)
 
         const ids: _ttid[] = []
 
-        for await (const data of Sylo.findDocs<_post>(POSTS, { $limit: 1, $onlyIds: true }).collect()) {
+        for await (const data of Fylo.findDocs<_post>(POSTS, { $limit: 1, $onlyIds: true }).collect()) {
 
             ids.push(data as _ttid)
         }
@@ -41,15 +41,15 @@ describe("SQL", () => {
 
     test("TRUNCATE", async () => {
 
-        const sylo = new Sylo()
+        const fylo = new Fylo()
 
-        await sylo.executeSQL<_album>(`CREATE TABLE ${ALBUMS}`)
+        await fylo.executeSQL<_album>(`CREATE TABLE ${ALBUMS}`)
 
-        await sylo.importBulkData<_album>(ALBUMS, new URL(albumURL))
+        await fylo.importBulkData<_album>(ALBUMS, new URL(albumURL))
 
-        await sylo.executeSQL<_album>(`DELETE FROM ${ALBUMS}`)
+        await fylo.executeSQL<_album>(`DELETE FROM ${ALBUMS}`)
 
-        const ids = await sylo.executeSQL<_album>(`SELECT _id FROM ${ALBUMS} LIMIT 1`) as _ttid[]
+        const ids = await fylo.executeSQL<_album>(`SELECT _id FROM ${ALBUMS} LIMIT 1`) as _ttid[]
 
         expect(ids.length).toBe(0)
     })

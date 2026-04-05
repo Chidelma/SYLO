@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
-import Sylo from '../../src'
+import Fylo from '../../src'
 import { photosURL, todosURL } from '../data'
 import S3Mock from '../mocks/s3'
 import RedisMock from '../mocks/redis'
@@ -7,25 +7,25 @@ import RedisMock from '../mocks/redis'
 const PHOTOS = `photo`
 const TODOS = `todo`
 
-const sylo = new Sylo()
+const fylo = new Fylo()
 
 mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
 mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
 
 beforeAll(async () => {
 
-    await Promise.all([Sylo.createCollection(PHOTOS), sylo.executeSQL<_todo>(`CREATE TABLE ${TODOS}`)])
+    await Promise.all([Fylo.createCollection(PHOTOS), fylo.executeSQL<_todo>(`CREATE TABLE ${TODOS}`)])
 
     try {
-        await sylo.importBulkData<_photo>(PHOTOS, new URL(photosURL), 100)
-        await sylo.importBulkData<_todo>(TODOS, new URL(todosURL), 100)
+        await fylo.importBulkData<_photo>(PHOTOS, new URL(photosURL), 100)
+        await fylo.importBulkData<_todo>(TODOS, new URL(todosURL), 100)
     } catch {
-        await sylo.rollback()
+        await fylo.rollback()
     }
 })
 
 afterAll(async () => {
-    await Promise.all([Sylo.dropCollection(PHOTOS), sylo.executeSQL<_todo>(`DROP TABLE ${TODOS}`)])
+    await Promise.all([Fylo.dropCollection(PHOTOS), fylo.executeSQL<_todo>(`DROP TABLE ${TODOS}`)])
 })
 
 describe("NO-SQL", async () => {
@@ -34,20 +34,20 @@ describe("NO-SQL", async () => {
 
         const ids: _ttid[] = []
 
-        for await (const data of Sylo.findDocs<_photo>(PHOTOS, { $limit: 1, $onlyIds: true }).collect()) {
+        for await (const data of Fylo.findDocs<_photo>(PHOTOS, { $limit: 1, $onlyIds: true }).collect()) {
 
             ids.push(data as _ttid)
         }
 
         try {
-            await sylo.patchDoc<_photo>(PHOTOS, { [ids.shift() as _ttid]: { title: "All Mighty" }})
+            await fylo.patchDoc<_photo>(PHOTOS, { [ids.shift() as _ttid]: { title: "All Mighty" }})
         } catch {
-            await sylo.rollback()
+            await fylo.rollback()
         }
 
         let results: Record<_ttid, _photo> = {}
 
-        for await (const data of Sylo.findDocs<_photo>(PHOTOS, { $ops: [{ title: { $eq: "All Mighty" } }]}).collect()) {
+        for await (const data of Fylo.findDocs<_photo>(PHOTOS, { $ops: [{ title: { $eq: "All Mighty" } }]}).collect()) {
             
             results = { ...results, ...data as Record<_ttid, _photo> }
         }
@@ -60,14 +60,14 @@ describe("NO-SQL", async () => {
         let count = -1
 
         try {
-            count = await sylo.patchDocs<_photo>(PHOTOS, { $set: { title: "All Mighti" }, $where: { $ops: [{ title: { $like: "%est%" } }] } })
+            count = await fylo.patchDocs<_photo>(PHOTOS, { $set: { title: "All Mighti" }, $where: { $ops: [{ title: { $like: "%est%" } }] } })
         } catch {
-            await sylo.rollback()
+            await fylo.rollback()
         }
 
         let results: Record<_ttid, _photo> = {}
 
-        for await (const data of Sylo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighti" } } ] }).collect()) {
+        for await (const data of Fylo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighti" } } ] }).collect()) {
 
             results = { ...results, ...data as Record<_ttid, _photo> }
         }
@@ -80,14 +80,14 @@ describe("NO-SQL", async () => {
         let count = -1
 
         try {
-            count = await sylo.patchDocs<_photo>(PHOTOS, { $set: { title: "All Mighter" } })
+            count = await fylo.patchDocs<_photo>(PHOTOS, { $set: { title: "All Mighter" } })
         } catch {
-            await sylo.rollback()
+            await fylo.rollback()
         }
 
         let results: Record<_ttid, _photo> = {}
 
-        for await (const data of Sylo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighter" } } ] }).collect()) {
+        for await (const data of Fylo.findDocs<_photo>(PHOTOS, { $ops: [ { title: { $eq: "All Mighter" } } ] }).collect()) {
 
             results = { ...results, ...data as Record<_ttid, _photo> }
         }
@@ -103,12 +103,12 @@ describe("SQL", async () => {
         let count = -1
         
         try {
-            count = await sylo.executeSQL<_todo>(`UPDATE ${TODOS} SET title = 'All Mighty' WHERE title LIKE '%est%'`) as number
+            count = await fylo.executeSQL<_todo>(`UPDATE ${TODOS} SET title = 'All Mighty' WHERE title LIKE '%est%'`) as number
         } catch {
-            await sylo.rollback()
+            await fylo.rollback()
         }
 
-        const results = await sylo.executeSQL<_todo>(`SELECT * FROM ${TODOS} WHERE title = 'All Mighty'`) as Record<_ttid, _todo>
+        const results = await fylo.executeSQL<_todo>(`SELECT * FROM ${TODOS} WHERE title = 'All Mighty'`) as Record<_ttid, _todo>
         
         expect(Object.keys(results).length).toBe(count)
     })
@@ -118,12 +118,12 @@ describe("SQL", async () => {
         let count = -1
 
         try {
-            count = await sylo.executeSQL<_todo>(`UPDATE ${TODOS} SET title = 'All Mightier'`) as number
+            count = await fylo.executeSQL<_todo>(`UPDATE ${TODOS} SET title = 'All Mightier'`) as number
         } catch {
-            await sylo.rollback()
+            await fylo.rollback()
         }
         
-        const results = await sylo.executeSQL<_todo>(`SELECT * FROM ${TODOS} WHERE title = 'All Mightier'`) as Record<_ttid, _todo>
+        const results = await fylo.executeSQL<_todo>(`SELECT * FROM ${TODOS} WHERE title = 'All Mightier'`) as Record<_ttid, _todo>
         
         expect(Object.keys(results).length).toBe(count)
     }, 20000)

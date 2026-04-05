@@ -14,6 +14,6 @@ Determine whether the description sounds like a bug or a feature request, then c
 
 **For a feature request:**
 - Title: "feat: <short description>"
-- Body sections: **Problem**, **Proposed solution**, **Alternatives considered**, **Affected API** (list any methods in `src/types/sylo.d.ts` or `src/types/query.d.ts` that would change).
+- Body sections: **Problem**, **Proposed solution**, **Alternatives considered**, **Affected API** (list any methods in `src/types/fylo.d.ts` or `src/types/query.d.ts` that would change).
 
 Apply the appropriate label (`bug` or `enhancement`) via `--label`. Print the issue URL when done.

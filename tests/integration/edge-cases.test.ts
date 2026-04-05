@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
-import Sylo from '../../src'
+import Fylo from '../../src'
 import TTID from '@vyckr/ttid'
 import S3Mock from '../mocks/s3'
 import RedisMock from '../mocks/redis'
@@ -17,17 +17,17 @@ import RedisMock from '../mocks/redis'
 
 const COLLECTION = 'ec-test'
 
-const sylo = new Sylo()
+const fylo = new Fylo()
 
 mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
 mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
 
 beforeAll(async () => {
-    await Sylo.createCollection(COLLECTION)
+    await Fylo.createCollection(COLLECTION)
 })
 
 afterAll(async () => {
-    await Sylo.dropCollection(COLLECTION)
+    await Fylo.dropCollection(COLLECTION)
 })
 
 describe("NO-SQL", () => {
@@ -36,7 +36,7 @@ describe("NO-SQL", () => {
 
         const fakeId = TTID.generate() as _ttid
 
-        const result = await Sylo.getDoc(COLLECTION, fakeId).once()
+        const result = await Fylo.getDoc(COLLECTION, fakeId).once()
 
         expect(Object.keys(result).length).toBe(0)
     })
@@ -50,14 +50,14 @@ describe("NO-SQL", () => {
             body: 'https://example.com/api/v1/resource'
         }
 
-        const _id = await sylo.putData<_post>(COLLECTION, original)
+        const _id = await fylo.putData<_post>(COLLECTION, original)
 
-        const result = await Sylo.getDoc<_post>(COLLECTION, _id).once()
+        const result = await Fylo.getDoc<_post>(COLLECTION, _id).once()
         const doc = result[_id]
 
         expect(doc.body).toBe(original.body)
 
-        await sylo.delDoc(COLLECTION, _id)
+        await fylo.delDoc(COLLECTION, _id)
     })
 
     test("PUT / GET — values with multiple consecutive slashes round-trip correctly", async () => {
@@ -69,25 +69,25 @@ describe("NO-SQL", () => {
             body: 'https://cdn.example.com//assets//image.png'
         }
 
-        const _id = await sylo.putData<_post>(COLLECTION, original)
+        const _id = await fylo.putData<_post>(COLLECTION, original)
 
-        const result = await Sylo.getDoc<_post>(COLLECTION, _id).once()
+        const result = await Fylo.getDoc<_post>(COLLECTION, _id).once()
 
         expect(result[_id].body).toBe(original.body)
 
-        await sylo.delDoc(COLLECTION, _id)
+        await fylo.delDoc(COLLECTION, _id)
     })
 
     test("$ops — multiple conditions act as OR union", async () => {
 
-        const cleanSylo = new Sylo()
+        const cleanFylo = new Fylo()
 
-        const id1 = await cleanSylo.putData<_post>(COLLECTION, { userId: 10, id: 100, title: 'Alpha', body: 'first' })
-        const id2 = await cleanSylo.putData<_post>(COLLECTION, { userId: 20, id: 200, title: 'Beta',  body: 'second' })
+        const id1 = await cleanFylo.putData<_post>(COLLECTION, { userId: 10, id: 100, title: 'Alpha', body: 'first' })
+        const id2 = await cleanFylo.putData<_post>(COLLECTION, { userId: 20, id: 200, title: 'Beta',  body: 'second' })
 
         const results: Record<_ttid, _post> = {}
 
-        for await (const data of Sylo.findDocs<_post>(COLLECTION, {
+        for await (const data of Fylo.findDocs<_post>(COLLECTION, {
             $ops: [
                 { userId: { $eq: 10 } },
                 { userId: { $eq: 20 } }
@@ -99,15 +99,15 @@ describe("NO-SQL", () => {
         expect(results[id1]).toBeDefined()
         expect(results[id2]).toBeDefined()
 
-        await cleanSylo.delDoc(COLLECTION, id1)
-        await cleanSylo.delDoc(COLLECTION, id2)
+        await cleanFylo.delDoc(COLLECTION, id1)
+        await cleanFylo.delDoc(COLLECTION, id2)
     })
 
     test("$rename — renames fields in query output", async () => {
 
-        const cleanSylo = new Sylo()
+        const cleanFylo = new Fylo()
 
-        const _id = await cleanSylo.putData<_post>(COLLECTION, {
+        const _id = await cleanFylo.putData<_post>(COLLECTION, {
             userId: 1,
             id: 300,
             title: 'Rename Me',
@@ -116,7 +116,7 @@ describe("NO-SQL", () => {
 
         let renamed: Partial<_post> & { name?: string } = {}
 
-        for await (const data of Sylo.findDocs<_post>(COLLECTION, {
+        for await (const data of Fylo.findDocs<_post>(COLLECTION, {
             $ops: [{ id: { $eq: 300 } }],
             $rename: { title: 'name' } as Record<keyof Partial<_post>, string>
         }).collect()) {
@@ -126,21 +126,21 @@ describe("NO-SQL", () => {
         expect(renamed.name).toBe('Rename Me')
         expect(renamed.title).toBeUndefined()
 
-        await cleanSylo.delDoc(COLLECTION, _id)
+        await cleanFylo.delDoc(COLLECTION, _id)
     })
 
     test("versioned putData — preserves creation-time prefix in TTID", async () => {
 
-        const cleanSylo = new Sylo()
+        const cleanFylo = new Fylo()
 
-        const _id1 = await cleanSylo.putData<_post>(COLLECTION, {
+        const _id1 = await cleanFylo.putData<_post>(COLLECTION, {
             userId: 1,
             id: 400,
             title: 'Original',
             body: 'v1'
         })
 
-        const _id2 = await cleanSylo.putData<_post>(COLLECTION, {
+        const _id2 = await cleanFylo.putData<_post>(COLLECTION, {
             [_id1]: { userId: 1, id: 400, title: 'Updated', body: 'v2' }
         })
 
@@ -148,36 +148,36 @@ describe("NO-SQL", () => {
         expect(_id2.split('-')[0]).toBe(_id1.split('-')[0])
 
         // The updated doc is retrievable via its own TTID
-        const result = await Sylo.getDoc<_post>(COLLECTION, _id2).once()
+        const result = await Fylo.getDoc<_post>(COLLECTION, _id2).once()
         const doc = result[_id2]
 
         expect(doc).toBeDefined()
         expect(doc.title).toBe('Updated')
 
         // Clean up both versions
-        await cleanSylo.delDoc(COLLECTION, _id1)
-        await cleanSylo.delDoc(COLLECTION, _id2)
+        await cleanFylo.delDoc(COLLECTION, _id1)
+        await cleanFylo.delDoc(COLLECTION, _id2)
     })
 
     test("versioned putData — original version is no longer retrievable by old full TTID", async () => {
 
-        const cleanSylo = new Sylo()
+        const cleanFylo = new Fylo()
 
-        const _id1 = await cleanSylo.putData<_post>(COLLECTION, {
+        const _id1 = await cleanFylo.putData<_post>(COLLECTION, {
             userId: 1,
             id: 500,
             title: 'Old Version',
             body: 'original'
         })
 
-        const _id2 = await cleanSylo.putData<_post>(COLLECTION, {
+        const _id2 = await cleanFylo.putData<_post>(COLLECTION, {
             [_id1]: { userId: 1, id: 500, title: 'New Version', body: 'updated' }
         })
 
         // Both IDs are different (update appended a segment)
         expect(_id1).not.toBe(_id2)
 
-        await cleanSylo.delDoc(COLLECTION, _id2)
+        await cleanFylo.delDoc(COLLECTION, _id2)
     })
 })
 
@@ -185,22 +185,22 @@ describe("SQL", () => {
 
     test("UPDATE ONE — update a single document by querying its unique field", async () => {
 
-        const cleanSylo = new Sylo()
+        const cleanFylo = new Fylo()
 
-        await cleanSylo.putData<_post>(COLLECTION, {
+        await cleanFylo.putData<_post>(COLLECTION, {
             userId: 1,
             id: 600,
             title: 'Before SQL Update',
             body: 'original'
         })
 
-        const updated = await cleanSylo.executeSQL<_post>(
+        const updated = await cleanFylo.executeSQL<_post>(
             `UPDATE ${COLLECTION} SET title = 'After SQL Update' WHERE id = 600`
         ) as number
 
         expect(updated).toBe(1)
 
-        const results = await cleanSylo.executeSQL<_post>(
+        const results = await cleanFylo.executeSQL<_post>(
             `SELECT * FROM ${COLLECTION} WHERE title = 'After SQL Update'`
         ) as Record<_ttid, _post>
 
@@ -210,20 +210,20 @@ describe("SQL", () => {
 
     test("DELETE ONE — delete a single document by querying its unique field", async () => {
 
-        const cleanSylo = new Sylo()
+        const cleanFylo = new Fylo()
 
-        await cleanSylo.putData<_post>(COLLECTION, {
+        await cleanFylo.putData<_post>(COLLECTION, {
             userId: 1,
             id: 700,
             title: 'Delete Via SQL',
             body: 'should be removed'
         })
 
-        await cleanSylo.executeSQL<_post>(
+        await cleanFylo.executeSQL<_post>(
             `DELETE FROM ${COLLECTION} WHERE title = 'Delete Via SQL'`
         )
 
-        const results = await cleanSylo.executeSQL<_post>(
+        const results = await cleanFylo.executeSQL<_post>(
             `SELECT * FROM ${COLLECTION} WHERE title = 'Delete Via SQL'`
         ) as Record<_ttid, _post>
 

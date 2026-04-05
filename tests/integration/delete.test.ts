@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
-import Sylo from '../../src'
+import Fylo from '../../src'
 import { commentsURL, usersURL } from '../data'
 import S3Mock from '../mocks/s3'
 import RedisMock from '../mocks/redis'
@@ -10,7 +10,7 @@ const USERS = `user`
 let commentsResults: Record<_ttid, _comment> = {}
 let usersResults: Record<_ttid, _user> = {}
 
-const sylo = new Sylo()
+const fylo = new Fylo()
 
 mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
 mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
@@ -18,32 +18,32 @@ mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
 beforeAll(async () => {
 
     await Promise.all([
-        Sylo.createCollection(COMMENTS), 
-        sylo.executeSQL<_post>(`CREATE TABLE ${USERS}`)
+        Fylo.createCollection(COMMENTS), 
+        fylo.executeSQL<_post>(`CREATE TABLE ${USERS}`)
     ])
 
     try {
         
         await Promise.all([
-            sylo.importBulkData<_comment>(COMMENTS, new URL(commentsURL), 100),
-            sylo.importBulkData<_user>(USERS, new URL(usersURL), 100)
+            fylo.importBulkData<_comment>(COMMENTS, new URL(commentsURL), 100),
+            fylo.importBulkData<_user>(USERS, new URL(usersURL), 100)
         ])
 
     } catch {
-        await sylo.rollback()
+        await fylo.rollback()
     }
 
-    for await (const data of Sylo.findDocs<_comment>(COMMENTS, { $limit: 1 }).collect()) {
+    for await (const data of Fylo.findDocs<_comment>(COMMENTS, { $limit: 1 }).collect()) {
 
         commentsResults = { ...commentsResults, ...data as Record<_ttid, _comment> }
         
     }
 
-    usersResults = await sylo.executeSQL<_user>(`SELECT * FROM ${USERS} LIMIT 1`) as Record<_ttid, _user>
+    usersResults = await fylo.executeSQL<_user>(`SELECT * FROM ${USERS} LIMIT 1`) as Record<_ttid, _user>
 })
 
 afterAll(async () => {
-    await Promise.all([Sylo.dropCollection(COMMENTS), sylo.executeSQL<_user>(`DROP TABLE ${USERS}`)])
+    await Promise.all([Fylo.dropCollection(COMMENTS), fylo.executeSQL<_user>(`DROP TABLE ${USERS}`)])
 })
 
 describe("NO-SQL", async () => {
@@ -53,14 +53,14 @@ describe("NO-SQL", async () => {
         const id = Object.keys(commentsResults).shift()!
 
         try {
-            await sylo.delDoc(COMMENTS, id)
+            await fylo.delDoc(COMMENTS, id)
         } catch {
-            await sylo.rollback()
+            await fylo.rollback()
         }
 
         commentsResults = {}
 
-        for await (const data of Sylo.findDocs<_comment>(COMMENTS).collect()) {
+        for await (const data of Fylo.findDocs<_comment>(COMMENTS).collect()) {
 
             commentsResults = { ...commentsResults, ...data as Record<_ttid, _comment> }
         }
@@ -74,16 +74,16 @@ describe("NO-SQL", async () => {
     test("DELETE CLAUSE", async () => {
 
         try {
-            await sylo.delDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] })
+            await fylo.delDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] })
             //console.log
         } catch(e) {
             console.error(e)
-            await sylo.rollback()
+            await fylo.rollback()
         }
         
         commentsResults = {}
 
-        for await (const data of Sylo.findDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] }).collect()) {
+        for await (const data of Fylo.findDocs<_comment>(COMMENTS, { $ops: [ { name: { $like: "%et%" } } ] }).collect()) {
 
             // console.log(data)
             
@@ -96,14 +96,14 @@ describe("NO-SQL", async () => {
     test("DELETE ALL", async () => {
 
         try {
-            await sylo.delDocs<_comment>(COMMENTS)
+            await fylo.delDocs<_comment>(COMMENTS)
         } catch {
-            await sylo.rollback()
+            await fylo.rollback()
         }
 
         commentsResults = {}
 
-        for await (const data of Sylo.findDocs<_comment>(COMMENTS).collect()) {
+        for await (const data of Fylo.findDocs<_comment>(COMMENTS).collect()) {
 
             commentsResults = { ...commentsResults, ...data as Record<_ttid, _comment> }
         }
@@ -120,12 +120,12 @@ describe("SQL", async () => {
         const name = Object.values(usersResults).shift()!.name
 
         try {
-            await sylo.executeSQL<_user>(`DELETE FROM ${USERS} WHERE name = '${name}'`)
+            await fylo.executeSQL<_user>(`DELETE FROM ${USERS} WHERE name = '${name}'`)
         } catch {
-            await sylo.rollback()
+            await fylo.rollback()
         } 
 
-        usersResults = await sylo.executeSQL<_user>(`SELECT * FROM ${USERS} WHERE name = '${name}'`) as Record<_ttid, _user>
+        usersResults = await fylo.executeSQL<_user>(`SELECT * FROM ${USERS} WHERE name = '${name}'`) as Record<_ttid, _user>
         
         const idx = Object.values(usersResults).findIndex(com => com.name === name)
 
@@ -135,12 +135,12 @@ describe("SQL", async () => {
     test("DELETE ALL", async () => {
 
         try {
-            await sylo.executeSQL<_user>(`DELETE FROM ${USERS}`)
+            await fylo.executeSQL<_user>(`DELETE FROM ${USERS}`)
         } catch {
-            await sylo.rollback()
+            await fylo.rollback()
         }
 
-        usersResults = await sylo.executeSQL<_user>(`SELECT * FROM ${USERS}`) as Record<_ttid, _user>
+        usersResults = await fylo.executeSQL<_user>(`SELECT * FROM ${USERS}`) as Record<_ttid, _user>
 
         expect(Object.keys(usersResults).length).toBe(0)
     })

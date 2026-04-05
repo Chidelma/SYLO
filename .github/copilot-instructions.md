@@ -1,8 +1,8 @@
-# SYLO — Project Guidelines
+# FYLO — Project Guidelines
 
 ## Overview
 
-SYLO (`@vyckr/sylo`) is an S3-backed NoSQL document store with SQL parsing, Redis pub/sub for real-time events, and a CLI. Documents are stored as S3 key paths — not as file contents — with dual key layouts for data access and indexed queries.
+FYLO (`@vyckr/fylo`) is an S3-backed NoSQL document store with SQL parsing, Redis pub/sub for real-time events, and a CLI. Documents are stored as S3 key paths — not as file contents — with dual key layouts for data access and indexed queries.
 
 **Assume a serverless deployment model** (e.g., AWS Lambda, Cloudflare Workers). This means:
 - No persistent in-memory state across invocations — every request starts cold
@@ -23,7 +23,7 @@ SYLO (`@vyckr/sylo`) is an S3-backed NoSQL document store with SQL parsing, Redi
 
 | Module | Responsibility |
 |--------|---------------|
-| `src/index.ts` | Main `Sylo` class — CRUD, SQL execution, joins, bulk ops |
+| `src/index.ts` | Main `Fylo` class — CRUD, SQL execution, joins, bulk ops |
 | `src/core/parser.ts` | SQL lexer/parser — tokenizes SQL into query objects |
 | `src/core/query.ts` | Converts `$ops` into glob patterns for S3 key matching |
 | `src/core/walker.ts` | S3 key traversal, document data retrieval, Redis event streaming |
@@ -31,13 +31,13 @@ SYLO (`@vyckr/sylo`) is an S3-backed NoSQL document store with SQL parsing, Redi
 | `src/core/format.ts` | Console formatting for query output |
 | `src/adapters/s3.ts` | S3 adapter (Bun S3Client) |
 | `src/adapters/redis.ts` | Redis adapter (Bun RedisClient) |
-| `src/cli/index.ts` | CLI entry point (`sylo.query`) |
+| `src/cli/index.ts` | CLI entry point (`fylo.query`) |
 
 ### Folder Structure
 
 ```
 src/
-  index.ts                # Public API — main Sylo class
+  index.ts                # Public API — main Fylo class
   adapters/               # I/O boundary abstractions (S3, Redis)
   core/                   # Internal domain logic (parser, query, walker, directory)
   cli/                    # CLI entry point
@@ -70,7 +70,7 @@ tests/
 - **Runtime**: Bun (ESNext target, ES modules)
 - **Strict TypeScript**: `strict: true`, `noImplicitReturns`, `isolatedModules`
 - **ESLint** enforces `@typescript-eslint/no-explicit-any` in `src/` and `tests/` — use it only in type declarations (`.d.ts`)
-- **No default exports** except the main `Sylo` class
+- **No default exports** except the main `Fylo` class
 - Prefer `class` with `static` methods for modules (no standalone functions)
 - Use `_ttid` branded type for document IDs — never plain `string`
 - Prefix internal/test type names with underscore: `_post`, `_album`, `_storeQuery`

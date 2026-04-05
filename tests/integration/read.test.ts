@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
-import Sylo from '../../src'
+import Fylo from '../../src'
 import { albumURL, postsURL } from '../data'
 import S3Mock from '../mocks/s3'
 import RedisMock from '../mocks/redis'
@@ -9,25 +9,25 @@ const ALBUMS = `album`
 
 let count = 0
 
-const sylo = new Sylo()
+const fylo = new Fylo()
 
 mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
 mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
 
 beforeAll(async () => {
 
-    await Promise.all([Sylo.createCollection(ALBUMS), sylo.executeSQL<_post>(`CREATE TABLE ${POSTS}`)])
+    await Promise.all([Fylo.createCollection(ALBUMS), fylo.executeSQL<_post>(`CREATE TABLE ${POSTS}`)])
 
     try {
-        count = await sylo.importBulkData<_album>(ALBUMS, new URL(albumURL), 100)
-        await sylo.importBulkData<_post>(POSTS, new URL(postsURL), 100)
+        count = await fylo.importBulkData<_album>(ALBUMS, new URL(albumURL), 100)
+        await fylo.importBulkData<_post>(POSTS, new URL(postsURL), 100)
     } catch {
-        await sylo.rollback()
+        await fylo.rollback()
     }
 })
 
 afterAll(async () => {
-    await Promise.all([Sylo.dropCollection(ALBUMS), Sylo.dropCollection(POSTS)])
+    await Promise.all([Fylo.dropCollection(ALBUMS), Fylo.dropCollection(POSTS)])
 })
 
 describe("NO-SQL", async () => {
@@ -36,7 +36,7 @@ describe("NO-SQL", async () => {
 
         let results: Record<_ttid, _album> = {}
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS).collect()) { 
+        for await (const data of Fylo.findDocs<_album>(ALBUMS).collect()) { 
 
             results = { ...results, ... data as Record<_ttid, _album> }
         }
@@ -50,7 +50,7 @@ describe("NO-SQL", async () => {
 
         let results: Record<_ttid, _album> = {}
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $select: ["title"] }).collect()) {
+        for await (const data of Fylo.findDocs<_album>(ALBUMS, { $select: ["title"] }).collect()) {
 
             results = { ...results, ... data as Record<_ttid, _album> }
         }
@@ -69,12 +69,12 @@ describe("NO-SQL", async () => {
 
         const ids: _ttid[] = []
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $limit: 1, $onlyIds: true }).collect()) {
+        for await (const data of Fylo.findDocs<_album>(ALBUMS, { $limit: 1, $onlyIds: true }).collect()) {
 
             ids.push(data as _ttid)
         }
 
-        const result = await Sylo.getDoc<_album>(ALBUMS, ids[0]).once()
+        const result = await Fylo.getDoc<_album>(ALBUMS, ids[0]).once()
         
         const _id = Object.keys(result).shift()!
 
@@ -85,7 +85,7 @@ describe("NO-SQL", async () => {
 
         let results: Record<_ttid, _album> = {}
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $eq: 2 } }] }).collect()) {
+        for await (const data of Fylo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $eq: 2 } }] }).collect()) {
 
             results = { ...results, ...data as Record<_ttid, _album> }
         }
@@ -103,7 +103,7 @@ describe("NO-SQL", async () => {
 
         let results: Record<_ttid, _album> = {}
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $limit: 5 }).collect()) {
+        for await (const data of Fylo.findDocs<_album>(ALBUMS, { $limit: 5 }).collect()) {
 
             results = { ...results, ...data as Record<_ttid, _album> }
         }
@@ -117,7 +117,7 @@ describe("NO-SQL", async () => {
 
         let results: Record<_album[keyof _album], Record<_ttid, Partial<_album>>> = {} as Record<_album[keyof _album], Record<_ttid, Partial<_album>>>
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $groupby: "userId", $onlyIds: true }).collect()) {
+        for await (const data of Fylo.findDocs<_album>(ALBUMS, { $groupby: "userId", $onlyIds: true }).collect()) {
             
             results = Object.appendGroup(results, (data as unknown as Record<string, Record<string, Record<_ttid, null>>>)) 
         }
@@ -129,7 +129,7 @@ describe("NO-SQL", async () => {
 
     test("SELECT JOIN", async () => {
 
-        const results = await Sylo.joinDocs<_album, _post>({ $leftCollection: ALBUMS, $rightCollection: POSTS, $mode: "inner",  $on: { "userId": { $eq: "id" } } }) as Record<`${_ttid}, ${_ttid}`, _album | _post>
+        const results = await Fylo.joinDocs<_album, _post>({ $leftCollection: ALBUMS, $rightCollection: POSTS, $mode: "inner",  $on: { "userId": { $eq: "id" } } }) as Record<`${_ttid}, ${_ttid}`, _album | _post>
         
         //console.format(results)
         
@@ -141,7 +141,7 @@ describe("SQL", async () => {
 
     test("SELECT PARTIAL", async () => {
 
-        const results = await sylo.executeSQL<_album>(`SELECT title FROM ${ALBUMS}`) as Record<_ttid, _album>
+        const results = await fylo.executeSQL<_album>(`SELECT title FROM ${ALBUMS}`) as Record<_ttid, _album>
         
         //console.format(results)
         
@@ -154,7 +154,7 @@ describe("SQL", async () => {
 
     test("SELECT CLAUSE", async () => {
 
-        const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} WHERE user_id = 2`) as Record<_ttid, _album>
+        const results = await fylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} WHERE user_id = 2`) as Record<_ttid, _album>
         
         //console.format(results)
         
@@ -167,7 +167,7 @@ describe("SQL", async () => {
 
     test("SELECT ALL", async () => {
 
-        const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as Record<_ttid, _album>
+        const results = await fylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS}`) as Record<_ttid, _album>
         
         //console.format(results)
         
@@ -176,7 +176,7 @@ describe("SQL", async () => {
 
     test("SELECT LIMIT", async () => {
 
-        const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} LIMIT 5`) as Record<_ttid, _album>
+        const results = await fylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} LIMIT 5`) as Record<_ttid, _album>
         
         //console.format(results)
         
@@ -185,7 +185,7 @@ describe("SQL", async () => {
 
     test("SELECT GROUP BY", async () => {
 
-        const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} GROUP BY userId`) as unknown as Record<string, Record<keyof _album, Record<_album[keyof _album], _album>>>
+        const results = await fylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} GROUP BY userId`) as unknown as Record<string, Record<keyof _album, Record<_album[keyof _album], _album>>>
         
         //console.format(results)
         
@@ -194,7 +194,7 @@ describe("SQL", async () => {
 
     test("SELECT JOIN", async () => {
 
-        const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} INNER JOIN ${POSTS} ON userId = id`) as Record<`${_ttid}, ${_ttid}`, _album | _post>
+        const results = await fylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} INNER JOIN ${POSTS} ON userId = id`) as Record<`${_ttid}, ${_ttid}`, _album | _post>
         
         //console.format(results)
         

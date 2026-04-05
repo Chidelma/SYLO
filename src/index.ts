@@ -10,7 +10,7 @@ import { Cipher } from "./adapters/cipher"
 import './core/format'
 import './core/extensions'
 
-export default class Sylo {
+export default class Fylo {
 
     private static LOGGING = process.env.LOGGING
 
@@ -44,16 +44,16 @@ export default class Sylo {
 
         switch(op.shift()) {
             case "CREATE":
-                return await Sylo.createCollection((Parser.parse(SQL) as _storeDelete<T>).$collection!)
+                return await Fylo.createCollection((Parser.parse(SQL) as _storeDelete<T>).$collection!)
             case "DROP":
-                return await Sylo.dropCollection((Parser.parse(SQL) as _storeDelete<T>).$collection!)
+                return await Fylo.dropCollection((Parser.parse(SQL) as _storeDelete<T>).$collection!)
             case "SELECT":
                 const query = Parser.parse<T>(SQL) as _storeQuery<T>
-                if(SQL.includes('JOIN')) return await Sylo.joinDocs(query as _join<T, U>)
+                if(SQL.includes('JOIN')) return await Fylo.joinDocs(query as _join<T, U>)
                 const selCol = (query as _storeQuery<T>).$collection
                 delete (query as _storeQuery<T>).$collection
                 let docs: Record<string, unknown> | Array<_ttid> = query.$onlyIds ? new Array<_ttid> : {}
-                for await (const data of Sylo.findDocs(selCol! as string, query as _storeQuery<T>).collect()) {
+                for await (const data of Fylo.findDocs(selCol! as string, query as _storeQuery<T>).collect()) {
                     if(typeof data === 'object') {
                         docs = Object.appendGroup(docs, data)
                     } else (docs as Array<_ttid>).push(data as _ttid)
@@ -103,13 +103,13 @@ export default class Sylo {
      * Auto-configures the Cipher key from `ENCRYPTION_KEY` env var on first use.
      */
     private static async loadEncryption(collection: string): Promise<void> {
-        if (Sylo.loadedEncryption.has(collection)) return
-        Sylo.loadedEncryption.add(collection)
+        if (Fylo.loadedEncryption.has(collection)) return
+        Fylo.loadedEncryption.add(collection)
 
-        if (!Sylo.SCHEMA_DIR) return
+        if (!Fylo.SCHEMA_DIR) return
 
         try {
-            const res = await import(`${Sylo.SCHEMA_DIR}/${collection}.json`)
+            const res = await import(`${Fylo.SCHEMA_DIR}/${collection}.json`)
             const schema = res.default as Record<string, unknown>
             const encrypted = schema.$encrypted
 
@@ -163,7 +163,7 @@ export default class Sylo {
 
             if(count % 10000 === 0) console.log("Count:", count)
 
-            if(Sylo.LOGGING) {
+            if(Fylo.LOGGING) {
                 const bytes = JSON.stringify(items).length
                 const elapsed = Date.now() - start
                 const bytesPerSec = (bytes / (elapsed / 1000)).toFixed(2)
@@ -205,7 +205,7 @@ export default class Sylo {
 
             for(const item of values) {
                 batch.push(item as T)
-                if(batch.length === Sylo.MAX_CPUS) {
+                if(batch.length === Fylo.MAX_CPUS) {
                     await flush(batch)
                     batch = []
                     if(limit && count >= limit) return count
@@ -223,9 +223,9 @@ export default class Sylo {
             const data = JSON.parse(new TextDecoder().decode(body))
             const items: T[] = Array.isArray(data) ? data : [data]
 
-            for(let i = 0; i < items.length; i += Sylo.MAX_CPUS) {
+            for(let i = 0; i < items.length; i += Fylo.MAX_CPUS) {
                 if(limit && count >= limit) break
-                await flush(items.slice(i, i + Sylo.MAX_CPUS))
+                await flush(items.slice(i, i + Fylo.MAX_CPUS))
             }
 
         } else {
@@ -412,28 +412,28 @@ export default class Sylo {
         // Serialize TTID generation so concurrent callers (e.g. batchPutData)
         // never invoke TTID.generate() at the same sub-millisecond instant.
         let _id!: _ttid
-        const prev = Sylo.ttidLock
-        Sylo.ttidLock = prev.then(async () => {
+        const prev = Fylo.ttidLock
+        Fylo.ttidLock = prev.then(async () => {
             _id = existingId ? TTID.generate(existingId) : TTID.generate()
             // Claim in Redis for cross-process uniqueness (no-op if Redis unavailable)
             if(!(await Dir.claimTTID(_id))) throw new Error('TTID collision — retry')
         })
-        await Sylo.ttidLock
+        await Fylo.ttidLock
 
         return _id
     }
 
     async putData<T extends Record<string, any>>(collection: string, data: Record<_ttid, T> | T) {
 
-        await Sylo.loadEncryption(collection)
+        await Fylo.loadEncryption(collection)
 
         const currId = Object.keys(data).shift()!
         
-        const _id = TTID.isTTID(currId) ? await Sylo.uniqueTTID(currId) : await Sylo.uniqueTTID()
+        const _id = TTID.isTTID(currId) ? await Fylo.uniqueTTID(currId) : await Fylo.uniqueTTID()
         
         let doc = TTID.isTTID(currId) ? Object.values(data).shift() as T : data as T
 
-        if(Sylo.STRICT) doc = await Gen.validateData(collection, doc) as T
+        if(Fylo.STRICT) doc = await Gen.validateData(collection, doc) as T
         
         const keys = await Dir.extractKeys(collection, _id, doc)
 
@@ -444,7 +444,7 @@ export default class Sylo {
             throw new Error(`Unable to write to ${collection} collection`)
         }
         
-        if(Sylo.LOGGING) console.log(`Finished Writing ${_id}`)
+        if(Fylo.LOGGING) console.log(`Finished Writing ${_id}`)
 
         return _id
     }
@@ -458,7 +458,7 @@ export default class Sylo {
      */
     async patchDoc<T extends Record<string, any>>(collection: string, newDoc: Record<_ttid, Partial<T>>, oldDoc: Record<_ttid, T> = {}) {
 
-        await Sylo.loadEncryption(collection)
+        await Fylo.loadEncryption(collection)
 
         const _id = Object.keys(newDoc).shift() as _ttid
 
@@ -486,11 +486,11 @@ export default class Sylo {
         for(const field in newDoc[_id]) currData[field] = newDoc[_id][field]!
 
         // Generate new TTID upfront so that delete and write can proceed in parallel.
-        _newId = await Sylo.uniqueTTID(_id)
+        _newId = await Fylo.uniqueTTID(_id)
 
         let docToWrite: T = currData as T
 
-        if(Sylo.STRICT) docToWrite = await Gen.validateData(collection, currData) as T
+        if(Fylo.STRICT) docToWrite = await Gen.validateData(collection, currData) as T
 
         const newKeys = await Dir.extractKeys(collection, _newId, docToWrite)
 
@@ -504,7 +504,7 @@ export default class Sylo {
             throw new Error(`Unable to update ${collection} collection`)
         }
 
-        if(Sylo.LOGGING) console.log(`Finished Updating ${_id} to ${_newId}`)
+        if(Fylo.LOGGING) console.log(`Finished Updating ${_id} to ${_newId}`)
 
         return _newId
     }
@@ -517,7 +517,7 @@ export default class Sylo {
      */
     async patchDocs<T extends Record<string, any>>(collection: string, updateSchema: _storeUpdate<T>) {
 
-        await Sylo.loadEncryption(collection)
+        await Fylo.loadEncryption(collection)
         
         const processDoc = (doc: Record<_ttid, T>, updateSchema: _storeUpdate<T>) => {
 
@@ -537,7 +537,7 @@ export default class Sylo {
 
         if(exprs.length === 1 && exprs[0] === `**/*`) {
 
-            for(const doc of await Sylo.allDocs<T>(collection, updateSchema.$where)) {
+            for(const doc of await Fylo.allDocs<T>(collection, updateSchema.$where)) {
 
                 const promise = processDoc(doc, updateSchema)
 
@@ -594,7 +594,7 @@ export default class Sylo {
             throw new Error(`Unable to delete from ${collection} collection`)
         }
         
-        if(Sylo.LOGGING) console.log(`Finished Deleting ${_id}`)
+        if(Fylo.LOGGING) console.log(`Finished Deleting ${_id}`)
     }
 
     /**
@@ -605,7 +605,7 @@ export default class Sylo {
      */
     async delDocs<T extends Record<string, any>>(collection: string, deleteSchema?: _storeDelete<T>) {
 
-        await Sylo.loadEncryption(collection)
+        await Fylo.loadEncryption(collection)
         
         const processDoc = (doc: Record<_ttid, T>) => {
 
@@ -629,7 +629,7 @@ export default class Sylo {
 
         if(exprs.length === 1 && exprs[0] === `**/*`) {
 
-            for(const doc of await Sylo.allDocs<T>(collection, deleteSchema)) {
+            for(const doc of await Fylo.allDocs<T>(collection, deleteSchema)) {
 
                 const promise = processDoc(doc)
 
@@ -878,7 +878,7 @@ export default class Sylo {
         
         const ids = res.commonPrefixes?.map(item => item.prefix!.split('/')[0]!).filter(key => TTID.isTTID(key)) as _ttid[] ?? [] as _ttid[]
         
-        const docs = await Promise.allSettled(ids.map(id => Sylo.getDoc<T>(collection, id).once()))
+        const docs = await Promise.allSettled(ids.map(id => Fylo.getDoc<T>(collection, id).once()))
         
         return docs.filter(item => item.status === 'fulfilled').map(item => item.value).filter(doc => Object.keys(doc).length > 0)
     }
@@ -982,12 +982,12 @@ export default class Sylo {
              */
             async *[Symbol.asyncIterator]() {
 
-                await Sylo.loadEncryption(collection)
+                await Fylo.loadEncryption(collection)
 
                 const expression = await Query.getExprs(collection, query ?? {})
 
                 if(expression.length === 1 && expression[0] === `**/*`) {
-                    for(const doc of await Sylo.allDocs<T>(collection, query)) yield processDoc(doc, query)
+                    for(const doc of await Fylo.allDocs<T>(collection, query)) yield processDoc(doc, query)
                 } 
 
                 let count = 0
@@ -1020,13 +1020,13 @@ export default class Sylo {
              */
             async *collect() {
 
-                await Sylo.loadEncryption(collection)
+                await Fylo.loadEncryption(collection)
 
                 const expression = await Query.getExprs(collection, query ?? {})
 
                 if(expression.length === 1 && expression[0] === `**/*`) {
 
-                    for(const doc of await Sylo.allDocs<T>(collection, query)) yield processDoc(doc, query)
+                    for(const doc of await Fylo.allDocs<T>(collection, query)) yield processDoc(doc, query)
                 
                 } else {
 
@@ -1061,7 +1061,7 @@ export default class Sylo {
              */
             async *onDelete() {
 
-                await Sylo.loadEncryption(collection)
+                await Fylo.loadEncryption(collection)
 
                 let count = 0
                 let finished = false

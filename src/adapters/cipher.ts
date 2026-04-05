@@ -77,7 +77,7 @@ export class Cipher {
 
         // Derive 48 bytes: 32 for AES key + 16 for HMAC key
         const bits = await crypto.subtle.deriveBits(
-            { name: 'PBKDF2', salt: encoder.encode(cipherSalt ?? 'sylo-cipher'), iterations: 100000, hash: 'SHA-256' },
+            { name: 'PBKDF2', salt: encoder.encode(cipherSalt ?? 'fylo-cipher'), iterations: 100000, hash: 'SHA-256' },
             keyMaterial,
             384
         )

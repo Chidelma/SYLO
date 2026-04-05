@@ -20,7 +20,7 @@ interface Console {
 
 type _joinDocs<T, U> = _ttid[] | Record<string, _ttid[]> | Record<string,  Record<_ttid, Partial<T | U>>> | Record<`${_ttid}, ${_ttid}`, T | U | (T & U) | (Partial<T> & Partial<U>)>
 
-declare module "@vyckr/sylo" {
+declare module "@vyckr/fylo" {
 
     export default class {
 

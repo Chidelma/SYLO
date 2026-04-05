@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
-import Sylo from '../../src'
+import Fylo from '../../src'
 import { albumURL } from '../data'
 import S3Mock from '../mocks/s3'
 import RedisMock from '../mocks/redis'
@@ -15,22 +15,22 @@ import RedisMock from '../mocks/redis'
 
 const ALBUMS = 'ops-album'
 
-const sylo = new Sylo()
+const fylo = new Fylo()
 
 mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
 mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
 
 beforeAll(async () => {
-    await Sylo.createCollection(ALBUMS)
+    await Fylo.createCollection(ALBUMS)
     try {
-        await sylo.importBulkData<_album>(ALBUMS, new URL(albumURL), 100)
+        await fylo.importBulkData<_album>(ALBUMS, new URL(albumURL), 100)
     } catch {
-        await sylo.rollback()
+        await fylo.rollback()
     }
 })
 
 afterAll(async () => {
-    await Sylo.dropCollection(ALBUMS)
+    await Fylo.dropCollection(ALBUMS)
 })
 
 describe("NO-SQL", async () => {
@@ -39,7 +39,7 @@ describe("NO-SQL", async () => {
 
         let results: Record<_ttid, _album> = {}
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $ne: 1 } }] }).collect()) {
+        for await (const data of Fylo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $ne: 1 } }] }).collect()) {
             results = { ...results, ...data as Record<_ttid, _album> }
         }
 
@@ -54,7 +54,7 @@ describe("NO-SQL", async () => {
 
         let results: Record<_ttid, _album> = {}
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $lt: 5 } }] }).collect()) {
+        for await (const data of Fylo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $lt: 5 } }] }).collect()) {
             results = { ...results, ...data as Record<_ttid, _album> }
         }
 
@@ -69,7 +69,7 @@ describe("NO-SQL", async () => {
 
         let results: Record<_ttid, _album> = {}
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $lte: 5 } }] }).collect()) {
+        for await (const data of Fylo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $lte: 5 } }] }).collect()) {
             results = { ...results, ...data as Record<_ttid, _album> }
         }
 
@@ -84,7 +84,7 @@ describe("NO-SQL", async () => {
 
         let results: Record<_ttid, _album> = {}
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $gt: 5 } }] }).collect()) {
+        for await (const data of Fylo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $gt: 5 } }] }).collect()) {
             results = { ...results, ...data as Record<_ttid, _album> }
         }
 
@@ -99,7 +99,7 @@ describe("NO-SQL", async () => {
 
         let results: Record<_ttid, _album> = {}
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $gte: 5 } }] }).collect()) {
+        for await (const data of Fylo.findDocs<_album>(ALBUMS, { $ops: [{ userId: { $gte: 5 } }] }).collect()) {
             results = { ...results, ...data as Record<_ttid, _album> }
         }
 
@@ -114,7 +114,7 @@ describe("NO-SQL", async () => {
 
         let results: Record<_ttid, _album> = {}
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $ops: [{ title: { $like: '%quidem%' } }] }).collect()) {
+        for await (const data of Fylo.findDocs<_album>(ALBUMS, { $ops: [{ title: { $like: '%quidem%' } }] }).collect()) {
             results = { ...results, ...data as Record<_ttid, _album> }
         }
 
@@ -129,7 +129,7 @@ describe("NO-SQL", async () => {
 
         let results: Record<_ttid, _album> = {}
 
-        for await (const data of Sylo.findDocs<_album>(ALBUMS, { $ops: [{ title: { $like: 'omnis%' } }] }).collect()) {
+        for await (const data of Fylo.findDocs<_album>(ALBUMS, { $ops: [{ title: { $like: 'omnis%' } }] }).collect()) {
             results = { ...results, ...data as Record<_ttid, _album> }
         }
 
@@ -145,7 +145,7 @@ describe("SQL", async () => {
 
     test("WHERE != — excludes matching value", async () => {
 
-        const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} WHERE userId != 1`) as Record<_ttid, _album>
+        const results = await fylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} WHERE userId != 1`) as Record<_ttid, _album>
 
         const albums = Object.values(results)
         const hasUserId1 = albums.some(a => a.userId === 1)
@@ -156,7 +156,7 @@ describe("SQL", async () => {
 
     test("WHERE LIKE — matches substring pattern", async () => {
 
-        const results = await sylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} WHERE title LIKE '%quidem%'`) as Record<_ttid, _album>
+        const results = await fylo.executeSQL<_album>(`SELECT * FROM ${ALBUMS} WHERE title LIKE '%quidem%'`) as Record<_ttid, _album>
 
         const albums = Object.values(results)
         const allMatch = albums.every(a => a.title.includes('quidem'))
