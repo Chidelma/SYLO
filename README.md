@@ -201,6 +201,30 @@ docker compose up aws
 
 This starts LocalStack on `localhost:4566`. Set `S3_ENDPOINT=http://localhost:4566` to route S3 calls locally.
 
+## Security
+
+### What Sylo does NOT provide
+
+Sylo is a low-level storage abstraction. The following must be implemented by the integrating application:
+
+- **Authentication** — Sylo has no concept of users or sessions. Any caller with access to the Sylo instance can read and write any collection.
+- **Authorization** — `executeSQL` and all document operations accept any collection name with no permission check. In multi-tenant applications, a caller can access any collection unless the integrator enforces a boundary above Sylo.
+- **Rate limiting** — There is no built-in request throttling. An attacker with access to the instance can flood S3 with requests or trigger expensive operations without restriction. Add rate limiting and document-size limits in your service layer.
+
+### Secure configuration
+
+| Concern | Guidance |
+|---------|----------|
+| AWS credentials | Never commit credentials to version control. Use IAM instance roles or inject via CI secrets. Rotate any credentials that have been exposed. |
+| `ENCRYPTION_KEY` | Must be at least 32 characters. Use a high-entropy random value. |
+| `CIPHER_SALT` | Set a unique random value per deployment to prevent cross-instance precomputation attacks. |
+| `REDIS_URL` | Always set explicitly. Use `rediss://` (TLS) in production with authentication credentials in the URL. |
+| Collection names | Must match `^[a-z0-9][a-z0-9\-]*[a-z0-9]$`. Names are validated before any shell or S3 operation. |
+
+### Encrypted fields
+
+Fields listed in `$encrypted` in a collection schema are encrypted with AES-256-CBC. By default a random IV is used per write (non-deterministic). Pass `deterministic: true` to `Cipher.encrypt()` only for fields that require `$eq`/`$ne` queries — deterministic encryption leaks value equality to observers of stored ciphertext.
+
 ## License
 
 MIT

@@ -117,6 +117,7 @@ export default class Sylo {
                 if (!Cipher.isConfigured()) {
                     const secret = process.env.ENCRYPTION_KEY
                     if (!secret) throw new Error('Schema declares $encrypted fields but ENCRYPTION_KEY env var is not set')
+                    if (secret.length < 32) throw new Error('ENCRYPTION_KEY must be at least 32 characters long')
                     await Cipher.configure(secret)
                 }
                 Cipher.registerFields(collection, encrypted as string[])
@@ -143,7 +144,7 @@ export default class Sylo {
 
         const res = await fetch(url)
 
-        if(!res.headers.get('content-type')?.includes('application/json')) throw new Error(`Invalid content type: ${res.headers.get('content-type')}`)
+        if(!res.headers.get('content-type')?.includes('application/json')) throw new Error('Response is not JSON')
 
         let count = 0
         let batchNum = 0
@@ -415,7 +416,7 @@ export default class Sylo {
         Sylo.ttidLock = prev.then(async () => {
             _id = existingId ? TTID.generate(existingId) : TTID.generate()
             // Claim in Redis for cross-process uniqueness (no-op if Redis unavailable)
-            if(!(await Dir.claimTTID(_id))) return
+            if(!(await Dir.claimTTID(_id))) throw new Error('TTID collision — retry')
         })
         await Sylo.ttidLock
 

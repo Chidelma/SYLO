@@ -11,7 +11,14 @@ export class S3 {
         endpoint: process.env.S3_ENDPOINT ?? process.env.AWS_ENDPOINT
     }
 
+    private static validateCollection(collection: string): void {
+        if (!/^[a-z0-9][a-z0-9\-]*[a-z0-9]$/.test(collection)) {
+            throw new Error('Invalid collection name')
+        }
+    }
+
     static getBucketFormat(collection: string) {
+        S3.validateCollection(collection)
         return S3.BUCKET_ENV ? `${S3.BUCKET_ENV}-${collection}` : collection
     }
 
