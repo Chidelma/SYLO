@@ -36,7 +36,7 @@ jobs:
     needs: test
     permissions:
       contents: write   # create git tags
-      id-token: write   # npm provenance
+      id-token: write
 
     steps:
       - name: Checkout
@@ -70,10 +70,11 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Publish to npm (Trusted Publishing via OIDC)
+      - name: Publish to npm
         run: |
           echo "registry=https://registry.npmjs.org/" >> ~/.npmrc
-          npm publish --access public --provenance
+          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" >> ~/.npmrc
+          npm publish --access public
 
       - name: Create and push version tag
         run: |
