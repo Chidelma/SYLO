@@ -43,7 +43,7 @@ export class Walker {
 
                     const _id = segements.pop()! as _ttid
 
-                    if((TTID.isTTID(_id) && !uniqueIds.has(_id)) && new Bun.Glob(pattern).match(key)) {
+                    if((TTID.isTTID(_id) && !uniqueIds.has(_id)) && pattern.length <= 1024 && new Bun.Glob(pattern).match(key)) {
 
                         filter = yield { _id, data: await this.getDocData(collection, _id) }
 
@@ -130,7 +130,7 @@ export class Walker {
 
         for await (const { action, keyId } of Walker.redis.subscribe(collection)) {
 
-            if(action === 'insert' && !TTID.isTTID(keyId) && new Bun.Glob(pattern).match(keyId)) {
+            if(action === 'insert' && !TTID.isTTID(keyId) && pattern.length <= 1024 && new Bun.Glob(pattern).match(keyId)) {
 
                 const _id = keyId.split('/').pop()! as _ttid
 

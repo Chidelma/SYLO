@@ -262,7 +262,7 @@ class SQLParser {
 
     private expect(type: TokenType): Token {
         if (this.current.type !== type) {
-            throw new Error(`Expected ${type}, got ${this.current.type} at position ${this.current.position}`)
+            throw new Error('Invalid SQL syntax')
         }
         const token = this.current
         this.advance()

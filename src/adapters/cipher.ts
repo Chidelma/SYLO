@@ -1,13 +1,21 @@
 /**
- * Deterministic AES-256-CBC encryption adapter for field-level value encryption.
- * Uses HMAC-SHA256 of the plaintext as the IV so that identical values always
- * produce the same ciphertext — enabling exact-match queries ($eq, $ne) on
- * encrypted fields while keeping values opaque in S3 key paths.
+ * AES-256-CBC encryption adapter for field-level value encryption.
+ *
+ * Two modes are supported via the `deterministic` flag on `encrypt()`:
+ *
+ * - **Random IV (default)**: A cryptographically random IV is generated per
+ *   encryption operation. Identical plaintexts produce different ciphertexts.
+ *   Use this for fields that do not need exact-match ($eq/$ne) queries.
+ *
+ * - **Deterministic IV (opt-in)**: The IV is derived from HMAC-SHA256 of the
+ *   plaintext, so identical values always produce identical ciphertext. This
+ *   enables exact-match queries on encrypted fields but leaks equality — an
+ *   observer can determine which records share field values without decrypting.
+ *   Use only when $eq/$ne queries on encrypted fields are required.
  *
  * Encrypted fields are declared per-collection in JSON schema files via the
  * `$encrypted` array. The encryption key is sourced from `ENCRYPTION_KEY` env var.
- *
- * NOT safe for high-security contexts where equality leakage is unacceptable.
+ * Set `CIPHER_SALT` to a unique random value to prevent cross-deployment attacks.
  */
 
 export class Cipher {
@@ -62,9 +70,14 @@ export class Cipher {
             ['deriveBits']
         )
 
+        const cipherSalt = process.env.CIPHER_SALT
+        if (!cipherSalt) {
+            console.warn('CIPHER_SALT is not set. Using default salt is insecure for multi-deployment use. Set CIPHER_SALT to a unique random value.')
+        }
+
         // Derive 48 bytes: 32 for AES key + 16 for HMAC key
         const bits = await crypto.subtle.deriveBits(
-            { name: 'PBKDF2', salt: encoder.encode('sylo-cipher'), iterations: 100000, hash: 'SHA-256' },
+            { name: 'PBKDF2', salt: encoder.encode(cipherSalt ?? 'sylo-cipher'), iterations: 100000, hash: 'SHA-256' },
             keyMaterial,
             384
         )
@@ -105,11 +118,18 @@ export class Cipher {
 
     /**
      * Encrypts a value. Returns a URL-safe base64 string (no slashes).
+     *
+     * @param value - The plaintext to encrypt.
+     * @param deterministic - When true, derives IV from HMAC of plaintext (same
+     *   input always produces same ciphertext). Required for $eq/$ne queries on
+     *   encrypted fields. Defaults to false (random IV per operation).
      */
-    static async encrypt(value: string): Promise<string> {
+    static async encrypt(value: string, deterministic = false): Promise<string> {
         if (!Cipher.key) throw new Error('Cipher not configured — set ENCRYPTION_KEY env var')
 
-        const iv = await Cipher.deriveIV(value)
+        const iv = deterministic
+            ? await Cipher.deriveIV(value)
+            : crypto.getRandomValues(new Uint8Array(16))
         const encoder = new TextEncoder()
 
         const encrypted = await crypto.subtle.encrypt(

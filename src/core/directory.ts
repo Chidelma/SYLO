@@ -364,13 +364,13 @@ export class Dir {
                 if(items.some((item) => typeof item === 'object')) throw new Error(`Cannot have an array of objects`)
                 for(let i = 0; i < items.length; i++) {
                     let val = String(items[i]).split('/').join(this.SLASH_ASCII)
-                    if(Cipher.isConfigured() && Cipher.isEncryptedField(collection, newField)) val = await Cipher.encrypt(val)
+                    if(Cipher.isConfigured() && Cipher.isEncryptedField(collection, newField)) val = await Cipher.encrypt(val, true)
                     keys.data.push(`${_id}/${newField}/${i}/${val}`)
                     keys.indexes.push(`${newField}/${i}/${val}/${_id}`)
                 }
             } else {
                 let val = String(obj[field]).replaceAll('/', this.SLASH_ASCII)
-                if(Cipher.isConfigured() && Cipher.isEncryptedField(collection, newField)) val = await Cipher.encrypt(val)
+                if(Cipher.isConfigured() && Cipher.isEncryptedField(collection, newField)) val = await Cipher.encrypt(val, true)
                 keys.data.push(`${_id}/${newField}/${val}`)
                 keys.indexes.push(`${newField}/${val}/${_id}`)
             }

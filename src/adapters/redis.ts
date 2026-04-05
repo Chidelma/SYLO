@@ -9,7 +9,10 @@ export class Redis {
 
     constructor() {
 
-        this.client = new RedisClient(process.env.REDIS_URL ?? 'redis://localhost:6379', {
+        const redisUrl = process.env.REDIS_URL
+        if (!redisUrl) throw new Error('REDIS_URL environment variable is required')
+
+        this.client = new RedisClient(redisUrl, {
             connectionTimeout: process.env.REDIS_CONN_TIMEOUT ? Number(process.env.REDIS_CONN_TIMEOUT) : undefined,
             idleTimeout: process.env.REDIS_IDLE_TIMEOUT ? Number(process.env.REDIS_IDLE_TIMEOUT) : undefined,
             autoReconnect: process.env.REDIS_AUTO_CONNECT ? true : undefined,
@@ -60,7 +63,9 @@ export class Redis {
         })
 
         for await (const chunk of stream) {
-            yield JSON.parse(chunk)
+            const parsed = JSON.parse(chunk)
+            if (typeof parsed !== 'object' || parsed === null || !('action' in parsed) || !('keyId' in parsed)) continue
+            yield parsed
         }
     }
 }
