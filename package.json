@@ -1,6 +1,6 @@
 {
   "name": "@vyckr/fylo",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "main": "./dist/index.js",
   "types": "./dist/types/index.d.ts",
   "bin": {
@@ -34,6 +34,7 @@
     "type": "git",
     "url": "git+https://github.com/Chidelma/Fylo.git"
   },
+  "homepage": "https://fylo.vyckr.com",
   "license": "MIT",
   "keywords": [
     "storage",
