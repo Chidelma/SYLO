@@ -36,6 +36,7 @@ jobs:
     needs: test
     permissions:
       contents: write   # create git tags
+      id-token: write   # npm provenance
 
     steps:
       - name: Checkout
@@ -53,7 +54,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Upgrade npm
         run: npm install -g npm@latest
@@ -70,20 +70,10 @@ jobs:
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Verify NPM token
+      - name: Publish to npm (Trusted Publishing via OIDC)
         run: |
-          if [ -z "${NPM_TOKEN}" ]; then
-            echo "NPM_TOKEN secret is not configured."
-            exit 1
-          fi
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Publish to npm
-        run: |
-          npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          echo "registry=https://registry.npmjs.org/" >> ~/.npmrc
+          npm publish --access public --provenance
 
       - name: Create and push version tag
         run: |
