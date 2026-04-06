@@ -1,6 +1,6 @@
 {
   "name": "@delma/fylo",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "main": "./dist/index.js",
   "types": "./dist/types/index.d.ts",
   "bin": {
