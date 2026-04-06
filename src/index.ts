@@ -2,8 +2,8 @@
 import { Query } from './core/query'
 import { Parser } from './core/parser'
 import { Dir } from "./core/directory";
-import TTID from '@vyckr/ttid';
-import Gen from "@vyckr/chex"
+import TTID from '@delma/ttid';
+import Gen from "@delma/chex"
 import { Walker } from './core/walker';
 import { S3 } from "./adapters/s3"
 import { Cipher } from "./adapters/cipher"

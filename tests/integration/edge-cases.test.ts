@@ -1,6 +1,6 @@
 import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
 import Fylo from '../../src'
-import TTID from '@vyckr/ttid'
+import TTID from '@delma/ttid'
 import S3Mock from '../mocks/s3'
 import RedisMock from '../mocks/redis'
 

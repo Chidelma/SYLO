@@ -1,5 +1,5 @@
 import { Walker } from "./walker"
-import TTID from "@vyckr/ttid"
+import TTID from "@delma/ttid"
 import { S3 } from "../adapters/s3"
 import { Redis } from "../adapters/redis"
 import { Cipher } from "../adapters/cipher"

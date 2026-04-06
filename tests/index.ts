@@ -1,5 +1,5 @@
 import { Redis } from '../src/adapters/redis'
-import ttid from '@vyckr/ttid'
+import ttid from '@delma/ttid'
 
 const redisPub = new Redis()
 const redisSub = new Redis()
