@@ -1,5 +1,5 @@
 import { S3 } from "../adapters/s3"
-import TTID from "@vyckr/ttid"
+import TTID from "@delma/ttid"
 import { Redis } from "../adapters/redis"
 
 export class Walker {
