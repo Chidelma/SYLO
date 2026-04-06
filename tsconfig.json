@@ -12,7 +12,7 @@
         "noFallthroughCasesInSwitch": true,
         "noImplicitReturns": true,
         "forceConsistentCasingInFileNames": true,
-        "types": ["bun-types", "node", "@vyckr/ttid"],
+        "types": ["bun-types", "node", "@delma/ttid"],
         "isolatedModules": true,
         "skipLibCheck": true
     }
