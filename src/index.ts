@@ -7,8 +7,12 @@ import Gen from "@vyckr/chex"
 import { Walker } from './core/walker';
 import { S3 } from "./adapters/s3"
 import { Cipher } from "./adapters/cipher"
+import { Redis } from "./adapters/redis"
+import { WriteQueue } from './core/write-queue'
 import './core/format'
 import './core/extensions'
+import type { QueueStats, QueuedWriteResult, WriteJob } from './types/write-queue'
+import type { StreamJobEntry } from './types/write-queue'
 
 export default class Fylo {
 
@@ -25,10 +29,23 @@ export default class Fylo {
     /** Collections whose schema `$encrypted` config has already been loaded. */
     private static readonly loadedEncryption: Set<string> = new Set()
 
+    private static _queueRedis: Redis | null = null
+
+    private static rollbackWarningShown = false
+
+    private static readonly MAX_WRITE_ATTEMPTS = Number(process.env.FYLO_WRITE_MAX_ATTEMPTS ?? 3)
+
+    private static readonly WRITE_RETRY_BASE_MS = Number(process.env.FYLO_WRITE_RETRY_BASE_MS ?? 10)
+
     private dir: Dir;
 
     constructor() {
         this.dir = new Dir()
+    }
+
+    private static get queueRedis(): Redis {
+        if(!Fylo._queueRedis) Fylo._queueRedis = new Redis()
+        return Fylo._queueRedis
     }
 
     /**
@@ -129,9 +146,140 @@ export default class Fylo {
 
     /**
      * Rolls back all transcations in current instance
+     * @deprecated Prefer queued write recovery, retries, dead letters, or compensating writes.
      */
     async rollback() {
+        if(!Fylo.rollbackWarningShown) {
+            Fylo.rollbackWarningShown = true
+            console.warn('[FYLO] rollback() is deprecated for queued-write flows. Prefer job recovery, dead letters, or compensating writes.')
+        }
         await this.dir.executeRollback()
+    }
+
+    async getJobStatus(jobId: string) {
+        return await Fylo.queueRedis.getJob(jobId)
+    }
+
+    async getDocStatus(collection: string, docId: _ttid) {
+        return await Fylo.queueRedis.getDocStatus(collection, docId)
+    }
+
+    async getDeadLetters(count: number = 10) {
+        return await Fylo.queueRedis.readDeadLetters(count)
+    }
+
+    async getQueueStats(): Promise<QueueStats> {
+        return await Fylo.queueRedis.getQueueStats()
+    }
+
+    async replayDeadLetter(streamId: string) {
+        return await Fylo.queueRedis.replayDeadLetter(streamId)
+    }
+
+    private async waitForJob(jobId: string, timeoutMs: number = 5_000, intervalMs: number = 50) {
+
+        const start = Date.now()
+
+        do {
+            const job = await this.getJobStatus(jobId)
+            if(job && (job.status === 'committed' || job.status === 'failed')) return job
+            await Bun.sleep(intervalMs)
+        } while(Date.now() - start < timeoutMs)
+
+        throw new Error(`Timed out waiting for job ${jobId}`)
+    }
+
+    private async runQueuedJob<T>(
+        queued: QueuedWriteResult,
+        {
+            wait = true
+        }: {
+            wait?: boolean
+            timeoutMs?: number
+        } = {},
+        resolveValue?: () => Promise<T> | T
+    ): Promise<T | QueuedWriteResult> {
+
+        if(!wait) return queued
+
+        const processed = await this.processQueuedWrites(1)
+
+        if(processed === 0) throw new Error(`No worker available to process job ${queued.jobId}`)
+
+        const job = await this.getJobStatus(queued.jobId)
+
+        if(job?.status === 'failed') {
+            throw new Error(job.error ?? `Queued job ${queued.jobId} failed`)
+        }
+
+        return resolveValue ? await resolveValue() : queued
+    }
+
+    async processQueuedWrites(count: number = 1, recover: boolean = false) {
+        const jobs = recover
+            ? await Fylo.queueRedis.claimPendingJobs(Bun.randomUUIDv7(), 30_000, count)
+            : await Fylo.queueRedis.readWriteJobs(Bun.randomUUIDv7(), count)
+
+        let processed = 0
+
+        for(const job of jobs) {
+            if(await this.processQueuedJob(job)) processed++
+        }
+
+        return processed
+    }
+
+    private async processQueuedJob({ streamId, job }: StreamJobEntry) {
+        if(job.nextAttemptAt && job.nextAttemptAt > Date.now()) return false
+
+        const locked = await Fylo.queueRedis.acquireDocLock(job.collection, job.docId, job.jobId)
+        if(!locked) return false
+
+        try {
+            await Fylo.queueRedis.setJobStatus(job.jobId, 'processing', {
+                attempts: job.attempts + 1
+            })
+            await Fylo.queueRedis.setDocStatus(job.collection, job.docId, 'processing', job.jobId)
+
+            await this.executeQueuedWrite(job)
+
+            await Fylo.queueRedis.setJobStatus(job.jobId, 'committed')
+            await Fylo.queueRedis.setDocStatus(job.collection, job.docId, 'committed', job.jobId)
+            await Fylo.queueRedis.ackWriteJob(streamId)
+            return true
+
+        } catch(err) {
+            const attempts = job.attempts + 1
+            const message = err instanceof Error ? err.message : String(err)
+
+            if(attempts >= Fylo.MAX_WRITE_ATTEMPTS) {
+                await Fylo.queueRedis.setJobStatus(job.jobId, 'dead-letter', {
+                    error: message,
+                    attempts
+                })
+                await Fylo.queueRedis.setDocStatus(job.collection, job.docId, 'dead-letter', job.jobId)
+                await Fylo.queueRedis.deadLetterWriteJob(streamId, {
+                    ...job,
+                    attempts,
+                    status: 'dead-letter',
+                    error: message
+                }, message)
+                return false
+            }
+
+            const nextAttemptAt = Date.now() + (Fylo.WRITE_RETRY_BASE_MS * Math.max(1, 2 ** (attempts - 1)))
+
+            await Fylo.queueRedis.setJobStatus(job.jobId, 'failed', {
+                error: message,
+                attempts,
+                nextAttemptAt
+            })
+            await Fylo.queueRedis.setDocStatus(job.collection, job.docId, 'failed', job.jobId)
+            return false
+
+        } finally {
+            await Fylo.queueRedis.releaseDocLock(job.collection, job.docId, job.jobId)
+        }
     }
 
     /**
@@ -401,6 +549,54 @@ export default class Fylo {
         return ids
     }
 
+    async queuePutData<T extends Record<string, any>>(collection: string, data: Record<_ttid, T> | T): Promise<QueuedWriteResult> {
+
+        const { _id, doc } = await this.prepareInsert(collection, data)
+        const job = WriteQueue.createInsertJob(collection, _id, doc)
+
+        await Fylo.queueRedis.enqueueWrite(job)
+
+        return {
+            jobId: job.jobId,
+            docId: _id,
+            status: 'queued'
+        }
+    }
+
+    async queuePatchDoc<T extends Record<string, any>>(
+        collection: string,
+        newDoc: Record<_ttid, Partial<T>>,
+        oldDoc: Record<_ttid, T> = {}
+    ): Promise<QueuedWriteResult> {
+
+        const docId = Object.keys(newDoc).shift() as _ttid
+
+        if(!docId) throw new Error("this document does not contain an TTID")
+
+        const job = WriteQueue.createUpdateJob(collection, docId, { newDoc, oldDoc })
+
+        await Fylo.queueRedis.enqueueWrite(job)
+
+        return {
+            jobId: job.jobId,
+            docId,
+            status: 'queued'
+        }
+    }
+
+    async queueDelDoc(collection: string, _id: _ttid): Promise<QueuedWriteResult> {
+
+        const job = WriteQueue.createDeleteJob(collection, _id)
+
+        await Fylo.queueRedis.enqueueWrite(job)
+
+        return {
+            jobId: job.jobId,
+            docId: _id,
+            status: 'queued'
+        }
+    }
+
     /**
      * Puts a document into a collection.
      * @param collection The name of the collection.
@@ -423,18 +619,22 @@ export default class Fylo {
         return _id
     }
 
-    async putData<T extends Record<string, any>>(collection: string, data: Record<_ttid, T> | T) {
+    private async prepareInsert<T extends Record<string, any>>(collection: string, data: Record<_ttid, T> | T) {
 
         await Fylo.loadEncryption(collection)
 
         const currId = Object.keys(data).shift()!
-        
         const _id = TTID.isTTID(currId) ? await Fylo.uniqueTTID(currId) : await Fylo.uniqueTTID()
-        
+
         let doc = TTID.isTTID(currId) ? Object.values(data).shift() as T : data as T
 
         if(Fylo.STRICT) doc = await Gen.validateData(collection, doc) as T
-        
+
+        return { _id, doc }
+    }
+
+    private async executePutDataDirect<T extends Record<string, any>>(collection: string, _id: _ttid, doc: T) {
+
         const keys = await Dir.extractKeys(collection, _id, doc)
 
         const results = await Promise.allSettled(keys.data.map((item, i) => this.dir.putKeys(collection, { dataKey: item, indexKey: keys.indexes[i] })))
@@ -443,20 +643,13 @@ export default class Fylo {
             await this.dir.executeRollback()
             throw new Error(`Unable to write to ${collection} collection`)
         }
-        
+
         if(Fylo.LOGGING) console.log(`Finished Writing ${_id}`)
 
         return _id
     }
 
-    /**
-     * Patches a document in a collection.
-     * @param collection The name of the collection.
-     * @param newDoc The new document data.
-     * @param oldDoc The old document data.
-     * @returns The number of documents patched.
-     */
-    async patchDoc<T extends Record<string, any>>(collection: string, newDoc: Record<_ttid, Partial<T>>, oldDoc: Record<_ttid, T> = {}) {
+    private async executePatchDocDirect<T extends Record<string, any>>(collection: string, newDoc: Record<_ttid, Partial<T>>, oldDoc: Record<_ttid, T> = {}) {
 
         await Fylo.loadEncryption(collection)
 
@@ -466,8 +659,6 @@ export default class Fylo {
 
         if(!_id) throw new Error("this document does not contain an TTID")
 
-        // Fetch data keys once — needed for deletion and, when oldDoc is absent, reconstruction.
-        // Previously, delDoc re-fetched these internally, causing a redundant S3 list call per document.
         const dataKeys = await Walker.getDocData(collection, _id)
 
         if(dataKeys.length === 0) return _newId
@@ -485,7 +676,6 @@ export default class Fylo {
 
         for(const field in newDoc[_id]) currData[field] = newDoc[_id][field]!
 
-        // Generate new TTID upfront so that delete and write can proceed in parallel.
         _newId = await Fylo.uniqueTTID(_id)
 
         let docToWrite: T = currData as T
@@ -507,6 +697,80 @@ export default class Fylo {
         if(Fylo.LOGGING) console.log(`Finished Updating ${_id} to ${_newId}`)
 
         return _newId
+    }
+
+    private async executeDelDocDirect(collection: string, _id: _ttid) {
+
+        const keys = await Walker.getDocData(collection, _id)
+
+        const results = await Promise.allSettled(keys.map(key => this.dir.deleteKeys(collection, key)))
+
+        if(results.some(res => res.status === "rejected")) {
+            await this.dir.executeRollback()
+            throw new Error(`Unable to delete from ${collection} collection`)
+        }
+
+        if(Fylo.LOGGING) console.log(`Finished Deleting ${_id}`)
+    }
+
+    async putData<T extends Record<string, any>>(collection: string, data: T): Promise<_ttid>
+    async putData<T extends Record<string, any>>(collection: string, data: Record<_ttid, T>): Promise<_ttid>
+    async putData<T extends Record<string, any>>(collection: string, data: T, options: { wait?: true, timeoutMs?: number }): Promise<_ttid>
+    async putData<T extends Record<string, any>>(collection: string, data: Record<_ttid, T>, options: { wait?: true, timeoutMs?: number }): Promise<_ttid>
+    async putData<T extends Record<string, any>>(collection: string, data: T, options: { wait: false, timeoutMs?: number }): Promise<QueuedWriteResult>
+    async putData<T extends Record<string, any>>(collection: string, data: Record<_ttid, T>, options: { wait: false, timeoutMs?: number }): Promise<QueuedWriteResult>
+    async putData<T extends Record<string, any>>(
+        collection: string,
+        data: Record<_ttid, T> | T,
+        options: { wait?: boolean, timeoutMs?: number } = {}
+    ): Promise<_ttid | QueuedWriteResult> {
+
+        const queued = await this.queuePutData(collection, data)
+
+        return await this.runQueuedJob(queued, options, async () => queued.docId)
+    }
+
+    async executeQueuedWrite(job: WriteJob) {
+
+        switch(job.operation) {
+            case 'insert':
+                await Fylo.loadEncryption(job.collection)
+                return await this.executePutDataDirect(job.collection, job.docId, job.payload)
+            case 'update':
+                return await this.executePatchDocDirect(
+                    job.collection,
+                    job.payload.newDoc as Record<_ttid, Partial<Record<string, any>>>,
+                    job.payload.oldDoc as Record<_ttid, Record<string, any>> | undefined
+                )
+            case 'delete':
+                return await this.executeDelDocDirect(job.collection, job.payload._id as _ttid)
+            default:
+                throw new Error(`Unsupported queued write operation: ${job.operation}`)
+        }
+    }
+
+    /**
+     * Patches a document in a collection.
+     * @param collection The name of the collection.
+     * @param newDoc The new document data.
+     * @param oldDoc The old document data.
+     * @returns The number of documents patched.
+     */
+    async patchDoc<T extends Record<string, any>>(collection: string, newDoc: Record<_ttid, Partial<T>>, oldDoc?: Record<_ttid, T>): Promise<_ttid>
+    async patchDoc<T extends Record<string, any>>(collection: string, newDoc: Record<_ttid, Partial<T>>, oldDoc: Record<_ttid, T> | undefined, options: { wait?: true, timeoutMs?: number }): Promise<_ttid>
+    async patchDoc<T extends Record<string, any>>(collection: string, newDoc: Record<_ttid, Partial<T>>, oldDoc: Record<_ttid, T> | undefined, options: { wait: false, timeoutMs?: number }): Promise<QueuedWriteResult>
+    async patchDoc<T extends Record<string, any>>(
+        collection: string,
+        newDoc: Record<_ttid, Partial<T>>,
+        oldDoc: Record<_ttid, T> = {},
+        options: { wait?: boolean, timeoutMs?: number } = {}
+    ): Promise<_ttid | QueuedWriteResult> {
+        const queued = await this.queuePatchDoc(collection, newDoc, oldDoc)
+
+        return await this.runQueuedJob(queued, options, async () => {
+            const job = await this.getJobStatus(queued.jobId)
+            return (job?.docId ?? queued.docId) as _ttid
+        })
     }
 
     /**
@@ -583,18 +847,17 @@ export default class Fylo {
      * @param _id The ID of the document.
      * @returns The number of documents deleted.
      */
-    async delDoc(collection: string, _id: _ttid) {
+    async delDoc(collection: string, _id: _ttid): Promise<void>
+    async delDoc(collection: string, _id: _ttid, options: { wait?: true, timeoutMs?: number }): Promise<void>
+    async delDoc(collection: string, _id: _ttid, options: { wait: false, timeoutMs?: number }): Promise<QueuedWriteResult>
+    async delDoc(
+        collection: string,
+        _id: _ttid,
+        options: { wait?: boolean, timeoutMs?: number } = {}
+    ): Promise<void | QueuedWriteResult> {
+        const queued = await this.queueDelDoc(collection, _id)
 
-        const keys = await Walker.getDocData(collection, _id)
-
-        const results = await Promise.allSettled(keys.map(key => this.dir.deleteKeys(collection, key)))
-
-        if(results.some(res => res.status === "rejected")) {
-            await this.dir.executeRollback()
-            throw new Error(`Unable to delete from ${collection} collection`)
-        }
-        
-        if(Fylo.LOGGING) console.log(`Finished Deleting ${_id}`)
+        await this.runQueuedJob(queued, options, async () => undefined)
     }
 
     /**
