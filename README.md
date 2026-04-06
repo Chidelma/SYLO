@@ -1,10 +1,12 @@
 # Fylo
 
-S3-backed NoSQL document store with SQL parsing, Redis pub/sub for real-time events, and a CLI.
+S3-backed NoSQL document store with SQL parsing, Redis-backed write coordination and pub/sub for real-time events, and a CLI.
 
 Documents are stored as **S3 key paths** — not file contents. Each document produces two keys per field: a **data key** (`{ttid}/{field}/{value}`) for full-doc retrieval and an **index key** (`{field}/{value}/{ttid}`) for query lookups. This enables fast reads and filtered queries without a traditional database engine.
 
 Built for **serverless** runtimes (AWS Lambda, Cloudflare Workers) — no persistent in-memory state, lazy connections, minimal cold-start overhead.
+
+Writes are coordinated through Redis before they are flushed to S3. By default the high-level CRUD methods wait for the queued write to be processed so existing code can continue to behave synchronously. If you want fire-and-forget semantics, pass `{ wait: false }` and process queued jobs with a worker or `processQueuedWrites()`.
 
 ## Install
 
@@ -21,7 +23,15 @@ bun add @delma/fylo
 | `S3_SECRET_ACCESS_KEY` / `AWS_SECRET_ACCESS_KEY` | S3 credentials |
 | `S3_REGION` / `AWS_REGION` | S3 region |
 | `S3_ENDPOINT` / `AWS_ENDPOINT` | S3 endpoint (for LocalStack, MinIO, etc.) |
-| `REDIS_URL` | Redis connection URL (default: `redis://localhost:6379`) |
+| `REDIS_URL` | Redis connection URL used for pub/sub, document locks, and queued write coordination |
+| `FYLO_WRITE_MAX_ATTEMPTS` | Maximum retry attempts before a queued job is dead-lettered |
+| `FYLO_WRITE_RETRY_BASE_MS` | Base retry delay used for exponential backoff between recovery attempts |
+| `FYLO_WORKER_ID` | Optional stable identifier for a write worker process |
+| `FYLO_WORKER_BATCH_SIZE` | Number of queued jobs a worker pulls per read loop |
+| `FYLO_WORKER_BLOCK_MS` | Redis stream block time for waiting on new jobs |
+| `FYLO_WORKER_RECOVER_ON_START` | Whether the worker reclaims stale pending jobs on startup |
+| `FYLO_WORKER_RECOVER_IDLE_MS` | Minimum idle time before a pending job is reclaimed |
+| `FYLO_WORKER_STOP_WHEN_IDLE` | Exit the worker loop when no jobs are available |
 | `LOGGING` | Enable debug logging |
 | `STRICT` | Enable schema validation via CHEX |
 
@@ -68,6 +78,44 @@ const deleted = await fylo.delDocs<_user>("users", {
 // Drop
 await Fylo.dropCollection("users")
 ```
+
+### Queued Writes
+
+```typescript
+const fylo = new Fylo()
+
+// Default behavior waits for the queued write to finish.
+const _id = await fylo.putData("users", { name: "John Doe" })
+
+// Async mode returns the queued job immediately.
+const queued = await fylo.putData("users", { name: "Jane Doe" }, { wait: false })
+
+// Poll status if you need to track progress.
+const status = await fylo.getJobStatus(queued.jobId)
+
+// Process pending writes in-process when you are not running a separate worker.
+await fylo.processQueuedWrites()
+```
+
+When `wait: false` is used, the job is durable in Redis but the document is not visible in S3 until a worker commits it.
+
+Queued jobs that fail are left pending for recovery. Recovered jobs retry up to `FYLO_WRITE_MAX_ATTEMPTS` times before being moved to a dead-letter stream. You can inspect dead letters with `getDeadLetters()` and reclaim stale pending jobs with `processQueuedWrites(count, true)`.
+
+Operational helpers:
+
+- `getQueueStats()` returns current queue, pending, and dead-letter counts
+- `getDeadLetters()` lists exhausted jobs
+- `replayDeadLetter(streamId)` moves a dead-lettered job back into the main queue
+
+### Worker
+
+Run a dedicated write worker when you want queued writes to be flushed outside the request path:
+
+```bash
+bun run worker
+```
+
+The worker entrypoint lives at [worker.ts](/Users/iyor/Library/CloudStorage/Dropbox/myProjects/FYLO/src/worker.ts) and continuously drains the Redis stream, recovers stale pending jobs on startup, and respects the retry/dead-letter settings above.
 
 ### CRUD — SQL API
 
@@ -160,13 +208,24 @@ for await (const doc of Fylo.exportBulkData<_user>("users")) {
 
 ### Rollback
 
-Every write is tracked as a transaction. If a batch write partially fails, Fylo automatically rolls back. You can also trigger it manually:
+`rollback()` is now a legacy escape hatch.
+
+Fylo still keeps best-effort rollback data for writes performed by the current instance. This is mainly useful for in-process failures and test workflows:
 
 ```typescript
 const fylo = new Fylo()
 await fylo.putData("users", { name: "test" })
 await fylo.rollback() // undoes all writes in this instance
 ```
+
+For queued writes, prefer:
+
+- `getJobStatus()` to inspect an individual write
+- `processQueuedWrites(count, true)` to recover stale pending jobs
+- `getDeadLetters()` to inspect exhausted jobs
+- compensating writes instead of `rollback()` after a commit
+
+`rollback()` may be removed from the main queued-write path in a future major release.
 
 ### CLI
 
