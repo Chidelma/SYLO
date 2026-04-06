@@ -12,7 +12,6 @@ import { WriteQueue } from './core/write-queue'
 import './core/format'
 import './core/extensions'
 import type { QueueStats, QueuedWriteResult, WriteJob } from './types/write-queue'
-import { WriteWorker } from './workers/write-worker'
 import type { StreamJobEntry } from './types/write-queue'
 
 export default class Fylo {
@@ -193,8 +192,7 @@ export default class Fylo {
     private async runQueuedJob<T>(
         queued: QueuedWriteResult,
         {
-            wait = true,
-            timeoutMs = 5_000
+            wait = true
         }: {
             wait?: boolean
             timeoutMs?: number
