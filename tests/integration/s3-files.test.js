@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { Database } from 'bun:sqlite'
 import Fylo from '../../src'
 const root = await mkdtemp(path.join(os.tmpdir(), 'fylo-s3files-'))
 const fylo = new Fylo({ engine: 's3-files', s3FilesRoot: root })
@@ -63,6 +64,89 @@ describe('s3-files engine', () => {
         const dbStat = await stat(path.join(root, POSTS, '.fylo', 'index.db'))
         expect(dbStat.isFile()).toBe(true)
         await expect(stat(path.join(root, POSTS, '.fylo', 'indexes'))).rejects.toThrow()
+    })
+    test('uses SQLite index rows to support exact, range, and contains queries', async () => {
+        const queryCollection = 's3files-query'
+        await fylo.createCollection(queryCollection)
+
+        const bunId = await fylo.putData(queryCollection, {
+            title: 'Bun launch',
+            tags: ['bun', 'aws'],
+            meta: { score: 10 }
+        })
+        const nodeId = await fylo.putData(queryCollection, {
+            title: 'Node launch',
+            tags: ['node'],
+            meta: { score: 2 }
+        })
+
+        let eqResults = {}
+        for await (const data of fylo
+            .findDocs(queryCollection, {
+                $ops: [{ title: { $eq: 'Bun launch' } }]
+            })
+            .collect()) {
+            eqResults = { ...eqResults, ...data }
+        }
+        expect(Object.keys(eqResults)).toEqual([bunId])
+
+        let rangeResults = {}
+        for await (const data of fylo
+            .findDocs(queryCollection, {
+                $ops: [{ ['meta.score']: { $gte: 5 } }]
+            })
+            .collect()) {
+            rangeResults = { ...rangeResults, ...data }
+        }
+        expect(Object.keys(rangeResults)).toEqual([bunId])
+
+        let containsResults = {}
+        for await (const data of fylo
+            .findDocs(queryCollection, {
+                $ops: [{ tags: { $contains: 'aws' } }]
+            })
+            .collect()) {
+            containsResults = { ...containsResults, ...data }
+        }
+        expect(Object.keys(containsResults)).toEqual([bunId])
+        expect(containsResults[nodeId]).toBeUndefined()
+
+        const db = new Database(path.join(root, queryCollection, '.fylo', 'index.db'))
+        const rows = db
+            .query(
+                `SELECT doc_id, field_path, raw_value, value_type, numeric_value
+                 FROM doc_index_entries
+                 WHERE doc_id = ?
+                 ORDER BY field_path, raw_value`
+            )
+            .all(bunId)
+        db.close()
+
+        expect(rows).toEqual(
+            expect.arrayContaining([
+                expect.objectContaining({
+                    doc_id: bunId,
+                    field_path: 'title',
+                    raw_value: 'Bun launch',
+                    value_type: 'string',
+                    numeric_value: null
+                }),
+                expect.objectContaining({
+                    doc_id: bunId,
+                    field_path: 'meta/score',
+                    raw_value: '10',
+                    value_type: 'number',
+                    numeric_value: 10
+                }),
+                expect.objectContaining({
+                    doc_id: bunId,
+                    field_path: 'tags/1',
+                    raw_value: 'aws',
+                    value_type: 'string',
+                    numeric_value: null
+                })
+            ])
+        )
     })
     test('joins work in s3-files mode', async () => {
         const userId = await fylo.putData(USERS, { id: 42, name: 'Ada' })
