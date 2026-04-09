@@ -1,8 +1,11 @@
 import type { WriteJob } from '../types/write-queue'
 
 export class WriteQueue {
-
-    static createInsertJob<T extends Record<string, any>>(collection: string, docId: _ttid, payload: T): WriteJob<T> {
+    static createInsertJob<T extends Record<string, any>>(
+        collection: string,
+        docId: _ttid,
+        payload: T
+    ): WriteJob<T> {
         const now = Date.now()
 
         return {
@@ -21,8 +24,8 @@ export class WriteQueue {
     static createUpdateJob<T extends Record<string, any>>(
         collection: string,
         docId: _ttid,
-        payload: { newDoc: Record<_ttid, Partial<T>>, oldDoc?: Record<_ttid, T> }
-    ): WriteJob<{ newDoc: Record<_ttid, Partial<T>>, oldDoc?: Record<_ttid, T> }> {
+        payload: { newDoc: Record<_ttid, Partial<T>>; oldDoc?: Record<_ttid, T> }
+    ): WriteJob<{ newDoc: Record<_ttid, Partial<T>>; oldDoc?: Record<_ttid, T> }> {
         const now = Date.now()
 
         return {

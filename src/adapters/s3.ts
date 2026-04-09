@@ -1,7 +1,7 @@
-import { $, S3Client } from "bun"
+import { $, S3Client } from 'bun'
+import { validateCollectionName } from '../core/collection'
 
 export class S3 {
-
     static readonly BUCKET_ENV = process.env.BUCKET_PREFIX
 
     static readonly CREDS = {
@@ -12,9 +12,7 @@ export class S3 {
     }
 
     private static validateCollection(collection: string): void {
-        if (!/^[a-z0-9][a-z0-9\-]*[a-z0-9]$/.test(collection)) {
-            throw new Error('Invalid collection name')
-        }
+        validateCollectionName(collection)
     }
 
     static getBucketFormat(collection: string) {
@@ -23,7 +21,6 @@ export class S3 {
     }
 
     static file(collection: string, path: string) {
-
         return S3Client.file(path, {
             bucket: S3.getBucketFormat(collection),
             ...S3.CREDS
@@ -31,7 +28,6 @@ export class S3 {
     }
 
     static async list(collection: string, options?: Bun.S3ListObjectsOptions) {
-
         return await S3Client.list(options, {
             bucket: S3.getBucketFormat(collection),
             ...S3.CREDS
@@ -39,7 +35,6 @@ export class S3 {
     }
 
     static async put(collection: string, path: string, data: string) {
-
         await S3Client.write(path, data, {
             bucket: S3.getBucketFormat(collection),
             ...S3.CREDS
@@ -47,7 +42,6 @@ export class S3 {
     }
 
     static async delete(collection: string, path: string) {
-
         await S3Client.delete(path, {
             bucket: S3.getBucketFormat(collection),
             ...S3.CREDS
@@ -56,12 +50,12 @@ export class S3 {
 
     static async createBucket(collection: string) {
         const endpoint = S3.CREDS.endpoint
-        await $`aws s3 mb s3://${S3.getBucketFormat(collection)} ${endpoint ? `--endpoint-url=${endpoint}` : ""}`.quiet()
+        await $`aws s3 mb s3://${S3.getBucketFormat(collection)} ${endpoint ? `--endpoint-url=${endpoint}` : ''}`.quiet()
     }
 
     static async deleteBucket(collection: string) {
         const endpoint = S3.CREDS.endpoint
-        await $`aws s3 rm s3://${S3.getBucketFormat(collection)} --recursive ${endpoint ? `--endpoint-url=${endpoint}` : ""}`.quiet()
-        await $`aws s3 rb s3://${S3.getBucketFormat(collection)} ${endpoint ? `--endpoint-url=${endpoint}` : ""}`.quiet()
+        await $`aws s3 rm s3://${S3.getBucketFormat(collection)} --recursive ${endpoint ? `--endpoint-url=${endpoint}` : ''}`.quiet()
+        await $`aws s3 rb s3://${S3.getBucketFormat(collection)} ${endpoint ? `--endpoint-url=${endpoint}` : ''}`.quiet()
     }
 }

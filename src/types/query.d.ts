@@ -33,7 +33,7 @@ type _join<T, U> = {
     $select?: Array<keyof T | keyof U>
     $leftCollection: string
     $rightCollection: string
-    $mode: "inner" | "left" | "right" | "outer"
+    $mode: 'inner' | 'left' | 'right' | 'outer'
     $on: _on<T, U>
     $limit?: number
     $onlyIds?: boolean
@@ -53,7 +53,11 @@ interface _storeQuery<T extends Record<string, any>> {
     $created?: _timestamp
 }
 
-interface _condition { column: string, operator: string, value: string | number| boolean | null }
+interface _condition {
+    column: string
+    operator: string
+    value: string | number | boolean | null
+}
 
 type _storeUpdate<T extends Record<string, any>> = {
     $collection?: string

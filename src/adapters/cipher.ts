@@ -19,7 +19,6 @@
  */
 
 export class Cipher {
-
     private static key: CryptoKey | null = null
     private static hmacKey: CryptoKey | null = null
 
@@ -72,12 +71,19 @@ export class Cipher {
 
         const cipherSalt = process.env.CIPHER_SALT
         if (!cipherSalt) {
-            console.warn('CIPHER_SALT is not set. Using default salt is insecure for multi-deployment use. Set CIPHER_SALT to a unique random value.')
+            console.warn(
+                'CIPHER_SALT is not set. Using default salt is insecure for multi-deployment use. Set CIPHER_SALT to a unique random value.'
+            )
         }
 
         // Derive 48 bytes: 32 for AES key + 16 for HMAC key
         const bits = await crypto.subtle.deriveBits(
-            { name: 'PBKDF2', salt: encoder.encode(cipherSalt ?? 'fylo-cipher'), iterations: 100000, hash: 'SHA-256' },
+            {
+                name: 'PBKDF2',
+                salt: encoder.encode(cipherSalt ?? 'fylo-cipher'),
+                iterations: 100000,
+                hash: 'SHA-256'
+            },
             keyMaterial,
             384
         )
@@ -133,7 +139,7 @@ export class Cipher {
         const encoder = new TextEncoder()
 
         const encrypted = await crypto.subtle.encrypt(
-            { name: 'AES-CBC', iv },
+            { name: 'AES-CBC', iv: iv as any },
             Cipher.key,
             encoder.encode(value)
         )
@@ -157,9 +163,9 @@ export class Cipher {
 
         // Restore standard base64
         const b64 = encoded.replace(/-/g, '+').replace(/_/g, '/')
-        const padded = b64 + '='.repeat((4 - b64.length % 4) % 4)
+        const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4)
 
-        const combined = Uint8Array.from(atob(padded), c => c.charCodeAt(0))
+        const combined = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0))
         const iv = combined.slice(0, 16)
         const ciphertext = combined.slice(16)
 
