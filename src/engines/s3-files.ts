@@ -560,7 +560,7 @@ export class S3FilesEngine {
             operand.$lte !== undefined
         ) {
             const clauses = ['field_path = ?']
-            const params: unknown[] = [fieldPath]
+            const params: SQLQueryBindings[] = [fieldPath]
             if (operand.$gt !== undefined) {
                 clauses.push('numeric_value > ?')
                 params.push(operand.$gt)
