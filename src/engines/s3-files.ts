@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, rm, stat, writeFile, open } from 'node:fs/pro
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { Database } from 'bun:sqlite'
+import type { SQLQueryBindings } from 'bun:sqlite'
 import TTID from '@delma/ttid'
 import { Dir } from '../core/directory'
 import { validateCollectionName } from '../core/collection'
@@ -517,7 +518,7 @@ export class S3FilesEngine {
     private async queryDocIdsBySql(
         collection: string,
         sql: string,
-        ...params: unknown[]
+        ...params: SQLQueryBindings[]
     ): Promise<Set<_ttid>> {
         const db = this.database(collection)
         const rows = db
