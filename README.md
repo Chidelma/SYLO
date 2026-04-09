@@ -2,7 +2,7 @@
 
 NoSQL document store with SQL parsing, real-time listeners, and Bun-first workflows.
 
-Fylo `2.0.0` supports two storage engines:
+Fylo `2.0.1` supports two storage engines:
 
 - `legacy-s3`: the existing S3 + Redis architecture with queued writes, bucket-per-collection storage, and Redis-backed pub/sub/locks.
 - `s3-files`: a new AWS S3 Files mode that stores canonical documents on a mounted S3 Files filesystem, keeps query indexes in a collection-level SQLite database under `.fylo/index.db`, and uses filesystem locks plus an append-only event journal instead of Redis.

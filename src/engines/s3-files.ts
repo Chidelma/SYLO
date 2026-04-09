@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, rm, stat, writeFile, open } from 'node:fs/pro
 import path from 'node:path'
 import { createHash } from 'node:crypto'
 import { Database } from 'bun:sqlite'
+import type { SQLQueryBindings } from 'bun:sqlite'
 import TTID from '@delma/ttid'
 import { Dir } from '../core/directory'
 import { validateCollectionName } from '../core/collection'
@@ -440,11 +441,16 @@ export class S3FilesEngine {
 
     private getValueByPath(target: Record<string, any>, fieldPath: string) {
         return fieldPath
+            .replaceAll('/', '.')
             .split('.')
             .reduce<any>(
                 (acc, key) => (acc === undefined || acc === null ? undefined : acc[key]),
                 target
             )
+    }
+
+    private normalizeFieldPath(fieldPath: string) {
+        return fieldPath.replaceAll('.', '/')
     }
 
     private matchesTimestamp(docId: _ttid, query?: _storeQuery<Record<string, any>>) {
@@ -489,6 +495,179 @@ export class S3FilesEngine {
                 return false
         }
         return true
+    }
+
+    private async normalizeQueryValue(collection: string, fieldPath: string, value: unknown) {
+        let rawValue = String(value).replaceAll('/', '%2F')
+        if (Cipher.isConfigured() && Cipher.isEncryptedField(collection, fieldPath))
+            rawValue = await Cipher.encrypt(rawValue, true)
+        return this.normalizeIndexValue(rawValue)
+    }
+
+    private intersectDocIds(current: Set<_ttid> | null, next: Iterable<_ttid>) {
+        const nextSet = next instanceof Set ? next : new Set(next)
+        if (current === null) return new Set(nextSet)
+
+        const intersection = new Set<_ttid>()
+        for (const docId of current) {
+            if (nextSet.has(docId)) intersection.add(docId)
+        }
+        return intersection
+    }
+
+    private async queryDocIdsBySql(
+        collection: string,
+        sql: string,
+        ...params: SQLQueryBindings[]
+    ): Promise<Set<_ttid>> {
+        const db = this.database(collection)
+        const rows = db
+            .query(sql)
+            .all(...params)
+            .map((row) => (row as { doc_id: _ttid }).doc_id)
+
+        return new Set(rows)
+    }
+
+    private async candidateDocIdsForOperand(
+        collection: string,
+        fieldPath: string,
+        operand: _operand
+    ): Promise<Set<_ttid> | null> {
+        if (Cipher.isConfigured() && Cipher.isEncryptedField(collection, fieldPath)) return null
+
+        let candidateIds: Set<_ttid> | null = null
+
+        if (operand.$eq !== undefined) {
+            const normalized = await this.normalizeQueryValue(collection, fieldPath, operand.$eq)
+            candidateIds = this.intersectDocIds(
+                candidateIds,
+                await this.queryDocIdsBySql(
+                    collection,
+                    `SELECT DISTINCT doc_id
+                     FROM doc_index_entries
+                     WHERE field_path = ? AND value_hash = ?`,
+                    fieldPath,
+                    normalized.valueHash
+                )
+            )
+        }
+
+        if (
+            operand.$gt !== undefined ||
+            operand.$gte !== undefined ||
+            operand.$lt !== undefined ||
+            operand.$lte !== undefined
+        ) {
+            const clauses = ['field_path = ?']
+            const params: SQLQueryBindings[] = [fieldPath]
+            if (operand.$gt !== undefined) {
+                clauses.push('numeric_value > ?')
+                params.push(operand.$gt)
+            }
+            if (operand.$gte !== undefined) {
+                clauses.push('numeric_value >= ?')
+                params.push(operand.$gte)
+            }
+            if (operand.$lt !== undefined) {
+                clauses.push('numeric_value < ?')
+                params.push(operand.$lt)
+            }
+            if (operand.$lte !== undefined) {
+                clauses.push('numeric_value <= ?')
+                params.push(operand.$lte)
+            }
+
+            candidateIds = this.intersectDocIds(
+                candidateIds,
+                await this.queryDocIdsBySql(
+                    collection,
+                    `SELECT DISTINCT doc_id
+                     FROM doc_index_entries
+                     WHERE ${clauses.join(' AND ')}`,
+                    ...params
+                )
+            )
+        }
+
+        if (operand.$like !== undefined) {
+            candidateIds = this.intersectDocIds(
+                candidateIds,
+                await this.queryDocIdsBySql(
+                    collection,
+                    `SELECT DISTINCT doc_id
+                     FROM doc_index_entries
+                     WHERE field_path = ? AND value_type = 'string' AND raw_value LIKE ?`,
+                    fieldPath,
+                    operand.$like.replaceAll('/', '%2F')
+                )
+            )
+        }
+
+        if (operand.$contains !== undefined) {
+            const normalized = await this.normalizeQueryValue(
+                collection,
+                fieldPath,
+                operand.$contains
+            )
+            candidateIds = this.intersectDocIds(
+                candidateIds,
+                await this.queryDocIdsBySql(
+                    collection,
+                    `SELECT DISTINCT doc_id
+                     FROM doc_index_entries
+                     WHERE (field_path = ? OR field_path LIKE ?)
+                       AND value_hash = ?`,
+                    fieldPath,
+                    `${fieldPath}/%`,
+                    normalized.valueHash
+                )
+            )
+        }
+
+        return candidateIds
+    }
+
+    private async candidateDocIdsForOperation<T extends Record<string, any>>(
+        collection: string,
+        operation: _op<T>
+    ): Promise<Set<_ttid> | null> {
+        let candidateIds: Set<_ttid> | null = null
+
+        for (const [field, operand] of Object.entries(operation) as Array<[keyof T, _operand]>) {
+            if (!operand) continue
+
+            const fieldPath = this.normalizeFieldPath(String(field))
+            const fieldCandidates = await this.candidateDocIdsForOperand(
+                collection,
+                fieldPath,
+                operand
+            )
+
+            if (fieldCandidates === null) continue
+            candidateIds = this.intersectDocIds(candidateIds, fieldCandidates)
+        }
+
+        return candidateIds
+    }
+
+    private async candidateDocIdsForQuery<T extends Record<string, any>>(
+        collection: string,
+        query?: _storeQuery<T>
+    ): Promise<Set<_ttid> | null> {
+        if (!query?.$ops || query.$ops.length === 0) return null
+
+        const union = new Set<_ttid>()
+        let usedIndex = false
+
+        for (const operation of query.$ops) {
+            const candidateIds = await this.candidateDocIdsForOperation(collection, operation)
+            if (candidateIds === null) return null
+            usedIndex = true
+            for (const docId of candidateIds) union.add(docId)
+        }
+
+        return usedIndex ? union : null
     }
 
     private matchesQuery<T extends Record<string, any>>(
@@ -576,7 +755,8 @@ export class S3FilesEngine {
         collection: string,
         query?: _storeQuery<T>
     ) {
-        const ids = await this.listDocIds(collection)
+        const candidateIds = await this.candidateDocIdsForQuery(collection, query)
+        const ids = candidateIds ? Array.from(candidateIds) : await this.listDocIds(collection)
         const limit = query?.$limit
         const results: Array<FyloRecord<T>> = []
 
