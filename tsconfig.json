@@ -5,7 +5,7 @@
         "target": "ESNext",
         "lib": ["ESNext"],
         "module": "ES2022",
-        "moduleResolution": "node",
+        "moduleResolution": "bundler",
         "sourceMap": true,
         "experimentalDecorators": true,
         "pretty": true,
@@ -15,5 +15,7 @@
         "types": ["bun-types", "node"],
         "isolatedModules": true,
         "skipLibCheck": true
-    }
+    },
+    "include": ["src/**/*"],
+    "exclude": ["dist", "tests", "node_modules"]
 }

@@ -1,18 +1,19 @@
 {
   "name": "@delma/fylo",
-  "version": "1.1.2",
+  "version": "2.0.0",
   "main": "./dist/index.js",
   "types": "./dist/types/index.d.ts",
   "bin": {
     "fylo.query": "./dist/cli/index.js",
-    "fylo.worker": "./dist/worker.js"
+    "fylo.worker": "./dist/worker.js",
+    "fylo.migrate": "./dist/migrate-cli.js"
   },
   "scripts": {
     "build": "tsc",
     "test": "bun test",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
     "worker": "bun run ./src/worker.ts",
-    "lint": "eslint src tests",
+    "lint": "prettier --check \"src/**/*.{ts,d.ts}\" \"tests/**/*.js\" README.md",
     "format": "prettier --write src tests"
   },
   "devDependencies": {
@@ -22,11 +23,12 @@
     "@typescript-eslint/parser": "^8.0.0",
     "eslint": "^9.0.0",
     "eslint-config-prettier": "^9.0.0",
-    "prettier": "^3.0.0"
+    "prettier": "^3.0.0",
+    "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@delma/ttid": "1.3.4",
-    "@delma/chex": "0.3.3"
+    "@delma/chex": "0.3.3",
+    "@delma/ttid": "1.3.4"
   },
   "type": "module",
   "peerDependencies": {

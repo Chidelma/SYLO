@@ -1,11 +1,15 @@
 interface _getDoc {
-    [Symbol.asyncIterator]<T>(): AsyncGenerator<_ttid | Record<_ttid, T>, void, unknown>;
+    [Symbol.asyncIterator]<T>(): AsyncGenerator<_ttid | Record<_ttid, T>, void, unknown>
     once<T>(): Promise<Record<_ttid, T>>
     onDelete(): AsyncGenerator<_ttid, void, unknown>
 }
 
 interface _findDocs {
-    [Symbol.asyncIterator]<T>(): AsyncGenerator<_ttid | Record<_ttid, T> | Record<string, _ttid[]> | Record<_ttid, Partial<T>> | undefined, void, unknown>
+    [Symbol.asyncIterator]<T>(): AsyncGenerator<
+        _ttid | Record<_ttid, T> | Record<string, _ttid[]> | Record<_ttid, Partial<T>> | undefined,
+        void,
+        unknown
+    >
     once<T>(): Promise<Record<_ttid, T>>
     onDelete(): AsyncGenerator<_ttid, void, unknown>
 }
@@ -17,18 +21,29 @@ interface _queuedWriteResult {
 }
 
 interface ObjectConstructor {
-    appendGroup: (target: Record<string, any>, source: Record<string, any>) => Record<string, any>;
+    appendGroup: (target: Record<string, any>, source: Record<string, any>) => Record<string, any>
 }
 
 interface Console {
     format: (docs: Record<string, any>) => void
 }
 
-type _joinDocs<T, U> = _ttid[] | Record<string, _ttid[]> | Record<string,  Record<_ttid, Partial<T | U>>> | Record<`${_ttid}, ${_ttid}`, T | U | (T & U) | (Partial<T> & Partial<U>)>
+type _joinDocs<T, U> =
+    | _ttid[]
+    | Record<string, _ttid[]>
+    | Record<string, Record<_ttid, Partial<T | U>>>
+    | Record<`${_ttid}, ${_ttid}`, T | U | (T & U) | (Partial<T> & Partial<U>)>
 
-declare module "@delma/fylo" {
+type _fyloEngineKind = 'legacy-s3' | 's3-files'
 
+interface _fyloOptions {
+    engine?: _fyloEngineKind
+    s3FilesRoot?: string
+}
+
+declare module '@delma/fylo' {
     export default class {
+        constructor(options?: _fyloOptions)
 
         /**
          * Rolls back all transcations in current instance
@@ -41,8 +56,10 @@ declare module "@delma/fylo" {
          * @param SQL The SQL query to execute.
          * @returns The results of the query.
          */
-        executeSQL<T extends Record<string, any>, U extends Record<string, any> = {}>(SQL: string): Promise<number | void | any[] | _ttid | Record<any, any>>
-        
+        executeSQL<T extends Record<string, any>, U extends Record<string, any> = {}>(
+            SQL: string
+        ): Promise<number | void | any[] | _ttid | Record<any, any>>
+
         /**
          * Creates a new schema for a collection.
          * @param collection The name of the collection.
@@ -68,7 +85,9 @@ declare module "@delma/fylo" {
          * @param collection The name of the collection.
          * @returns The current data exported from the collection.
          */
-        exportBulkData<T extends Record<string, any>>(collection: string): AsyncGenerator<T, void, unknown>
+        exportBulkData<T extends Record<string, any>>(
+            collection: string
+        ): AsyncGenerator<T, void, unknown>
 
         /**
          * Gets a document from a collection.
@@ -85,11 +104,21 @@ declare module "@delma/fylo" {
          * @param batch The documents to put.
          * @returns The IDs of the documents.
          */
-        batchPutData<T extends Record<string, any>>(collection: string, batch: Array<T>): Promise<_ttid[]>
+        batchPutData<T extends Record<string, any>>(
+            collection: string,
+            batch: Array<T>
+        ): Promise<_ttid[]>
 
-        queuePutData<T extends Record<string, any>>(collection: string, data: Record<_ttid, T> | T): Promise<_queuedWriteResult>
+        queuePutData<T extends Record<string, any>>(
+            collection: string,
+            data: Record<_ttid, T> | T
+        ): Promise<_queuedWriteResult>
 
-        queuePatchDoc<T extends Record<string, any>>(collection: string, newDoc: Record<_ttid, Partial<T>>, oldDoc?: Record<_ttid, T>): Promise<_queuedWriteResult>
+        queuePatchDoc<T extends Record<string, any>>(
+            collection: string,
+            newDoc: Record<_ttid, Partial<T>>,
+            oldDoc?: Record<_ttid, T>
+        ): Promise<_queuedWriteResult>
 
         queueDelDoc(collection: string, _id: _ttid): Promise<_queuedWriteResult>
 
@@ -99,7 +128,7 @@ declare module "@delma/fylo" {
 
         getDeadLetters(count?: number): Promise<Array<Record<string, any>>>
 
-        getQueueStats(): Promise<{ queued: number, pending: number, deadLetters: number }>
+        getQueueStats(): Promise<{ queued: number; pending: number; deadLetters: number }>
 
         replayDeadLetter(streamId: string): Promise<Record<string, any> | null>
 
@@ -112,11 +141,30 @@ declare module "@delma/fylo" {
          * @returns The ID of the document.
          */
         putData<T extends Record<string, any>>(collection: string, data: T): Promise<_ttid>
-        putData<T extends Record<string, any>>(collection: string, data: Record<_ttid, T>): Promise<_ttid>
-        putData<T extends Record<string, any>>(collection: string, data: T, options: { wait?: true, timeoutMs?: number }): Promise<_ttid>
-        putData<T extends Record<string, any>>(collection: string, data: Record<_ttid, T>, options: { wait?: true, timeoutMs?: number }): Promise<_ttid>
-        putData<T extends Record<string, any>>(collection: string, data: T, options: { wait: false, timeoutMs?: number }): Promise<_queuedWriteResult>
-        putData<T extends Record<string, any>>(collection: string, data: Record<_ttid, T>, options: { wait: false, timeoutMs?: number }): Promise<_queuedWriteResult>
+        putData<T extends Record<string, any>>(
+            collection: string,
+            data: Record<_ttid, T>
+        ): Promise<_ttid>
+        putData<T extends Record<string, any>>(
+            collection: string,
+            data: T,
+            options: { wait?: true; timeoutMs?: number }
+        ): Promise<_ttid>
+        putData<T extends Record<string, any>>(
+            collection: string,
+            data: Record<_ttid, T>,
+            options: { wait?: true; timeoutMs?: number }
+        ): Promise<_ttid>
+        putData<T extends Record<string, any>>(
+            collection: string,
+            data: T,
+            options: { wait: false; timeoutMs?: number }
+        ): Promise<_queuedWriteResult>
+        putData<T extends Record<string, any>>(
+            collection: string,
+            data: Record<_ttid, T>,
+            options: { wait: false; timeoutMs?: number }
+        ): Promise<_queuedWriteResult>
 
         /**
          * Patches a document in a collection.
@@ -125,9 +173,23 @@ declare module "@delma/fylo" {
          * @param oldDoc The old document data.
          * @returns The number of documents patched.
          */
-        patchDoc<T extends Record<string, any>>(collection: string, newDoc: Record<_ttid, Partial<T>>, oldDoc?: Record<_ttid, T>): Promise<_ttid>
-        patchDoc<T extends Record<string, any>>(collection: string, newDoc: Record<_ttid, Partial<T>>, oldDoc: Record<_ttid, T> | undefined, options: { wait?: true, timeoutMs?: number }): Promise<_ttid>
-        patchDoc<T extends Record<string, any>>(collection: string, newDoc: Record<_ttid, Partial<T>>, oldDoc: Record<_ttid, T> | undefined, options: { wait: false, timeoutMs?: number }): Promise<_queuedWriteResult>
+        patchDoc<T extends Record<string, any>>(
+            collection: string,
+            newDoc: Record<_ttid, Partial<T>>,
+            oldDoc?: Record<_ttid, T>
+        ): Promise<_ttid>
+        patchDoc<T extends Record<string, any>>(
+            collection: string,
+            newDoc: Record<_ttid, Partial<T>>,
+            oldDoc: Record<_ttid, T> | undefined,
+            options: { wait?: true; timeoutMs?: number }
+        ): Promise<_ttid>
+        patchDoc<T extends Record<string, any>>(
+            collection: string,
+            newDoc: Record<_ttid, Partial<T>>,
+            oldDoc: Record<_ttid, T> | undefined,
+            options: { wait: false; timeoutMs?: number }
+        ): Promise<_queuedWriteResult>
 
         /**
          * Patches documents in a collection.
@@ -135,7 +197,10 @@ declare module "@delma/fylo" {
          * @param updateSchema The update schema.
          * @returns The number of documents patched.
          */
-        patchDocs<T extends Record<string, any>>(collection: string, updateSchema: _storeUpdate<T>): Promise<number>
+        patchDocs<T extends Record<string, any>>(
+            collection: string,
+            updateSchema: _storeUpdate<T>
+        ): Promise<number>
 
         /**
          * Deletes a document from a collection.
@@ -144,8 +209,16 @@ declare module "@delma/fylo" {
          * @returns The number of documents deleted.
          */
         delDoc(collection: string, _id: _ttid): Promise<void>
-        delDoc(collection: string, _id: _ttid, options: { wait?: true, timeoutMs?: number }): Promise<void>
-        delDoc(collection: string, _id: _ttid, options: { wait: false, timeoutMs?: number }): Promise<_queuedWriteResult>
+        delDoc(
+            collection: string,
+            _id: _ttid,
+            options: { wait?: true; timeoutMs?: number }
+        ): Promise<void>
+        delDoc(
+            collection: string,
+            _id: _ttid,
+            options: { wait: false; timeoutMs?: number }
+        ): Promise<_queuedWriteResult>
 
         /**
          * Deletes documents from a collection.
@@ -153,21 +226,36 @@ declare module "@delma/fylo" {
          * @param deleteSchema The delete schema.
          * @returns The number of documents deleted.
          */
-        delDocs<T extends Record<string, any>>(collection: string, deleteSchema?: _storeDelete<T>): Promise<number>
+        delDocs<T extends Record<string, any>>(
+            collection: string,
+            deleteSchema?: _storeDelete<T>
+        ): Promise<number>
 
         /**
          * Joins documents from two collections.
          * @param join The join schema.
          * @returns The joined documents.
          */
-        static joinDocs<T extends Record<string, any>, U extends Record<string, any>>(join: _join<T, U>): Promise<_joinDocs<T, U>>
-        
+        static joinDocs<T extends Record<string, any>, U extends Record<string, any>>(
+            join: _join<T, U>
+        ): Promise<_joinDocs<T, U>>
+
         /**
          * Finds documents in a collection.
          * @param collection The name of the collection.
          * @param query The query schema.
          * @returns The found documents.
          */
-        static findDocs<T extends Record<string, any>>(collection: string, query?: _storeQuery<T>): _findDocs
+        static findDocs<T extends Record<string, any>>(
+            collection: string,
+            query?: _storeQuery<T>
+        ): _findDocs
     }
+
+    export function migrateLegacyS3ToS3Files(options: {
+        collections: string[]
+        s3FilesRoot?: string
+        recreateCollections?: boolean
+        verify?: boolean
+    }): Promise<Record<string, { migrated: number; verified: boolean }>>
 }

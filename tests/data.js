@@ -1,13 +1,11 @@
-function makeDataUrl(data: unknown): string {
+function makeDataUrl(data) {
     return `data:application/json,${encodeURIComponent(JSON.stringify(data))}`
 }
-
-function generateAlbums(): _album[] {
+function generateAlbums() {
     return Array.from({ length: 100 }, (_, index) => {
         const id = index + 1
         const userId = Math.ceil(id / 10)
         const prefix = id <= 15 ? 'omnis' : id % 4 === 0 ? 'quidem' : 'album'
-
         return {
             id,
             userId,
@@ -15,12 +13,10 @@ function generateAlbums(): _album[] {
         }
     })
 }
-
-function generatePosts(): _post[] {
+function generatePosts() {
     return Array.from({ length: 100 }, (_, index) => {
         const id = index + 1
         const userId = Math.ceil(id / 10)
-
         return {
             id,
             userId,
@@ -29,11 +25,9 @@ function generatePosts(): _post[] {
         }
     })
 }
-
-function generateComments(): _comment[] {
+function generateComments() {
     return Array.from({ length: 100 }, (_, index) => {
         const id = index + 1
-
         return {
             id,
             postId: id,
@@ -43,12 +37,10 @@ function generateComments(): _comment[] {
         }
     })
 }
-
-function generatePhotos(): _photo[] {
+function generatePhotos() {
     return Array.from({ length: 100 }, (_, index) => {
         const id = index + 1
         const title = id % 3 === 0 ? `test photo ${id}` : `photo ${id}`
-
         return {
             id,
             albumId: Math.ceil(id / 10),
@@ -58,11 +50,9 @@ function generatePhotos(): _photo[] {
         }
     })
 }
-
-function generateTodos(): _todo[] {
+function generateTodos() {
     return Array.from({ length: 100 }, (_, index) => {
         const id = index + 1
-
         return {
             id,
             userId: Math.ceil(id / 10),
@@ -71,11 +61,9 @@ function generateTodos(): _todo[] {
         }
     })
 }
-
-function generateUsers(): _user[] {
+function generateUsers() {
     return Array.from({ length: 10 }, (_, index) => {
         const id = index + 1
-
         return {
             id,
             name: `User ${id}`,
@@ -98,10 +86,9 @@ function generateUsers(): _user[] {
                 catchPhrase: `Catch phrase ${id}`,
                 bs: `business ${id}`
             }
-        } as unknown as _user
+        }
     })
 }
-
 export const albumURL = makeDataUrl(generateAlbums())
 export const postsURL = makeDataUrl(generatePosts())
 export const commentsURL = makeDataUrl(generateComments())

@@ -1,9 +1,14 @@
-import { RedisClient } from "bun";
-import { S3 } from "./s3";
-import type { DeadLetterJob, QueueStats, StreamJobEntry, WriteJob, WriteJobStatus } from "../types/write-queue";
+import { RedisClient } from 'bun'
+import { S3 } from './s3'
+import type {
+    DeadLetterJob,
+    QueueStats,
+    StreamJobEntry,
+    WriteJob,
+    WriteJobStatus
+} from '../types/write-queue'
 
 export class Redis {
-
     static readonly WRITE_STREAM = 'fylo:writes'
 
     static readonly WRITE_GROUP = 'fylo-workers'
@@ -15,37 +20,47 @@ export class Redis {
     private static LOGGING = process.env.LOGGING
 
     constructor() {
-
         const redisUrl = process.env.REDIS_URL
         if (!redisUrl) throw new Error('REDIS_URL environment variable is required')
 
         this.client = new RedisClient(redisUrl, {
-            connectionTimeout: process.env.REDIS_CONN_TIMEOUT ? Number(process.env.REDIS_CONN_TIMEOUT) : undefined,
-            idleTimeout: process.env.REDIS_IDLE_TIMEOUT ? Number(process.env.REDIS_IDLE_TIMEOUT) : undefined,
+            connectionTimeout: process.env.REDIS_CONN_TIMEOUT
+                ? Number(process.env.REDIS_CONN_TIMEOUT)
+                : undefined,
+            idleTimeout: process.env.REDIS_IDLE_TIMEOUT
+                ? Number(process.env.REDIS_IDLE_TIMEOUT)
+                : undefined,
             autoReconnect: process.env.REDIS_AUTO_CONNECT ? true : undefined,
-            maxRetries: process.env.REDIS_MAX_RETRIES ? Number(process.env.REDIS_MAX_RETRIES) : undefined,
+            maxRetries: process.env.REDIS_MAX_RETRIES
+                ? Number(process.env.REDIS_MAX_RETRIES)
+                : undefined,
             enableOfflineQueue: process.env.REDIS_ENABLE_OFFLINE_QUEUE ? true : undefined,
             enableAutoPipelining: process.env.REDIS_ENABLE_AUTO_PIPELINING ? true : undefined,
             tls: process.env.REDIS_TLS ? true : undefined
         })
 
         this.client.onconnect = () => {
-            if(Redis.LOGGING) console.log("Client Connected")
+            if (Redis.LOGGING) console.log('Client Connected')
         }
 
-        this.client.onclose = (err) => console.error("Redis client connection closed", err.message)
+        this.client.onclose = (err) => console.error('Redis client connection closed', err.message)
 
         this.client.connect()
     }
 
     private async ensureWriteGroup() {
-
-        if(!this.client.connected) throw new Error('Redis not connected!')
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
         try {
-            await this.client.send('XGROUP', ['CREATE', Redis.WRITE_STREAM, Redis.WRITE_GROUP, '$', 'MKSTREAM'])
-        } catch(err) {
-            if(!(err instanceof Error) || !err.message.includes('BUSYGROUP')) throw err
+            await this.client.send('XGROUP', [
+                'CREATE',
+                Redis.WRITE_STREAM,
+                Redis.WRITE_GROUP,
+                '$',
+                'MKSTREAM'
+            ])
+        } catch (err) {
+            if (!(err instanceof Error) || !err.message.includes('BUSYGROUP')) throw err
         }
     }
 
@@ -62,11 +77,11 @@ export class Redis {
     }
 
     private static parseHash(values: unknown): Record<string, string> {
-        if(!Array.isArray(values)) return {}
+        if (!Array.isArray(values)) return {}
 
         const parsed: Record<string, string> = {}
 
-        for(let i = 0; i < values.length; i += 2) {
+        for (let i = 0; i < values.length; i += 2) {
             parsed[String(values[i])] = String(values[i + 1] ?? '')
         }
 
@@ -74,25 +89,30 @@ export class Redis {
     }
 
     async publish(collection: string, action: 'insert' | 'delete', keyId: string | _ttid) {
-
-        if(this.client.connected) {
-
-            await this.client.publish(S3.getBucketFormat(collection), JSON.stringify({ action, keyId }))
+        if (this.client.connected) {
+            await this.client.publish(
+                S3.getBucketFormat(collection),
+                JSON.stringify({ action, keyId })
+            )
         }
     }
 
     async claimTTID(_id: _ttid, ttlSeconds: number = 10): Promise<boolean> {
+        if (!this.client.connected) return false
 
-        if(!this.client.connected) return false
-
-        const result = await this.client.send('SET', [`ttid:${_id}`, '1', 'NX', 'EX', String(ttlSeconds)])
+        const result = await this.client.send('SET', [
+            `ttid:${_id}`,
+            '1',
+            'NX',
+            'EX',
+            String(ttlSeconds)
+        ])
 
         return result === 'OK'
     }
 
     async enqueueWrite<T extends Record<string, any>>(job: WriteJob<T>) {
-
-        if(!this.client.connected) throw new Error('Redis not connected!')
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
         await this.ensureWriteGroup()
 
@@ -101,63 +121,89 @@ export class Redis {
 
         await this.client.send('HSET', [
             Redis.hashKey(job.jobId),
-            'jobId', job.jobId,
-            'collection', job.collection,
-            'docId', job.docId,
-            'operation', job.operation,
-            'payload', payload,
-            'status', job.status,
-            'attempts', String(job.attempts),
-            'createdAt', String(job.createdAt),
-            'updatedAt', String(now),
-            'nextAttemptAt', String(job.nextAttemptAt ?? now)
+            'jobId',
+            job.jobId,
+            'collection',
+            job.collection,
+            'docId',
+            job.docId,
+            'operation',
+            job.operation,
+            'payload',
+            payload,
+            'status',
+            job.status,
+            'attempts',
+            String(job.attempts),
+            'createdAt',
+            String(job.createdAt),
+            'updatedAt',
+            String(now),
+            'nextAttemptAt',
+            String(job.nextAttemptAt ?? now)
         ])
 
         await this.client.send('HSET', [
             Redis.docKey(job.collection, job.docId),
-            'status', 'queued',
-            'lastJobId', job.jobId,
-            'updatedAt', String(now)
+            'status',
+            'queued',
+            'lastJobId',
+            job.jobId,
+            'updatedAt',
+            String(now)
         ])
 
         return await this.client.send('XADD', [
             Redis.WRITE_STREAM,
             '*',
-            'jobId', job.jobId,
-            'collection', job.collection,
-            'docId', job.docId,
-            'operation', job.operation
+            'jobId',
+            job.jobId,
+            'collection',
+            job.collection,
+            'docId',
+            job.docId,
+            'operation',
+            job.operation
         ])
     }
 
-    async readWriteJobs(workerId: string, count: number = 1, blockMs: number = 1000): Promise<Array<StreamJobEntry>> {
-
-        if(!this.client.connected) throw new Error('Redis not connected!')
+    async readWriteJobs(
+        workerId: string,
+        count: number = 1,
+        blockMs: number = 1000
+    ): Promise<Array<StreamJobEntry>> {
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
         await this.ensureWriteGroup()
 
         const rows = await this.client.send('XREADGROUP', [
-            'GROUP', Redis.WRITE_GROUP, workerId,
-            'COUNT', String(count),
-            'BLOCK', String(blockMs),
-            'STREAMS', Redis.WRITE_STREAM, '>'
+            'GROUP',
+            Redis.WRITE_GROUP,
+            workerId,
+            'COUNT',
+            String(count),
+            'BLOCK',
+            String(blockMs),
+            'STREAMS',
+            Redis.WRITE_STREAM,
+            '>'
         ])
 
-        if(!Array.isArray(rows) || rows.length === 0) return []
+        if (!Array.isArray(rows) || rows.length === 0) return []
 
         const items: Array<StreamJobEntry> = []
 
-        for(const streamRow of rows as unknown[]) {
-            if(!Array.isArray(streamRow) || streamRow.length < 2) continue
+        for (const streamRow of rows as unknown[]) {
+            if (!Array.isArray(streamRow) || streamRow.length < 2) continue
             const entries = streamRow[1]
-            if(!Array.isArray(entries)) continue
+            if (!Array.isArray(entries)) continue
 
-            for(const entry of entries as unknown[]) {
-                if(!Array.isArray(entry) || entry.length < 2) continue
+            for (const entry of entries as unknown[]) {
+                if (!Array.isArray(entry) || entry.length < 2) continue
                 const streamId = String(entry[0])
                 const fields = Redis.parseHash(entry[1])
                 const job = await this.getJob(fields.jobId)
-                if(job) items.push({ streamId, job })
+                if (job) items.push({ streamId, job })
             }
         }
 
@@ -165,35 +211,42 @@ export class Redis {
     }
 
     async ackWriteJob(streamId: string) {
-
-        if(!this.client.connected) throw new Error('Redis not connected!')
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
         await this.client.send('XACK', [Redis.WRITE_STREAM, Redis.WRITE_GROUP, streamId])
     }
 
     async deadLetterWriteJob(streamId: string, job: WriteJob, reason?: string) {
-
-        if(!this.client.connected) throw new Error('Redis not connected!')
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
         const failedAt = Date.now()
 
         await this.client.send('XADD', [
             Redis.DEAD_LETTER_STREAM,
             '*',
-            'jobId', job.jobId,
-            'collection', job.collection,
-            'docId', job.docId,
-            'operation', job.operation,
-            'reason', reason ?? '',
-            'failedAt', String(failedAt)
+            'jobId',
+            job.jobId,
+            'collection',
+            job.collection,
+            'docId',
+            job.docId,
+            'operation',
+            job.operation,
+            'reason',
+            reason ?? '',
+            'failedAt',
+            String(failedAt)
         ])
 
         await this.ackWriteJob(streamId)
     }
 
-    async claimPendingJobs(workerId: string, minIdleMs: number = 30_000, count: number = 10): Promise<Array<StreamJobEntry>> {
-
-        if(!this.client.connected) throw new Error('Redis not connected!')
+    async claimPendingJobs(
+        workerId: string,
+        minIdleMs: number = 30_000,
+        count: number = 10
+    ): Promise<Array<StreamJobEntry>> {
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
         await this.ensureWriteGroup()
 
@@ -207,61 +260,61 @@ export class Redis {
             String(count)
         ])
 
-        if(!Array.isArray(result) || result.length < 2 || !Array.isArray(result[1])) return []
+        if (!Array.isArray(result) || result.length < 2 || !Array.isArray(result[1])) return []
 
         const items: Array<StreamJobEntry> = []
 
-        for(const entry of result[1] as unknown[]) {
-            if(!Array.isArray(entry) || entry.length < 2) continue
+        for (const entry of result[1] as unknown[]) {
+            if (!Array.isArray(entry) || entry.length < 2) continue
             const streamId = String(entry[0])
             const fields = Redis.parseHash(entry[1])
             const job = await this.getJob(fields.jobId)
-            if(job) items.push({ streamId, job })
+            if (job) items.push({ streamId, job })
         }
 
         return items
     }
 
-    async setJobStatus(jobId: string, status: WriteJobStatus, extra: Partial<Pick<WriteJob, 'workerId' | 'error' | 'attempts' | 'nextAttemptAt'>> = {}) {
+    async setJobStatus(
+        jobId: string,
+        status: WriteJobStatus,
+        extra: Partial<Pick<WriteJob, 'workerId' | 'error' | 'attempts' | 'nextAttemptAt'>> = {}
+    ) {
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
-        if(!this.client.connected) throw new Error('Redis not connected!')
+        const args = [Redis.hashKey(jobId), 'status', status, 'updatedAt', String(Date.now())]
 
-        const args = [
-            Redis.hashKey(jobId),
-            'status', status,
-            'updatedAt', String(Date.now())
-        ]
-
-        if(extra.workerId) args.push('workerId', extra.workerId)
-        if(extra.error) args.push('error', extra.error)
-        if(typeof extra.attempts === 'number') args.push('attempts', String(extra.attempts))
-        if(typeof extra.nextAttemptAt === 'number') args.push('nextAttemptAt', String(extra.nextAttemptAt))
+        if (extra.workerId) args.push('workerId', extra.workerId)
+        if (extra.error) args.push('error', extra.error)
+        if (typeof extra.attempts === 'number') args.push('attempts', String(extra.attempts))
+        if (typeof extra.nextAttemptAt === 'number')
+            args.push('nextAttemptAt', String(extra.nextAttemptAt))
 
         await this.client.send('HSET', args)
     }
 
     async setDocStatus(collection: string, docId: _ttid, status: WriteJobStatus, jobId?: string) {
-
-        if(!this.client.connected) throw new Error('Redis not connected!')
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
         const args = [
             Redis.docKey(collection, docId),
-            'status', status,
-            'updatedAt', String(Date.now())
+            'status',
+            status,
+            'updatedAt',
+            String(Date.now())
         ]
 
-        if(jobId) args.push('lastJobId', jobId)
+        if (jobId) args.push('lastJobId', jobId)
 
         await this.client.send('HSET', args)
     }
 
     async getJob(jobId: string): Promise<WriteJob | null> {
-
-        if(!this.client.connected) throw new Error('Redis not connected!')
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
         const hash = Redis.parseHash(await this.client.send('HGETALL', [Redis.hashKey(jobId)]))
 
-        if(Object.keys(hash).length === 0) return null
+        if (Object.keys(hash).length === 0) return null
 
         return {
             jobId: hash.jobId,
@@ -280,31 +333,37 @@ export class Redis {
     }
 
     async getDocStatus(collection: string, docId: _ttid) {
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
-        if(!this.client.connected) throw new Error('Redis not connected!')
-
-        const hash = Redis.parseHash(await this.client.send('HGETALL', [Redis.docKey(collection, docId)]))
+        const hash = Redis.parseHash(
+            await this.client.send('HGETALL', [Redis.docKey(collection, docId)])
+        )
 
         return Object.keys(hash).length > 0 ? hash : null
     }
 
     async readDeadLetters(count: number = 10): Promise<Array<DeadLetterJob>> {
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
-        if(!this.client.connected) throw new Error('Redis not connected!')
+        const rows = await this.client.send('XRANGE', [
+            Redis.DEAD_LETTER_STREAM,
+            '-',
+            '+',
+            'COUNT',
+            String(count)
+        ])
 
-        const rows = await this.client.send('XRANGE', [Redis.DEAD_LETTER_STREAM, '-', '+', 'COUNT', String(count)])
-
-        if(!Array.isArray(rows)) return []
+        if (!Array.isArray(rows)) return []
 
         const items: Array<DeadLetterJob> = []
 
-        for(const row of rows as unknown[]) {
-            if(!Array.isArray(row) || row.length < 2) continue
+        for (const row of rows as unknown[]) {
+            if (!Array.isArray(row) || row.length < 2) continue
             const streamId = String(row[0])
             const fields = Redis.parseHash(row[1])
             const job = await this.getJob(fields.jobId)
 
-            if(job) {
+            if (job) {
                 items.push({
                     streamId,
                     job,
@@ -318,20 +377,25 @@ export class Redis {
     }
 
     async replayDeadLetter(streamId: string): Promise<WriteJob | null> {
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
-        if(!this.client.connected) throw new Error('Redis not connected!')
+        const rows = await this.client.send('XRANGE', [
+            Redis.DEAD_LETTER_STREAM,
+            streamId,
+            streamId,
+            'COUNT',
+            '1'
+        ])
 
-        const rows = await this.client.send('XRANGE', [Redis.DEAD_LETTER_STREAM, streamId, streamId, 'COUNT', '1'])
-
-        if(!Array.isArray(rows) || rows.length === 0) return null
+        if (!Array.isArray(rows) || rows.length === 0) return null
 
         const row = rows[0]
-        if(!Array.isArray(row) || row.length < 2) return null
+        if (!Array.isArray(row) || row.length < 2) return null
 
         const fields = Redis.parseHash(row[1])
         const job = await this.getJob(fields.jobId)
 
-        if(!job) return null
+        if (!job) return null
 
         const replayed: WriteJob = {
             ...job,
@@ -350,8 +414,7 @@ export class Redis {
     }
 
     async getQueueStats(): Promise<QueueStats> {
-
-        if(!this.client.connected) throw new Error('Redis not connected!')
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
         await this.ensureWriteGroup()
 
@@ -371,8 +434,7 @@ export class Redis {
     }
 
     async acquireDocLock(collection: string, docId: _ttid, jobId: string, ttlSeconds: number = 60) {
-
-        if(!this.client.connected) throw new Error('Redis not connected!')
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
         const result = await this.client.send('SET', [
             Redis.lockKey(collection, docId),
@@ -386,17 +448,15 @@ export class Redis {
     }
 
     async releaseDocLock(collection: string, docId: _ttid, jobId: string) {
-
-        if(!this.client.connected) throw new Error('Redis not connected!')
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
         const key = Redis.lockKey(collection, docId)
         const current = await this.client.send('GET', [key])
-        if(current === jobId) await this.client.send('DEL', [key])
+        if (current === jobId) await this.client.send('DEL', [key])
     }
 
     async *subscribe(collection: string) {
-
-        if(!this.client.connected) throw new Error('Redis not connected!')
+        if (!this.client.connected) throw new Error('Redis not connected!')
 
         const client = this.client
 
@@ -405,12 +465,22 @@ export class Redis {
                 await client.subscribe(S3.getBucketFormat(collection), (message) => {
                     controller.enqueue(message)
                 })
-            },
+            }
         })
 
-        for await (const chunk of stream) {
-            const parsed = JSON.parse(chunk)
-            if (typeof parsed !== 'object' || parsed === null || !('action' in parsed) || !('keyId' in parsed)) continue
+        const reader = stream.getReader()
+
+        while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            const parsed = JSON.parse(value)
+            if (
+                typeof parsed !== 'object' ||
+                parsed === null ||
+                !('action' in parsed) ||
+                !('keyId' in parsed)
+            )
+                continue
             yield parsed
         }
     }
