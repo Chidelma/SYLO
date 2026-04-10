@@ -65,7 +65,10 @@ describe('s3-files engine', () => {
             body: 'payload only'
         })
         const raw = JSON.parse(
-            await readFile(path.join(root, POSTS, '.fylo', 'docs', id.slice(0, 2), `${id}.json`), 'utf8')
+            await readFile(
+                path.join(root, POSTS, '.fylo', 'docs', id.slice(0, 2), `${id}.json`),
+                'utf8'
+            )
         )
 
         expect(raw).toEqual({
