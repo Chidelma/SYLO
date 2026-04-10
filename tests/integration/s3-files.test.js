@@ -1,11 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { Database } from 'bun:sqlite'
 import Fylo from '../../src'
 const root = await mkdtemp(path.join(os.tmpdir(), 'fylo-s3files-'))
-const fylo = new Fylo({ engine: 's3-files', s3FilesRoot: root })
+const fylo = new Fylo({ root })
 const POSTS = 's3files-posts'
 const USERS = 's3files-users'
 describe('s3-files engine', () => {
@@ -60,12 +59,31 @@ describe('s3-files engine', () => {
         const result = await fylo.getDoc(POSTS, id).once()
         expect(result[id].body).toBe(longBody)
     })
-    test('stores indexes in a single SQLite database instead of per-entry files', async () => {
-        const dbStat = await stat(path.join(root, POSTS, '.fylo', 'index.db'))
-        expect(dbStat.isFile()).toBe(true)
-        await expect(stat(path.join(root, POSTS, '.fylo', 'indexes'))).rejects.toThrow()
+    test('stores only user document data in the file body', async () => {
+        const id = await fylo.putData(POSTS, {
+            title: 'Lean doc',
+            body: 'payload only'
+        })
+        const raw = JSON.parse(
+            await readFile(path.join(root, POSTS, '.fylo', 'docs', id.slice(0, 2), `${id}.json`), 'utf8')
+        )
+
+        expect(raw).toEqual({
+            title: 'Lean doc',
+            body: 'payload only'
+        })
+        expect(raw.id).toBeUndefined()
+        expect(raw.createdAt).toBeUndefined()
+        expect(raw.updatedAt).toBeUndefined()
     })
-    test('uses SQLite index rows to support exact, range, and contains queries', async () => {
+    test('stores indexes in a single collection file instead of SQLite or per-entry files', async () => {
+        const indexStat = await stat(
+            path.join(root, POSTS, '.fylo', 'indexes', `${POSTS}.idx.json`)
+        )
+        expect(indexStat.isFile()).toBe(true)
+        await expect(stat(path.join(root, POSTS, '.fylo', 'index.db'))).rejects.toThrow()
+    })
+    test('uses the collection index file to support exact, range, and contains queries', async () => {
         const queryCollection = 's3files-query'
         await fylo.createCollection(queryCollection)
 
@@ -111,39 +129,33 @@ describe('s3-files engine', () => {
         expect(Object.keys(containsResults)).toEqual([bunId])
         expect(containsResults[nodeId]).toBeUndefined()
 
-        const db = new Database(path.join(root, queryCollection, '.fylo', 'index.db'))
-        const rows = db
-            .query(
-                `SELECT doc_id, field_path, raw_value, value_type, numeric_value
-                 FROM doc_index_entries
-                 WHERE doc_id = ?
-                 ORDER BY field_path, raw_value`
+        const index = JSON.parse(
+            await readFile(
+                path.join(root, queryCollection, '.fylo', 'indexes', `${queryCollection}.idx.json`),
+                'utf8'
             )
-            .all(bunId)
-        db.close()
+        )
+        const rows = index.docs[bunId]
 
         expect(rows).toEqual(
             expect.arrayContaining([
                 expect.objectContaining({
-                    doc_id: bunId,
-                    field_path: 'title',
-                    raw_value: 'Bun launch',
-                    value_type: 'string',
-                    numeric_value: null
+                    fieldPath: 'title',
+                    rawValue: 'Bun launch',
+                    valueType: 'string',
+                    numericValue: null
                 }),
                 expect.objectContaining({
-                    doc_id: bunId,
-                    field_path: 'meta/score',
-                    raw_value: '10',
-                    value_type: 'number',
-                    numeric_value: 10
+                    fieldPath: 'meta/score',
+                    rawValue: '10',
+                    valueType: 'number',
+                    numericValue: 10
                 }),
                 expect.objectContaining({
-                    doc_id: bunId,
-                    field_path: 'tags/1',
-                    raw_value: 'aws',
-                    value_type: 'string',
-                    numeric_value: null
+                    fieldPath: 'tags/1',
+                    rawValue: 'aws',
+                    valueType: 'string',
+                    numericValue: null
                 })
             ])
         )
@@ -163,30 +175,28 @@ describe('s3-files engine', () => {
     })
     test('queue APIs are explicitly unsupported', async () => {
         await expect(fylo.queuePutData(POSTS, { title: 'no queue' })).rejects.toThrow(
-            'queuePutData is not supported'
+            'queuePutData was removed'
         )
-        await expect(fylo.processQueuedWrites(1)).rejects.toThrow(
-            'processQueuedWrites is not supported'
-        )
+        await expect(fylo.processQueuedWrites(1)).rejects.toThrow('processQueuedWrites was removed')
     })
     test('rejects collection names that are unsafe for cross-platform filesystems', async () => {
         await expect(fylo.createCollection('bad/name')).rejects.toThrow('Invalid collection name')
         await expect(fylo.createCollection('bad\\name')).rejects.toThrow('Invalid collection name')
         await expect(fylo.createCollection('bad:name')).rejects.toThrow('Invalid collection name')
     })
-    test('static helpers can use s3-files through env defaults', async () => {
-        const prevEngine = process.env.FYLO_STORAGE_ENGINE
-        const prevRoot = process.env.FYLO_S3FILES_ROOT
-        process.env.FYLO_STORAGE_ENGINE = 's3-files'
+    test('static helpers can use filesystem root env defaults', async () => {
+        const prevFyloRoot = process.env.FYLO_ROOT
+        const prevS3FilesRoot = process.env.FYLO_S3FILES_ROOT
+        process.env.FYLO_ROOT = root
         process.env.FYLO_S3FILES_ROOT = root
         const collection = 's3files-static'
         await Fylo.createCollection(collection)
         const id = await fylo.putData(collection, { title: 'Static path' })
         const result = await Fylo.getDoc(collection, id).once()
         expect(result[id].title).toBe('Static path')
-        if (prevEngine === undefined) delete process.env.FYLO_STORAGE_ENGINE
-        else process.env.FYLO_STORAGE_ENGINE = prevEngine
-        if (prevRoot === undefined) delete process.env.FYLO_S3FILES_ROOT
-        else process.env.FYLO_S3FILES_ROOT = prevRoot
+        if (prevFyloRoot === undefined) delete process.env.FYLO_ROOT
+        else process.env.FYLO_ROOT = prevFyloRoot
+        if (prevS3FilesRoot === undefined) delete process.env.FYLO_S3FILES_ROOT
+        else process.env.FYLO_S3FILES_ROOT = prevS3FilesRoot
     })
 })

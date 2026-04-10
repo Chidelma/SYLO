@@ -1,15 +1,14 @@
-import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
+import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
+import { rm } from 'node:fs/promises'
 import Fylo from '../../src'
 import { albumURL, postsURL } from '../data'
-import S3Mock from '../mocks/s3'
-import RedisMock from '../mocks/redis'
+import { createTestRoot } from '../helpers/root'
 const ALBUMS = 'jm-album'
 const POSTS = 'jm-post'
-const fylo = new Fylo()
-mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
-mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
+const root = await createTestRoot('fylo-join-')
+const fylo = new Fylo({ root })
 beforeAll(async () => {
-    await Promise.all([Fylo.createCollection(ALBUMS), Fylo.createCollection(POSTS)])
+    await Promise.all([fylo.createCollection(ALBUMS), fylo.createCollection(POSTS)])
     try {
         await Promise.all([
             fylo.importBulkData(ALBUMS, new URL(albumURL), 100),
@@ -20,11 +19,12 @@ beforeAll(async () => {
     }
 })
 afterAll(async () => {
-    await Promise.all([Fylo.dropCollection(ALBUMS), Fylo.dropCollection(POSTS)])
+    await Promise.all([fylo.dropCollection(ALBUMS), fylo.dropCollection(POSTS)])
+    await rm(root, { recursive: true, force: true })
 })
 describe('NO-SQL', async () => {
     test('INNER JOIN — returns only join field values', async () => {
-        const results = await Fylo.joinDocs({
+        const results = await fylo.joinDocs({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'inner',
@@ -38,7 +38,7 @@ describe('NO-SQL', async () => {
         }
     })
     test('LEFT JOIN — returns full left-collection document', async () => {
-        const results = await Fylo.joinDocs({
+        const results = await fylo.joinDocs({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'left',
@@ -52,7 +52,7 @@ describe('NO-SQL', async () => {
         }
     })
     test('RIGHT JOIN — returns full right-collection document', async () => {
-        const results = await Fylo.joinDocs({
+        const results = await fylo.joinDocs({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'right',
@@ -67,7 +67,7 @@ describe('NO-SQL', async () => {
         }
     })
     test('OUTER JOIN — returns merged left + right document', async () => {
-        const results = await Fylo.joinDocs({
+        const results = await fylo.joinDocs({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'outer',
@@ -80,7 +80,7 @@ describe('NO-SQL', async () => {
         }
     })
     test('JOIN with $limit — respects the result cap', async () => {
-        const results = await Fylo.joinDocs({
+        const results = await fylo.joinDocs({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'inner',
@@ -90,7 +90,7 @@ describe('NO-SQL', async () => {
         expect(Object.keys(results).length).toBe(5)
     })
     test('JOIN with $select — only requested fields are returned', async () => {
-        const results = await Fylo.joinDocs({
+        const results = await fylo.joinDocs({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'left',
@@ -106,7 +106,7 @@ describe('NO-SQL', async () => {
         }
     })
     test('JOIN with $groupby — groups results by field value', async () => {
-        const results = await Fylo.joinDocs({
+        const results = await fylo.joinDocs({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'inner',
@@ -116,7 +116,7 @@ describe('NO-SQL', async () => {
         expect(Object.keys(results).length).toBeGreaterThan(0)
     })
     test('JOIN with $onlyIds — returns IDs only', async () => {
-        const results = await Fylo.joinDocs({
+        const results = await fylo.joinDocs({
             $leftCollection: ALBUMS,
             $rightCollection: POSTS,
             $mode: 'inner',

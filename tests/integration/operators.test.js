@@ -1,14 +1,13 @@
-import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
+import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
+import { rm } from 'node:fs/promises'
 import Fylo from '../../src'
 import { albumURL } from '../data'
-import S3Mock from '../mocks/s3'
-import RedisMock from '../mocks/redis'
+import { createTestRoot } from '../helpers/root'
 const ALBUMS = 'ops-album'
-const fylo = new Fylo()
-mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
-mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
+const root = await createTestRoot('fylo-operators-')
+const fylo = new Fylo({ root })
 beforeAll(async () => {
-    await Fylo.createCollection(ALBUMS)
+    await fylo.createCollection(ALBUMS)
     try {
         await fylo.importBulkData(ALBUMS, new URL(albumURL), 100)
     } catch {
@@ -16,14 +15,17 @@ beforeAll(async () => {
     }
 })
 afterAll(async () => {
-    await Fylo.dropCollection(ALBUMS)
+    await fylo.dropCollection(ALBUMS)
+    await rm(root, { recursive: true, force: true })
 })
 describe('NO-SQL', async () => {
     test('$ne — excludes matching value', async () => {
         let results = {}
-        for await (const data of Fylo.findDocs(ALBUMS, {
-            $ops: [{ userId: { $ne: 1 } }]
-        }).collect()) {
+        for await (const data of fylo
+            .findDocs(ALBUMS, {
+                $ops: [{ userId: { $ne: 1 } }]
+            })
+            .collect()) {
             results = { ...results, ...data }
         }
         const albums = Object.values(results)
@@ -33,9 +35,11 @@ describe('NO-SQL', async () => {
     })
     test('$lt — returns documents where field is less than value', async () => {
         let results = {}
-        for await (const data of Fylo.findDocs(ALBUMS, {
-            $ops: [{ userId: { $lt: 5 } }]
-        }).collect()) {
+        for await (const data of fylo
+            .findDocs(ALBUMS, {
+                $ops: [{ userId: { $lt: 5 } }]
+            })
+            .collect()) {
             results = { ...results, ...data }
         }
         const albums = Object.values(results)
@@ -45,9 +49,11 @@ describe('NO-SQL', async () => {
     })
     test('$lte — returns documents where field is less than or equal to value', async () => {
         let results = {}
-        for await (const data of Fylo.findDocs(ALBUMS, {
-            $ops: [{ userId: { $lte: 5 } }]
-        }).collect()) {
+        for await (const data of fylo
+            .findDocs(ALBUMS, {
+                $ops: [{ userId: { $lte: 5 } }]
+            })
+            .collect()) {
             results = { ...results, ...data }
         }
         const albums = Object.values(results)
@@ -57,9 +63,11 @@ describe('NO-SQL', async () => {
     })
     test('$gt — returns documents where field is greater than value', async () => {
         let results = {}
-        for await (const data of Fylo.findDocs(ALBUMS, {
-            $ops: [{ userId: { $gt: 5 } }]
-        }).collect()) {
+        for await (const data of fylo
+            .findDocs(ALBUMS, {
+                $ops: [{ userId: { $gt: 5 } }]
+            })
+            .collect()) {
             results = { ...results, ...data }
         }
         const albums = Object.values(results)
@@ -69,9 +77,11 @@ describe('NO-SQL', async () => {
     })
     test('$gte — returns documents where field is greater than or equal to value', async () => {
         let results = {}
-        for await (const data of Fylo.findDocs(ALBUMS, {
-            $ops: [{ userId: { $gte: 5 } }]
-        }).collect()) {
+        for await (const data of fylo
+            .findDocs(ALBUMS, {
+                $ops: [{ userId: { $gte: 5 } }]
+            })
+            .collect()) {
             results = { ...results, ...data }
         }
         const albums = Object.values(results)
@@ -81,9 +91,11 @@ describe('NO-SQL', async () => {
     })
     test('$like — matches substring pattern', async () => {
         let results = {}
-        for await (const data of Fylo.findDocs(ALBUMS, {
-            $ops: [{ title: { $like: '%quidem%' } }]
-        }).collect()) {
+        for await (const data of fylo
+            .findDocs(ALBUMS, {
+                $ops: [{ title: { $like: '%quidem%' } }]
+            })
+            .collect()) {
             results = { ...results, ...data }
         }
         const albums = Object.values(results)
@@ -93,9 +105,11 @@ describe('NO-SQL', async () => {
     })
     test('$like — prefix pattern', async () => {
         let results = {}
-        for await (const data of Fylo.findDocs(ALBUMS, {
-            $ops: [{ title: { $like: 'omnis%' } }]
-        }).collect()) {
+        for await (const data of fylo
+            .findDocs(ALBUMS, {
+                $ops: [{ title: { $like: 'omnis%' } }]
+            })
+            .collect()) {
             results = { ...results, ...data }
         }
         const albums = Object.values(results)

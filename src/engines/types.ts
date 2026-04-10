@@ -1,4 +1,4 @@
-export type FyloStorageEngineKind = 'legacy-s3' | 's3-files'
+export type FyloStorageEngineKind = 's3-files'
 
 export interface StorageEngine {
     read(path: string): Promise<string>

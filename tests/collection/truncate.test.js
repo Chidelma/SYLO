@@ -1,23 +1,24 @@
-import { test, expect, describe, afterAll, mock } from 'bun:test'
+import { test, expect, describe, afterAll } from 'bun:test'
+import { rm } from 'node:fs/promises'
 import Fylo from '../../src'
 import { postsURL, albumURL } from '../data'
-import S3Mock from '../mocks/s3'
-import RedisMock from '../mocks/redis'
+import { createTestRoot } from '../helpers/root'
 const POSTS = `post`
 const ALBUMS = `album`
+const root = await createTestRoot('fylo-truncate-')
 afterAll(async () => {
-    await Promise.all([Fylo.dropCollection(ALBUMS), Fylo.dropCollection(POSTS)])
+    const fylo = new Fylo({ root })
+    await Promise.all([fylo.dropCollection(ALBUMS), fylo.dropCollection(POSTS)])
+    await rm(root, { recursive: true, force: true })
 })
-mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
-mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
 describe('NO-SQL', () => {
     test('TRUNCATE', async () => {
-        const fylo = new Fylo()
-        await Fylo.createCollection(POSTS)
+        const fylo = new Fylo({ root })
+        await fylo.createCollection(POSTS)
         await fylo.importBulkData(POSTS, new URL(postsURL))
         await fylo.delDocs(POSTS)
         const ids = []
-        for await (const data of Fylo.findDocs(POSTS, { $limit: 1, $onlyIds: true }).collect()) {
+        for await (const data of fylo.findDocs(POSTS, { $limit: 1, $onlyIds: true }).collect()) {
             ids.push(data)
         }
         expect(ids.length).toBe(0)
@@ -25,7 +26,7 @@ describe('NO-SQL', () => {
 })
 describe('SQL', () => {
     test('TRUNCATE', async () => {
-        const fylo = new Fylo()
+        const fylo = new Fylo({ root })
         await fylo.executeSQL(`CREATE TABLE ${ALBUMS}`)
         await fylo.importBulkData(ALBUMS, new URL(albumURL))
         await fylo.executeSQL(`DELETE FROM ${ALBUMS}`)
