@@ -23,11 +23,11 @@ beforeAll(async () => {
         commentsResults = { ...commentsResults, ...data }
     }
     usersResults = await fylo.executeSQL(`SELECT * FROM ${USERS} LIMIT 1`)
-}, 20_000)
+})
 afterAll(async () => {
     await Promise.all([fylo.dropCollection(COMMENTS), fylo.executeSQL(`DROP TABLE ${USERS}`)])
     await rm(root, { recursive: true, force: true })
-}, 20_000)
+})
 describe('NO-SQL', async () => {
     test('DELETE ONE', async () => {
         const id = Object.keys(commentsResults).shift()
