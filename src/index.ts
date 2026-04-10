@@ -1,20 +1,22 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { Query } from './core/query'
+import path from 'node:path'
 import { Parser } from './core/parser'
-import { Dir } from './core/directory'
 import TTID from '@delma/ttid'
 import Gen from '@delma/chex'
-import { Walker } from './core/walker'
-import { S3 } from './adapters/s3'
 import { Cipher } from './adapters/cipher'
-import { Redis } from './adapters/redis'
-import { WriteQueue } from './core/write-queue'
 import { S3FilesEngine } from './engines/s3-files'
+import type { FyloOptions } from './sync'
 import './core/format'
 import './core/extensions'
-import type { QueueStats, QueuedWriteResult, WriteJob } from './types/write-queue'
-import type { StreamJobEntry } from './types/write-queue'
-import type { FyloStorageEngineKind } from './engines/types'
+
+export { FyloSyncError } from './sync'
+export type {
+    FyloDeleteSyncEvent,
+    FyloOptions,
+    FyloSyncHooks,
+    FyloSyncMode,
+    FyloWriteSyncEvent
+} from './sync'
 
 export default class Fylo {
     private static LOGGING = process.env.LOGGING
@@ -30,48 +32,25 @@ export default class Fylo {
     /** Collections whose schema `$encrypted` config has already been loaded. */
     private static readonly loadedEncryption: Set<string> = new Set()
 
-    private static _queueRedis: Redis | null = null
+    private readonly engine: S3FilesEngine
 
-    private static rollbackWarningShown = false
-
-    private static readonly MAX_WRITE_ATTEMPTS = Number(process.env.FYLO_WRITE_MAX_ATTEMPTS ?? 3)
-
-    private static readonly WRITE_RETRY_BASE_MS = Number(process.env.FYLO_WRITE_RETRY_BASE_MS ?? 10)
-
-    private readonly dir: Dir
-
-    private readonly engineKind: FyloStorageEngineKind
-
-    private readonly s3Files?: S3FilesEngine
-
-    constructor(options: { engine?: FyloStorageEngineKind; s3FilesRoot?: string } = {}) {
-        this.dir = new Dir()
-        this.engineKind = options.engine ?? Fylo.defaultEngineKind()
-        if (this.engineKind === 's3-files') this.s3Files = new S3FilesEngine(options.s3FilesRoot)
+    constructor(options: FyloOptions = {}) {
+        this.engine = new S3FilesEngine(options.root ?? options.s3FilesRoot ?? Fylo.defaultRoot(), {
+            sync: options.sync,
+            syncMode: options.syncMode
+        })
     }
 
-    private static get queueRedis(): Redis {
-        if (!Fylo._queueRedis) Fylo._queueRedis = new Redis()
-        return Fylo._queueRedis
+    private static defaultRoot() {
+        return (
+            process.env.FYLO_ROOT ??
+            process.env.FYLO_S3FILES_ROOT ??
+            path.join(process.cwd(), '.fylo-data')
+        )
     }
 
-    private static defaultEngineKind(): FyloStorageEngineKind {
-        return process.env.FYLO_STORAGE_ENGINE === 's3-files' ? 's3-files' : 'legacy-s3'
-    }
-
-    private static get defaultS3Files(): S3FilesEngine {
-        return new S3FilesEngine(process.env.FYLO_S3FILES_ROOT)
-    }
-
-    private assertS3FilesEngine(): S3FilesEngine {
-        if (!this.s3Files) throw new Error('S3 Files engine is not configured')
-        return this.s3Files
-    }
-
-    private ensureLegacyQueue(feature: string): Redis {
-        if (this.engineKind === 's3-files')
-            throw new Error(`${feature} is not supported in s3-files engine`)
-        return Fylo.queueRedis
+    private static get defaultEngine() {
+        return new S3FilesEngine(Fylo.defaultRoot())
     }
 
     /**
@@ -96,77 +75,65 @@ export default class Fylo {
                 return await this.dropCollection(
                     (Parser.parse(SQL) as _storeDelete<T>).$collection!
                 )
-            case 'SELECT':
+            case 'SELECT': {
                 const query = Parser.parse<T>(SQL) as _storeQuery<T>
                 if (SQL.includes('JOIN')) return await this.joinDocs(query as _join<T, U>)
-                const selCol = (query as _storeQuery<T>).$collection
-                delete (query as _storeQuery<T>).$collection
-                let docs: Record<string, unknown> | Array<_ttid> = query.$onlyIds
-                    ? new Array<_ttid>()
-                    : {}
-                for await (const data of this.findDocs(
-                    selCol! as string,
-                    query as _storeQuery<T>
-                ).collect()) {
-                    if (typeof data === 'object') {
-                        docs = Object.appendGroup(docs, data)
-                    } else (docs as Array<_ttid>).push(data as _ttid)
+                const selCol = query.$collection
+                delete query.$collection
+                let docs: Record<string, unknown> | Array<_ttid> = query.$onlyIds ? [] : {}
+
+                for await (const data of this.findDocs(selCol! as string, query).collect()) {
+                    if (typeof data === 'object') docs = Object.appendGroup(docs, data)
+                    else (docs as Array<_ttid>).push(data as _ttid)
                 }
+
                 return docs
-            case 'INSERT':
+            }
+            case 'INSERT': {
                 const insert = Parser.parse<T>(SQL) as _storeInsert<T>
                 const insCol = insert.$collection
                 delete insert.$collection
                 return await this.putData(insCol!, insert.$values)
-            case 'UPDATE':
+            }
+            case 'UPDATE': {
                 const update = Parser.parse<T>(SQL) as _storeUpdate<T>
                 const updateCol = update.$collection
                 delete update.$collection
                 return await this.patchDocs(updateCol!, update)
-            case 'DELETE':
+            }
+            case 'DELETE': {
                 const del = Parser.parse<T>(SQL) as _storeDelete<T>
                 const delCol = del.$collection
                 delete del.$collection
                 return await this.delDocs(delCol!, del)
+            }
             default:
                 throw new Error('Invalid Operation')
         }
     }
 
     /**
-     * Creates a new schema for a collection.
+     * Creates a new collection on the configured filesystem root.
      * @param collection The name of the collection.
      */
     static async createCollection(collection: string) {
-        if (Fylo.defaultEngineKind() === 's3-files') {
-            await Fylo.defaultS3Files.createCollection(collection)
-            return
-        }
-        await S3.createBucket(collection)
+        await Fylo.defaultEngine.createCollection(collection)
     }
 
     /**
-     * Drops an existing schema for a collection.
+     * Drops an existing collection from the configured filesystem root.
      * @param collection The name of the collection.
      */
     static async dropCollection(collection: string) {
-        if (Fylo.defaultEngineKind() === 's3-files') {
-            await Fylo.defaultS3Files.dropCollection(collection)
-            return
-        }
-        await S3.deleteBucket(collection)
+        await Fylo.defaultEngine.dropCollection(collection)
     }
 
     async createCollection(collection: string) {
-        if (this.engineKind === 's3-files')
-            return await this.assertS3FilesEngine().createCollection(collection)
-        return await Fylo.createCollection(collection)
+        return await this.engine.createCollection(collection)
     }
 
     async dropCollection(collection: string) {
-        if (this.engineKind === 's3-files')
-            return await this.assertS3FilesEngine().dropCollection(collection)
-        return await Fylo.dropCollection(collection)
+        return await this.engine.dropCollection(collection)
     }
 
     /**
@@ -203,176 +170,58 @@ export default class Fylo {
         }
     }
 
+    /**
+     * Compatibility helper. FYLO now writes synchronously to the filesystem,
+     * so there is no queued transactional rollback path to execute.
+     */
+    async rollback() {}
+
     getDoc<T extends Record<string, any>>(collection: string, _id: _ttid, onlyId: boolean = false) {
-        if (this.engineKind === 's3-files')
-            return this.assertS3FilesEngine().getDoc<T>(collection, _id, onlyId)
-        return Fylo.getDoc<T>(collection, _id, onlyId)
+        return this.engine.getDoc<T>(collection, _id, onlyId)
     }
 
     findDocs<T extends Record<string, any>>(collection: string, query?: _storeQuery<T>) {
-        if (this.engineKind === 's3-files')
-            return this.assertS3FilesEngine().findDocs<T>(collection, query)
-        return Fylo.findDocs<T>(collection, query)
+        return this.engine.findDocs<T>(collection, query)
     }
 
     async joinDocs<T extends Record<string, any>, U extends Record<string, any>>(
         join: _join<T, U>
     ) {
-        if (this.engineKind === 's3-files') return await this.assertS3FilesEngine().joinDocs(join)
-        return await Fylo.joinDocs(join)
+        return await this.engine.joinDocs(join)
     }
 
-    /**
-     * Rolls back all transcations in current instance
-     * @deprecated Prefer queued write recovery, retries, dead letters, or compensating writes.
-     */
-    async rollback() {
-        if (this.engineKind === 's3-files') return
-        if (!Fylo.rollbackWarningShown) {
-            Fylo.rollbackWarningShown = true
-            console.warn(
-                '[FYLO] rollback() is deprecated for queued-write flows. Prefer job recovery, dead letters, or compensating writes.'
-            )
-        }
-        await this.dir.executeRollback()
+    async *exportBulkData<T extends Record<string, any>>(collection: string) {
+        yield* this.engine.exportBulkData<T>(collection)
     }
 
-    async getJobStatus(jobId: string) {
-        return await this.ensureLegacyQueue('getJobStatus').getJob(jobId)
+    private unsupportedLegacyApi(feature: string): never {
+        throw new Error(
+            `${feature} was removed. FYLO now writes synchronously to the filesystem and expects external sync tooling for cloud replication.`
+        )
     }
 
-    async getDocStatus(collection: string, docId: _ttid) {
-        return await this.ensureLegacyQueue('getDocStatus').getDocStatus(collection, docId)
+    async getJobStatus(_jobId: string) {
+        return this.unsupportedLegacyApi('getJobStatus')
     }
 
-    async getDeadLetters(count: number = 10) {
-        return await this.ensureLegacyQueue('getDeadLetters').readDeadLetters(count)
+    async getDocStatus(_collection: string, _docId: _ttid) {
+        return this.unsupportedLegacyApi('getDocStatus')
     }
 
-    async getQueueStats(): Promise<QueueStats> {
-        return await this.ensureLegacyQueue('getQueueStats').getQueueStats()
+    async getDeadLetters(_count: number = 10) {
+        return this.unsupportedLegacyApi('getDeadLetters')
     }
 
-    async replayDeadLetter(streamId: string) {
-        return await this.ensureLegacyQueue('replayDeadLetter').replayDeadLetter(streamId)
+    async getQueueStats() {
+        return this.unsupportedLegacyApi('getQueueStats')
     }
 
-    private async waitForJob(jobId: string, timeoutMs: number = 5_000, intervalMs: number = 50) {
-        const start = Date.now()
-
-        do {
-            const job = await this.getJobStatus(jobId)
-            if (job && (job.status === 'committed' || job.status === 'failed')) return job
-            await Bun.sleep(intervalMs)
-        } while (Date.now() - start < timeoutMs)
-
-        throw new Error(`Timed out waiting for job ${jobId}`)
+    async replayDeadLetter(_streamId: string) {
+        return this.unsupportedLegacyApi('replayDeadLetter')
     }
 
-    private async runQueuedJob<T>(
-        queued: QueuedWriteResult,
-        {
-            wait = true
-        }: {
-            wait?: boolean
-            timeoutMs?: number
-        } = {},
-        resolveValue?: () => Promise<T> | T
-    ): Promise<T | QueuedWriteResult> {
-        if (this.engineKind === 's3-files') {
-            if (!wait) return queued
-            return resolveValue ? await resolveValue() : queued
-        }
-
-        if (!wait) return queued
-
-        const processed = await this.processQueuedWrites(1)
-
-        if (processed === 0) throw new Error(`No worker available to process job ${queued.jobId}`)
-
-        const job = await this.getJobStatus(queued.jobId)
-
-        if (job?.status === 'failed') {
-            throw new Error(job.error ?? `Queued job ${queued.jobId} failed`)
-        }
-
-        return resolveValue ? await resolveValue() : queued
-    }
-
-    async processQueuedWrites(count: number = 1, recover: boolean = false) {
-        this.ensureLegacyQueue('processQueuedWrites')
-        const jobs = recover
-            ? await Fylo.queueRedis.claimPendingJobs(Bun.randomUUIDv7(), 30_000, count)
-            : await Fylo.queueRedis.readWriteJobs(Bun.randomUUIDv7(), count)
-
-        let processed = 0
-
-        for (const job of jobs) {
-            if (await this.processQueuedJob(job)) processed++
-        }
-
-        return processed
-    }
-
-    private async processQueuedJob({ streamId, job }: StreamJobEntry) {
-        if (job.nextAttemptAt && job.nextAttemptAt > Date.now()) return false
-
-        const locked = await Fylo.queueRedis.acquireDocLock(job.collection, job.docId, job.jobId)
-        if (!locked) return false
-
-        try {
-            await Fylo.queueRedis.setJobStatus(job.jobId, 'processing', {
-                attempts: job.attempts + 1
-            })
-            await Fylo.queueRedis.setDocStatus(job.collection, job.docId, 'processing', job.jobId)
-
-            await this.executeQueuedWrite(job)
-
-            await Fylo.queueRedis.setJobStatus(job.jobId, 'committed')
-            await Fylo.queueRedis.setDocStatus(job.collection, job.docId, 'committed', job.jobId)
-            await Fylo.queueRedis.ackWriteJob(streamId)
-            return true
-        } catch (err) {
-            const attempts = job.attempts + 1
-            const message = err instanceof Error ? err.message : String(err)
-
-            if (attempts >= Fylo.MAX_WRITE_ATTEMPTS) {
-                await Fylo.queueRedis.setJobStatus(job.jobId, 'dead-letter', {
-                    error: message,
-                    attempts
-                })
-                await Fylo.queueRedis.setDocStatus(
-                    job.collection,
-                    job.docId,
-                    'dead-letter',
-                    job.jobId
-                )
-                await Fylo.queueRedis.deadLetterWriteJob(
-                    streamId,
-                    {
-                        ...job,
-                        attempts,
-                        status: 'dead-letter',
-                        error: message
-                    },
-                    message
-                )
-                return false
-            }
-
-            const nextAttemptAt =
-                Date.now() + Fylo.WRITE_RETRY_BASE_MS * Math.max(1, 2 ** (attempts - 1))
-
-            await Fylo.queueRedis.setJobStatus(job.jobId, 'failed', {
-                error: message,
-                attempts,
-                nextAttemptAt
-            })
-            await Fylo.queueRedis.setDocStatus(job.collection, job.docId, 'failed', job.jobId)
-            return false
-        } finally {
-            await Fylo.queueRedis.releaseDocLock(job.collection, job.docId, job.jobId)
-        }
+    async processQueuedWrites(_count: number = 1, _recover: boolean = false) {
+        return this.unsupportedLegacyApi('processQueuedWrites')
     }
 
     /**
@@ -418,12 +267,6 @@ export default class Fylo {
             }
         }
 
-        // Detect format from the first byte of the body:
-        //   0x5b ('[') → JSON array: buffer the full body, then parse and process in slices.
-        //   Otherwise  → NDJSON stream: parse incrementally with Bun.JSONL.parseChunk, which
-        //                accepts Uint8Array directly (zero-copy for ASCII) and tracks the split-line
-        //                remainder internally via the returned `read` offset — no manual incomplete-
-        //                line state machine needed.
         let isJsonArray: boolean | null = null
         const jsonArrayChunks: Uint8Array[] = []
         let jsonArrayLength = 0
@@ -440,8 +283,6 @@ export default class Fylo {
                 continue
             }
 
-            // Prepend any leftover bytes from the previous iteration (an unterminated line),
-            // then parse. `read` points past the last complete line; `pending` holds the rest.
             const merged = new Uint8Array(pending.length + chunk.length)
             merged.set(pending)
             merged.set(chunk, pending.length)
@@ -460,7 +301,6 @@ export default class Fylo {
         }
 
         if (isJsonArray) {
-            // Reassemble buffered chunks into a single Uint8Array and parse as JSON.
             const body = new Uint8Array(jsonArrayLength)
             let offset = 0
             for (const c of jsonArrayChunks) {
@@ -476,7 +316,6 @@ export default class Fylo {
                 await flush(items.slice(i, i + Fylo.MAX_CPUS))
             }
         } else {
-            // Flush the in-progress batch and any final line that had no trailing newline.
             if (pending.length > 0) {
                 const { values } = Bun.JSONL.parseChunk(pending)
                 for (const item of values) batch.push(item as T)
@@ -489,50 +328,10 @@ export default class Fylo {
     }
 
     /**
-     * Exports data from a collection to a URL.
-     * @param collection The name of the collection.
-     * @returns The current data exported from the collection.
+     * Gets an exported stream of documents from a collection.
      */
     static async *exportBulkData<T extends Record<string, any>>(collection: string) {
-        if (Fylo.defaultEngineKind() === 's3-files') {
-            yield* Fylo.defaultS3Files.exportBulkData<T>(collection)
-            return
-        }
-
-        // Kick off the first S3 list immediately so there is no idle time at the start.
-        let listPromise: Promise<Bun.S3ListObjectsResponse> | null = S3.list(collection, {
-            delimiter: '/'
-        })
-
-        while (listPromise !== null) {
-            const data: Bun.S3ListObjectsResponse = await listPromise
-
-            if (!data.commonPrefixes?.length) break
-
-            const ids = data.commonPrefixes
-                .map((item) => item.prefix!.split('/')[0]!)
-                .filter((key) => TTID.isTTID(key)) as _ttid[]
-
-            // Start fetching the next page immediately — before awaiting doc reads —
-            // so the S3 list round-trip overlaps with document reconstruction.
-            listPromise =
-                data.isTruncated && data.nextContinuationToken
-                    ? S3.list(collection, {
-                          delimiter: '/',
-                          continuationToken: data.nextContinuationToken
-                      })
-                    : null
-
-            const results = await Promise.allSettled(
-                ids.map((id) => this.getDoc<T>(collection, id).once())
-            )
-
-            for (const result of results) {
-                if (result.status === 'fulfilled') {
-                    for (const id in result.value) yield result.value[id]
-                }
-            }
-        }
+        yield* Fylo.defaultEngine.exportBulkData<T>(collection)
     }
 
     /**
@@ -547,93 +346,7 @@ export default class Fylo {
         _id: _ttid,
         onlyId: boolean = false
     ) {
-        if (Fylo.defaultEngineKind() === 's3-files') {
-            return Fylo.defaultS3Files.getDoc<T>(collection, _id, onlyId)
-        }
-
-        return {
-            /**
-             * Async iterator (listener) for the document.
-             */
-            async *[Symbol.asyncIterator]() {
-                const doc = await this.once()
-
-                if (Object.keys(doc).length > 0) yield doc
-
-                let finished = false
-
-                const iter = Dir.searchDocs<T>(
-                    collection,
-                    `**/${_id.split('-')[0]}*`,
-                    {},
-                    { listen: true, skip: true }
-                )
-
-                do {
-                    const { value, done } = await iter.next({ count: 0 })
-
-                    if (value === undefined && !done) continue
-
-                    if (done) {
-                        finished = true
-                        break
-                    }
-
-                    const doc = value as Record<_ttid, T>
-
-                    const keys = Object.keys(doc)
-
-                    if (onlyId && keys.length > 0) {
-                        yield keys.shift()!
-                        continue
-                    } else if (keys.length > 0) {
-                        yield doc
-                        continue
-                    }
-                } while (!finished)
-            },
-
-            /**
-             * Gets the document once.
-             */
-            async once() {
-                const items = await Walker.getDocData(collection, _id)
-
-                if (items.length === 0) return {}
-
-                const data = await Dir.reconstructData(collection, items)
-
-                return { [_id]: data } as Record<_ttid, T>
-            },
-
-            /**
-             * Async iterator (listener) for the document's deletion.
-             */
-            async *onDelete() {
-                let finished = false
-
-                const iter = Dir.searchDocs<T>(
-                    collection,
-                    `**/${_id.split('-')[0]}*`,
-                    {},
-                    { listen: true, skip: true },
-                    true
-                )
-
-                do {
-                    const { value, done } = await iter.next({ count: 0 })
-
-                    if (value === undefined && !done) continue
-
-                    if (done) {
-                        finished = true
-                        break
-                    }
-
-                    yield value as _ttid
-                } while (!finished)
-            }
-        }
+        return Fylo.defaultEngine.getDoc<T>(collection, _id, onlyId)
     }
 
     /**
@@ -652,9 +365,9 @@ export default class Fylo {
             }
         } else batches.push(batch)
 
-        for (const batch of batches) {
+        for (const itemBatch of batches) {
             const res = await Promise.allSettled(
-                batch.map((data) => this.putData(collection, data))
+                itemBatch.map((data) => this.putData(collection, data))
             )
 
             for (const _id of res
@@ -668,60 +381,22 @@ export default class Fylo {
     }
 
     async queuePutData<T extends Record<string, any>>(
-        collection: string,
-        data: Record<_ttid, T> | T
-    ): Promise<QueuedWriteResult> {
-        if (this.engineKind === 's3-files')
-            throw new Error('queuePutData is not supported in s3-files engine')
-
-        const { _id, doc } = await this.prepareInsert(collection, data)
-        const job = WriteQueue.createInsertJob(collection, _id, doc)
-
-        await Fylo.queueRedis.enqueueWrite(job)
-
-        return {
-            jobId: job.jobId,
-            docId: _id,
-            status: 'queued'
-        }
+        _collection: string,
+        _data: Record<_ttid, T> | T
+    ) {
+        return this.unsupportedLegacyApi('queuePutData')
     }
 
     async queuePatchDoc<T extends Record<string, any>>(
-        collection: string,
-        newDoc: Record<_ttid, Partial<T>>,
-        oldDoc: Record<_ttid, T> = {}
-    ): Promise<QueuedWriteResult> {
-        if (this.engineKind === 's3-files')
-            throw new Error('queuePatchDoc is not supported in s3-files engine')
-
-        const docId = Object.keys(newDoc).shift() as _ttid
-
-        if (!docId) throw new Error('this document does not contain an TTID')
-
-        const job = WriteQueue.createUpdateJob(collection, docId, { newDoc, oldDoc })
-
-        await Fylo.queueRedis.enqueueWrite(job)
-
-        return {
-            jobId: job.jobId,
-            docId,
-            status: 'queued'
-        }
+        _collection: string,
+        _newDoc: Record<_ttid, Partial<T>>,
+        _oldDoc: Record<_ttid, T> = {}
+    ) {
+        return this.unsupportedLegacyApi('queuePatchDoc')
     }
 
-    async queueDelDoc(collection: string, _id: _ttid): Promise<QueuedWriteResult> {
-        if (this.engineKind === 's3-files')
-            throw new Error('queueDelDoc is not supported in s3-files engine')
-
-        const job = WriteQueue.createDeleteJob(collection, _id)
-
-        await Fylo.queueRedis.enqueueWrite(job)
-
-        return {
-            jobId: job.jobId,
-            docId: _id,
-            status: 'queued'
-        }
+    async queueDelDoc(_collection: string, _id: _ttid) {
+        return this.unsupportedLegacyApi('queueDelDoc')
     }
 
     /**
@@ -730,19 +405,11 @@ export default class Fylo {
      * @param data The document to put.
      * @returns The ID of the document.
      */
-    private static async uniqueTTID(
-        existingId?: string,
-        claimInRedis: boolean = true
-    ): Promise<_ttid> {
-        // Serialize TTID generation so concurrent callers (e.g. batchPutData)
-        // never invoke TTID.generate() at the same sub-millisecond instant.
+    private static async uniqueTTID(existingId?: string): Promise<_ttid> {
         let _id!: _ttid
         const prev = Fylo.ttidLock
         Fylo.ttidLock = prev.then(async () => {
             _id = existingId ? TTID.generate(existingId) : TTID.generate()
-            // Claim in Redis for cross-process uniqueness (no-op if Redis unavailable)
-            if (claimInRedis && !(await Dir.claimTTID(_id)))
-                throw new Error('TTID collision — retry')
         })
         await Fylo.ttidLock
 
@@ -756,10 +423,9 @@ export default class Fylo {
         await Fylo.loadEncryption(collection)
 
         const currId = Object.keys(data).shift()!
-        const claimInRedis = this.engineKind !== 's3-files'
         const _id = TTID.isTTID(currId)
-            ? await Fylo.uniqueTTID(currId, claimInRedis)
-            : await Fylo.uniqueTTID(undefined, claimInRedis)
+            ? await Fylo.uniqueTTID(currId)
+            : await Fylo.uniqueTTID(undefined)
 
         let doc = TTID.isTTID(currId) ? (Object.values(data).shift() as T) : (data as T)
 
@@ -773,23 +439,7 @@ export default class Fylo {
         _id: _ttid,
         doc: T
     ) {
-        if (this.engineKind === 's3-files') {
-            await this.assertS3FilesEngine().putDocument(collection, _id, doc)
-            return _id
-        }
-
-        const keys = await Dir.extractKeys(collection, _id, doc)
-
-        const results = await Promise.allSettled(
-            keys.data.map((item, i) =>
-                this.dir.putKeys(collection, { dataKey: item, indexKey: keys.indexes[i] })
-            )
-        )
-
-        if (results.some((res) => res.status === 'rejected')) {
-            await this.dir.executeRollback()
-            throw new Error(`Unable to write to ${collection} collection`)
-        }
+        await this.engine.putDocument(collection, _id, doc)
 
         if (Fylo.LOGGING) console.log(`Finished Writing ${_id}`)
 
@@ -805,93 +455,35 @@ export default class Fylo {
 
         const _id = Object.keys(newDoc).shift() as _ttid
 
-        let _newId = _id
-
         if (!_id) throw new Error('this document does not contain an TTID')
 
-        if (this.engineKind === 's3-files') {
-            let existingDoc = oldDoc[_id]
-            if (!existingDoc) {
-                const existing = await this.assertS3FilesEngine().getDoc<T>(collection, _id).once()
-                existingDoc = existing[_id]
-            }
-            if (!existingDoc) return _id
-
-            const currData = { ...existingDoc, ...newDoc[_id] } as T
-            let docToWrite: T = currData
-            _newId = await Fylo.uniqueTTID(_id, false)
-            if (Fylo.STRICT) docToWrite = (await Gen.validateData(collection, currData)) as T
-            return await this.assertS3FilesEngine().patchDocument(
-                collection,
-                _id,
-                _newId,
-                docToWrite,
-                existingDoc
-            )
+        let existingDoc = oldDoc[_id]
+        if (!existingDoc) {
+            const existing = await this.engine.getDoc<T>(collection, _id).once()
+            existingDoc = existing[_id]
         }
+        if (!existingDoc) return _id
 
-        const dataKeys = await Walker.getDocData(collection, _id)
-
-        if (dataKeys.length === 0) return _newId
-
-        if (Object.keys(oldDoc).length === 0) {
-            const data = await Dir.reconstructData(collection, dataKeys)
-
-            oldDoc = { [_id]: data } as Record<_ttid, T>
-        }
-
-        if (Object.keys(oldDoc).length === 0) return _newId
-
-        const currData = { ...oldDoc[_id] }
-
-        for (const field in newDoc[_id]) currData[field] = newDoc[_id][field]!
-
-        _newId = await Fylo.uniqueTTID(_id, this.engineKind === 'legacy-s3')
-
-        let docToWrite: T = currData as T
-
+        const currData = { ...existingDoc, ...newDoc[_id] } as T
+        let docToWrite: T = currData
+        const _newId = await Fylo.uniqueTTID(_id)
         if (Fylo.STRICT) docToWrite = (await Gen.validateData(collection, currData)) as T
 
-        const newKeys = await Dir.extractKeys(collection, _newId, docToWrite)
+        const nextId = await this.engine.patchDocument(
+            collection,
+            _id,
+            _newId,
+            docToWrite,
+            existingDoc
+        )
 
-        const [deleteResults, putResults] = await Promise.all([
-            Promise.allSettled(dataKeys.map((key) => this.dir.deleteKeys(collection, key))),
-            Promise.allSettled(
-                newKeys.data.map((item, i) =>
-                    this.dir.putKeys(collection, { dataKey: item, indexKey: newKeys.indexes[i] })
-                )
-            )
-        ])
+        if (Fylo.LOGGING) console.log(`Finished Updating ${_id} to ${nextId}`)
 
-        if (
-            deleteResults.some((r) => r.status === 'rejected') ||
-            putResults.some((r) => r.status === 'rejected')
-        ) {
-            await this.dir.executeRollback()
-            throw new Error(`Unable to update ${collection} collection`)
-        }
-
-        if (Fylo.LOGGING) console.log(`Finished Updating ${_id} to ${_newId}`)
-
-        return _newId
+        return nextId
     }
 
     private async executeDelDocDirect(collection: string, _id: _ttid) {
-        if (this.engineKind === 's3-files') {
-            await this.assertS3FilesEngine().deleteDocument(collection, _id)
-            return
-        }
-
-        const keys = await Walker.getDocData(collection, _id)
-
-        const results = await Promise.allSettled(
-            keys.map((key) => this.dir.deleteKeys(collection, key))
-        )
-
-        if (results.some((res) => res.status === 'rejected')) {
-            await this.dir.executeRollback()
-            throw new Error(`Unable to delete from ${collection} collection`)
-        }
+        await this.engine.deleteDocument(collection, _id)
 
         if (Fylo.LOGGING) console.log(`Finished Deleting ${_id}`)
     }
@@ -903,58 +495,16 @@ export default class Fylo {
     ): Promise<_ttid>
     async putData<T extends Record<string, any>>(
         collection: string,
-        data: T,
-        options: { wait?: true; timeoutMs?: number }
-    ): Promise<_ttid>
-    async putData<T extends Record<string, any>>(
-        collection: string,
-        data: Record<_ttid, T>,
-        options: { wait?: true; timeoutMs?: number }
-    ): Promise<_ttid>
-    async putData<T extends Record<string, any>>(
-        collection: string,
-        data: T,
-        options: { wait: false; timeoutMs?: number }
-    ): Promise<QueuedWriteResult>
-    async putData<T extends Record<string, any>>(
-        collection: string,
-        data: Record<_ttid, T>,
-        options: { wait: false; timeoutMs?: number }
-    ): Promise<QueuedWriteResult>
-    async putData<T extends Record<string, any>>(
-        collection: string,
         data: Record<_ttid, T> | T,
         options: { wait?: boolean; timeoutMs?: number } = {}
-    ): Promise<_ttid | QueuedWriteResult> {
-        if (this.engineKind === 's3-files') {
-            if (options.wait === false)
-                throw new Error('wait:false is not supported in s3-files engine')
-            const { _id, doc } = await this.prepareInsert(collection, data)
-            await this.executePutDataDirect(collection, _id, doc)
-            return _id
+    ): Promise<_ttid> {
+        if (options.wait === false) {
+            this.unsupportedLegacyApi('putData(..., { wait: false })')
         }
 
-        const queued = await this.queuePutData(collection, data)
-
-        return await this.runQueuedJob(queued, options, async () => queued.docId)
-    }
-
-    async executeQueuedWrite(job: WriteJob) {
-        switch (job.operation) {
-            case 'insert':
-                await Fylo.loadEncryption(job.collection)
-                return await this.executePutDataDirect(job.collection, job.docId, job.payload)
-            case 'update':
-                return await this.executePatchDocDirect(
-                    job.collection,
-                    job.payload.newDoc as Record<_ttid, Partial<Record<string, any>>>,
-                    job.payload.oldDoc as Record<_ttid, Record<string, any>> | undefined
-                )
-            case 'delete':
-                return await this.executeDelDocDirect(job.collection, job.payload._id as _ttid)
-            default:
-                throw new Error(`Unsupported queued write operation: ${job.operation}`)
-        }
+        const { _id, doc } = await this.prepareInsert(collection, data)
+        await this.executePutDataDirect(collection, _id, doc)
+        return _id
     }
 
     /**
@@ -967,38 +517,14 @@ export default class Fylo {
     async patchDoc<T extends Record<string, any>>(
         collection: string,
         newDoc: Record<_ttid, Partial<T>>,
-        oldDoc?: Record<_ttid, T>
-    ): Promise<_ttid>
-    async patchDoc<T extends Record<string, any>>(
-        collection: string,
-        newDoc: Record<_ttid, Partial<T>>,
-        oldDoc: Record<_ttid, T> | undefined,
-        options: { wait?: true; timeoutMs?: number }
-    ): Promise<_ttid>
-    async patchDoc<T extends Record<string, any>>(
-        collection: string,
-        newDoc: Record<_ttid, Partial<T>>,
-        oldDoc: Record<_ttid, T> | undefined,
-        options: { wait: false; timeoutMs?: number }
-    ): Promise<QueuedWriteResult>
-    async patchDoc<T extends Record<string, any>>(
-        collection: string,
-        newDoc: Record<_ttid, Partial<T>>,
         oldDoc: Record<_ttid, T> = {},
         options: { wait?: boolean; timeoutMs?: number } = {}
-    ): Promise<_ttid | QueuedWriteResult> {
-        if (this.engineKind === 's3-files') {
-            if (options.wait === false)
-                throw new Error('wait:false is not supported in s3-files engine')
-            const _id = await this.executePatchDocDirect(collection, newDoc, oldDoc)
-            return _id
+    ): Promise<_ttid> {
+        if (options.wait === false) {
+            this.unsupportedLegacyApi('patchDoc(..., { wait: false })')
         }
-        const queued = await this.queuePatchDoc(collection, newDoc, oldDoc)
 
-        return await this.runQueuedJob(queued, options, async () => {
-            const job = await this.getJobStatus(queued.jobId)
-            return (job?.docId ?? queued.docId) as _ttid
-        })
+        return await this.executePatchDocDirect(collection, newDoc, oldDoc)
     }
 
     /**
@@ -1013,73 +539,19 @@ export default class Fylo {
     ) {
         await Fylo.loadEncryption(collection)
 
-        const processDoc = (doc: Record<_ttid, T>, updateSchema: _storeUpdate<T>) => {
-            for (const _id in doc)
-                return this.patchDoc(collection, { [_id]: updateSchema.$set }, doc)
-
-            return
-        }
-
         let count = 0
-
         const promises: Promise<_ttid>[] = []
 
-        if (this.engineKind === 's3-files') {
-            for await (const value of this.findDocs<T>(collection, updateSchema.$where).collect()) {
-                if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-                    const promise = processDoc(value as Record<_ttid, T>, updateSchema)
-                    if (promise) {
-                        promises.push(promise)
-                        count++
-                    }
-                }
-            }
-
-            await Promise.all(promises)
-            return count
-        }
-
-        let finished = false
-
-        const exprs = await Query.getExprs(collection, updateSchema.$where ?? {})
-
-        if (exprs.length === 1 && exprs[0] === `**/*`) {
-            for (const doc of await Fylo.allDocs<T>(collection, updateSchema.$where)) {
-                const promise = processDoc(doc, updateSchema)
-
-                if (promise) {
-                    promises.push(promise)
+        for await (const value of this.findDocs<T>(collection, updateSchema.$where).collect()) {
+            if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                const [_id, current] = Object.entries(value as Record<_ttid, T>)[0] ?? []
+                if (_id && current) {
+                    promises.push(
+                        this.patchDoc(collection, { [_id]: updateSchema.$set }, { [_id]: current })
+                    )
                     count++
                 }
             }
-        } else {
-            const iter = Dir.searchDocs<T>(
-                collection,
-                exprs,
-                {
-                    updated: updateSchema?.$where?.$updated,
-                    created: updateSchema?.$where?.$created
-                },
-                { listen: false, skip: false }
-            )
-
-            do {
-                const { value, done } = await iter.next({ count })
-
-                if (value === undefined && !done) continue
-
-                if (done) {
-                    finished = true
-                    break
-                }
-
-                const promise = processDoc(value as Record<_ttid, T>, updateSchema)
-
-                if (promise) {
-                    promises.push(promise)
-                    count++
-                }
-            } while (!finished)
         }
 
         await Promise.all(promises)
@@ -1093,31 +565,16 @@ export default class Fylo {
      * @param _id The ID of the document.
      * @returns The number of documents deleted.
      */
-    async delDoc(collection: string, _id: _ttid): Promise<void>
-    async delDoc(
-        collection: string,
-        _id: _ttid,
-        options: { wait?: true; timeoutMs?: number }
-    ): Promise<void>
-    async delDoc(
-        collection: string,
-        _id: _ttid,
-        options: { wait: false; timeoutMs?: number }
-    ): Promise<QueuedWriteResult>
     async delDoc(
         collection: string,
         _id: _ttid,
         options: { wait?: boolean; timeoutMs?: number } = {}
-    ): Promise<void | QueuedWriteResult> {
-        if (this.engineKind === 's3-files') {
-            if (options.wait === false)
-                throw new Error('wait:false is not supported in s3-files engine')
-            await this.executeDelDocDirect(collection, _id)
-            return
+    ): Promise<void> {
+        if (options.wait === false) {
+            this.unsupportedLegacyApi('delDoc(..., { wait: false })')
         }
-        const queued = await this.queueDelDoc(collection, _id)
 
-        await this.runQueuedJob(queued, options, async () => undefined)
+        await this.executeDelDocDirect(collection, _id)
     }
 
     /**
@@ -1132,100 +589,24 @@ export default class Fylo {
     ) {
         await Fylo.loadEncryption(collection)
 
-        const processDoc = (doc: Record<_ttid, T>) => {
-            for (const _id in doc) {
-                if (TTID.isTTID(_id)) {
-                    return this.delDoc(collection, _id)
-                }
-            }
-
-            return
-        }
-
         let count = 0
-
         const promises: Promise<void>[] = []
 
-        if (this.engineKind === 's3-files') {
-            for await (const value of this.findDocs<T>(collection, deleteSchema).collect()) {
-                if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-                    const promise = processDoc(value as Record<_ttid, T>)
-                    if (promise) {
-                        promises.push(promise)
-                        count++
-                    }
-                }
-            }
-
-            await Promise.all(promises)
-            return count
-        }
-
-        let finished = false
-
-        const exprs = await Query.getExprs(collection, deleteSchema ?? {})
-
-        if (exprs.length === 1 && exprs[0] === `**/*`) {
-            for (const doc of await Fylo.allDocs<T>(collection, deleteSchema)) {
-                const promise = processDoc(doc)
-
-                if (promise) {
-                    promises.push(promise)
+        for await (const value of this.findDocs<T>(collection, deleteSchema).collect()) {
+            if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+                const _id = Object.keys(value as Record<_ttid, T>).find((docId) =>
+                    TTID.isTTID(docId)
+                )
+                if (_id) {
+                    promises.push(this.delDoc(collection, _id))
                     count++
                 }
             }
-        } else {
-            const iter = Dir.searchDocs<T>(
-                collection,
-                exprs,
-                { updated: deleteSchema?.$updated, created: deleteSchema?.$created },
-                { listen: false, skip: false }
-            )
-
-            do {
-                const { value, done } = await iter.next({ count })
-
-                if (value === undefined && !done) continue
-
-                if (done) {
-                    finished = true
-                    break
-                }
-
-                const promise = processDoc(value as Record<_ttid, T>)
-
-                if (promise) {
-                    promises.push(promise)
-                    count++
-                }
-            } while (!finished)
         }
 
         await Promise.all(promises)
 
         return count
-    }
-
-    private static selectValues<T extends Record<string, any>>(selection: Array<keyof T>, data: T) {
-        for (const field in data) {
-            if (!selection.includes(field as keyof T)) delete data[field]
-        }
-
-        return data
-    }
-
-    private static renameFields<T extends Record<string, any>>(
-        rename: Record<keyof T, string>,
-        data: T
-    ) {
-        for (const field in data) {
-            if (rename[field]) {
-                data[rename[field]] = data[field]
-                delete data[field]
-            }
-        }
-
-        return data
     }
 
     /**
@@ -1236,272 +617,7 @@ export default class Fylo {
     static async joinDocs<T extends Record<string, any>, U extends Record<string, any>>(
         join: _join<T, U>
     ) {
-        if (Fylo.defaultEngineKind() === 's3-files') {
-            return await Fylo.defaultS3Files.joinDocs(join)
-        }
-
-        const docs: Record<`${_ttid}, ${_ttid}`, T | U | (T & U) | (Partial<T> & Partial<U>)> = {}
-
-        const compareFields = async (
-            leftField: keyof T,
-            rightField: keyof U,
-            compare: (leftVal: string, rightVal: string) => boolean
-        ) => {
-            if (join.$leftCollection === join.$rightCollection)
-                throw new Error('Left and right collections cannot be the same')
-
-            let leftToken: string | undefined
-            const leftFieldIndexes: string[] = []
-
-            do {
-                const leftData = await S3.list(join.$leftCollection, {
-                    prefix: String(leftField)
-                })
-
-                if (!leftData.contents) break
-
-                leftFieldIndexes.push(...leftData.contents!.map((content) => content.key!))
-
-                leftToken = leftData.nextContinuationToken
-            } while (leftToken !== undefined)
-
-            let rightToken: string | undefined
-            const rightFieldIndexes: string[] = []
-
-            do {
-                const rightData = await S3.list(join.$rightCollection, {
-                    prefix: String(rightField)
-                })
-
-                if (!rightData.contents) break
-
-                rightFieldIndexes.push(...rightData.contents!.map((content) => content.key!))
-
-                rightToken = rightData.nextContinuationToken
-            } while (rightToken !== undefined)
-
-            for (const leftIdx of leftFieldIndexes) {
-                const leftSegs = leftIdx.split('/')
-                const left_id = leftSegs.pop()! as _ttid
-                const leftVal = leftSegs.pop()!
-
-                const leftCollection = join.$leftCollection
-
-                const allVals = new Set<string>()
-
-                for (const rightIdx of rightFieldIndexes) {
-                    const rightSegs = rightIdx.split('/')
-                    const right_id = rightSegs.pop()! as _ttid
-                    const rightVal = rightSegs.pop()!
-
-                    const rightCollection = join.$rightCollection
-
-                    if (compare(rightVal, leftVal) && !allVals.has(rightVal)) {
-                        allVals.add(rightVal)
-
-                        switch (join.$mode) {
-                            case 'inner':
-                                docs[`${left_id}, ${right_id}`] = {
-                                    [leftField]: Dir.parseValue(leftVal),
-                                    [rightField]: Dir.parseValue(rightVal)
-                                } as Partial<T> & Partial<U>
-                                break
-                            case 'left':
-                                const leftDoc = await this.getDoc<T>(leftCollection, left_id).once()
-                                if (Object.keys(leftDoc).length > 0) {
-                                    let leftData = leftDoc[left_id]
-                                    if (join.$select)
-                                        leftData = this.selectValues<T>(
-                                            join.$select as Array<keyof T>,
-                                            leftData
-                                        )
-                                    if (join.$rename)
-                                        leftData = this.renameFields<T>(join.$rename, leftData)
-                                    docs[`${left_id}, ${right_id}`] = leftData as T
-                                }
-                                break
-                            case 'right':
-                                const rightDoc = await this.getDoc<U>(
-                                    rightCollection,
-                                    right_id
-                                ).once()
-                                if (Object.keys(rightDoc).length > 0) {
-                                    let rightData = rightDoc[right_id]
-                                    if (join.$select)
-                                        rightData = this.selectValues<U>(
-                                            join.$select as Array<keyof U>,
-                                            rightData
-                                        )
-                                    if (join.$rename)
-                                        rightData = this.renameFields<U>(join.$rename, rightData)
-                                    docs[`${left_id}, ${right_id}`] = rightData as U
-                                }
-                                break
-                            case 'outer':
-                                let leftFullData: T = {} as T
-                                let rightFullData: U = {} as U
-
-                                const leftFullDoc = await this.getDoc<T>(
-                                    leftCollection,
-                                    left_id
-                                ).once()
-
-                                if (Object.keys(leftFullDoc).length > 0) {
-                                    let leftData = leftFullDoc[left_id]
-                                    if (join.$select)
-                                        leftData = this.selectValues<T>(
-                                            join.$select as Array<keyof T>,
-                                            leftData
-                                        )
-                                    if (join.$rename)
-                                        leftData = this.renameFields<T>(join.$rename, leftData)
-                                    leftFullData = { ...leftData, ...leftFullData } as T
-                                }
-
-                                const rightFullDoc = await this.getDoc<U>(
-                                    rightCollection,
-                                    right_id
-                                ).once()
-
-                                if (Object.keys(rightFullDoc).length > 0) {
-                                    let rightData = rightFullDoc[right_id]
-                                    if (join.$select)
-                                        rightData = this.selectValues<U>(
-                                            join.$select as Array<keyof U>,
-                                            rightData
-                                        )
-                                    if (join.$rename)
-                                        rightData = this.renameFields<U>(join.$rename, rightData)
-                                    rightFullData = { ...rightData, ...rightFullData } as U
-                                }
-
-                                docs[`${left_id}, ${right_id}`] = {
-                                    ...leftFullData,
-                                    ...rightFullData
-                                } as T & U
-                                break
-                        }
-
-                        if (join.$limit && Object.keys(docs).length === join.$limit) break
-                    }
-                }
-
-                if (join.$limit && Object.keys(docs).length === join.$limit) break
-            }
-        }
-
-        for (const field in join.$on) {
-            if (join.$on[field]!.$eq)
-                await compareFields(
-                    field,
-                    join.$on[field]!.$eq,
-                    (leftVal, rightVal) => leftVal === rightVal
-                )
-
-            if (join.$on[field]!.$ne)
-                await compareFields(
-                    field,
-                    join.$on[field]!.$ne,
-                    (leftVal, rightVal) => leftVal !== rightVal
-                )
-
-            if (join.$on[field]!.$gt)
-                await compareFields(
-                    field,
-                    join.$on[field]!.$gt,
-                    (leftVal, rightVal) => Number(leftVal) > Number(rightVal)
-                )
-
-            if (join.$on[field]!.$lt)
-                await compareFields(
-                    field,
-                    join.$on[field]!.$lt,
-                    (leftVal, rightVal) => Number(leftVal) < Number(rightVal)
-                )
-
-            if (join.$on[field]!.$gte)
-                await compareFields(
-                    field,
-                    join.$on[field]!.$gte,
-                    (leftVal, rightVal) => Number(leftVal) >= Number(rightVal)
-                )
-
-            if (join.$on[field]!.$lte)
-                await compareFields(
-                    field,
-                    join.$on[field]!.$lte,
-                    (leftVal, rightVal) => Number(leftVal) <= Number(rightVal)
-                )
-        }
-
-        if (join.$groupby) {
-            const groupedDocs: Record<string, Record<string, Partial<T | U>>> = {} as Record<
-                string,
-                Record<string, Partial<T | U>>
-            >
-
-            for (const ids in docs) {
-                const data = docs[ids as `${_ttid}, ${_ttid}`]
-
-                // @ts-expect-error - Object.groupBy not yet in TS lib types
-                const grouping = Object.groupBy([data], (elem) => elem[join.$groupby!])
-
-                for (const group in grouping) {
-                    if (groupedDocs[group]) groupedDocs[group][ids] = data
-                    else groupedDocs[group] = { [ids]: data }
-                }
-            }
-
-            if (join.$onlyIds) {
-                const groupedIds: Record<string, _ttid[]> = {}
-
-                for (const group in groupedDocs) {
-                    const doc = groupedDocs[group]
-                    groupedIds[group] = Object.keys(doc).flat()
-                }
-
-                return groupedIds
-            }
-
-            return groupedDocs
-        }
-
-        if (join.$onlyIds) return Array.from(new Set(Object.keys(docs).flat()))
-
-        return docs
-    }
-
-    private static async allDocs<T extends Record<string, any>>(
-        collection: string,
-        query?: _storeQuery<T>
-    ) {
-        if (Fylo.defaultEngineKind() === 's3-files') {
-            const results: Array<Record<_ttid, T>> = []
-            for await (const data of Fylo.defaultS3Files.findDocs<T>(collection, query).collect()) {
-                if (typeof data === 'object' && !Array.isArray(data))
-                    results.push(data as Record<_ttid, T>)
-            }
-            return results
-        }
-
-        const res = await S3.list(collection, {
-            delimiter: '/',
-            maxKeys: !query || !query.$limit ? undefined : query.$limit
-        })
-
-        const ids =
-            (res.commonPrefixes
-                ?.map((item) => item.prefix!.split('/')[0]!)
-                .filter((key) => TTID.isTTID(key)) as _ttid[]) ?? ([] as _ttid[])
-
-        const docs = await Promise.allSettled(
-            ids.map((id) => Fylo.getDoc<T>(collection, id).once())
-        )
-
-        return docs
-            .filter((item) => item.status === 'fulfilled')
-            .map((item) => item.value)
-            .filter((doc) => Object.keys(doc).length > 0)
+        return await Fylo.defaultEngine.joinDocs(join)
     }
 
     /**
@@ -1511,217 +627,6 @@ export default class Fylo {
      * @returns The found documents.
      */
     static findDocs<T extends Record<string, any>>(collection: string, query?: _storeQuery<T>) {
-        if (Fylo.defaultEngineKind() === 's3-files') {
-            return Fylo.defaultS3Files.findDocs<T>(collection, query)
-        }
-
-        const processDoc = (doc: Record<_ttid, T>, query?: _storeQuery<T>) => {
-            if (Object.keys(doc).length > 0) {
-                // Post-filter for operators that cannot be expressed as globs ($ne, $gt, $gte, $lt, $lte).
-                // $ops use OR semantics: a document passes if it matches at least one op.
-                if (query?.$ops) {
-                    for (const [_id, data] of Object.entries(doc)) {
-                        let matchesAny = false
-                        for (const op of query.$ops) {
-                            let opMatches = true
-                            for (const col in op) {
-                                const val = (data as Record<string, unknown>)[col]
-                                const cond = op[col as keyof T]!
-                                if (cond.$ne !== undefined && val == cond.$ne) {
-                                    opMatches = false
-                                    break
-                                }
-                                if (cond.$gt !== undefined && !(Number(val) > cond.$gt)) {
-                                    opMatches = false
-                                    break
-                                }
-                                if (cond.$gte !== undefined && !(Number(val) >= cond.$gte)) {
-                                    opMatches = false
-                                    break
-                                }
-                                if (cond.$lt !== undefined && !(Number(val) < cond.$lt)) {
-                                    opMatches = false
-                                    break
-                                }
-                                if (cond.$lte !== undefined && !(Number(val) <= cond.$lte)) {
-                                    opMatches = false
-                                    break
-                                }
-                            }
-                            if (opMatches) {
-                                matchesAny = true
-                                break
-                            }
-                        }
-                        if (!matchesAny) delete doc[_id as _ttid]
-                    }
-                    if (Object.keys(doc).length === 0) return
-                }
-
-                for (let [_id, data] of Object.entries(doc)) {
-                    if (query && query.$select && query.$select.length > 0) {
-                        data = this.selectValues<T>(query.$select as Array<keyof T>, data)
-                    }
-
-                    if (query && query.$rename) data = this.renameFields<T>(query.$rename, data)
-
-                    doc[_id] = data
-                }
-
-                if (query && query.$groupby) {
-                    const docGroup: Record<string, Record<string, Partial<T>>> = {}
-
-                    for (const [id, data] of Object.entries(doc)) {
-                        const groupValue = data[query.$groupby] as string
-
-                        if (groupValue) {
-                            delete data[query.$groupby]
-
-                            docGroup[groupValue] = {
-                                [id]: data as Partial<T>
-                            } as Record<_ttid, Partial<T>>
-                        }
-                    }
-
-                    if (query && query.$onlyIds) {
-                        for (const [groupValue, doc] of Object.entries(docGroup)) {
-                            for (const id in doc as Record<_ttid, T>) {
-                                // @ts-expect-error - dynamic key assignment on grouped object
-                                docGroup[groupValue][id] = null
-                            }
-                        }
-
-                        return docGroup
-                    }
-
-                    return docGroup
-                }
-
-                if (query && query.$onlyIds) {
-                    return Object.keys(doc).shift()
-                }
-
-                return doc
-            }
-
-            return
-        }
-
-        return {
-            /**
-             * Async iterator (listener) for the documents.
-             */
-            async *[Symbol.asyncIterator]() {
-                await Fylo.loadEncryption(collection)
-
-                const expression = await Query.getExprs(collection, query ?? {})
-
-                if (expression.length === 1 && expression[0] === `**/*`) {
-                    for (const doc of await Fylo.allDocs<T>(collection, query))
-                        yield processDoc(doc, query)
-                }
-
-                let count = 0
-                let finished = false
-
-                const iter = Dir.searchDocs<T>(
-                    collection,
-                    expression,
-                    { updated: query?.$updated, created: query?.$created },
-                    { listen: true, skip: true }
-                )
-
-                do {
-                    const { value, done } = await iter.next({ count, limit: query?.$limit })
-
-                    if (value === undefined && !done) continue
-
-                    if (done) {
-                        finished = true
-                        break
-                    }
-
-                    const result = processDoc(value as Record<_ttid, T>, query)
-                    if (result !== undefined) {
-                        count++
-                        yield result
-                    }
-                } while (!finished)
-            },
-
-            /**
-             * Async iterator for the documents.
-             */
-            async *collect() {
-                await Fylo.loadEncryption(collection)
-
-                const expression = await Query.getExprs(collection, query ?? {})
-
-                if (expression.length === 1 && expression[0] === `**/*`) {
-                    for (const doc of await Fylo.allDocs<T>(collection, query))
-                        yield processDoc(doc, query)
-                } else {
-                    let count = 0
-                    let finished = false
-
-                    const iter = Dir.searchDocs<T>(
-                        collection,
-                        expression,
-                        { updated: query?.$updated, created: query?.$created },
-                        { listen: false, skip: false }
-                    )
-
-                    do {
-                        const { value, done } = await iter.next({ count, limit: query?.$limit })
-
-                        if (value === undefined && !done) continue
-
-                        if (done) {
-                            finished = true
-                            break
-                        }
-
-                        const result = processDoc(value as Record<_ttid, T>, query)
-                        if (result !== undefined) {
-                            count++
-                            yield result
-                        }
-                    } while (!finished)
-                }
-            },
-
-            /**
-             * Async iterator (listener) for the document's deletion.
-             */
-            async *onDelete() {
-                await Fylo.loadEncryption(collection)
-
-                let count = 0
-                let finished = false
-
-                const iter = Dir.searchDocs<T>(
-                    collection,
-                    await Query.getExprs(collection, query ?? {}),
-                    {},
-                    { listen: true, skip: true },
-                    true
-                )
-
-                do {
-                    const { value, done } = await iter.next({ count })
-
-                    if (value === undefined && !done) continue
-
-                    if (done) {
-                        finished = true
-                        break
-                    }
-
-                    if (value) yield value as _ttid
-                } while (!finished)
-            }
-        }
+        return Fylo.defaultEngine.findDocs<T>(collection, query)
     }
 }
-
-export { migrateLegacyS3ToS3Files } from './migrate'

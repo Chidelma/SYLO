@@ -7,3 +7,4 @@ Dockerfile
 .vscode
 bin
 .DS_Store
+.fylo-data

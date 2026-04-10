@@ -1,368 +1,286 @@
-# Fylo
+# FYLO
 
-NoSQL document store with SQL parsing, real-time listeners, and Bun-first workflows.
+FYLO is a Bun-native document store that keeps **one canonical file per document** and builds a **collection index file** to make queries fast.
 
-Fylo `2.0.1` supports two storage engines:
+The important mental model is simple:
 
-- `legacy-s3`: the existing S3 + Redis architecture with queued writes, bucket-per-collection storage, and Redis-backed pub/sub/locks.
-- `s3-files`: a new AWS S3 Files mode that stores canonical documents on a mounted S3 Files filesystem, keeps query indexes in a collection-level SQLite database under `.fylo/index.db`, and uses filesystem locks plus an append-only event journal instead of Redis.
+- document files are the source of truth
+- the index file is just an accelerator
+- if the index ever gets out of date, FYLO can rebuild it from the documents
 
-The legacy engine still stores documents as **S3 key paths** — not file contents. Each document produces two keys per field: a **data key** (`{ttid}/{field}/{value}`) for full-doc retrieval and an **index key** (`{field}/{value}/{ttid}`) for query lookups. This enables fast reads and filtered queries without a traditional database engine.
+FYLO now ships with **one engine**: a filesystem-first storage model designed to work well with AWS S3 Files and other synced filesystem setups.
 
-Built for **serverless** runtimes (AWS Lambda, Cloudflare Workers) — no persistent in-memory state, lazy connections, minimal cold-start overhead.
+## Why this design?
 
-In `legacy-s3`, writes are coordinated through Redis before they are flushed to S3. By default the high-level CRUD methods wait for the queued write to be processed so existing code can continue to behave synchronously. If you want fire-and-forget semantics, pass `{ wait: false }` and process queued jobs with a worker or `processQueuedWrites()`.
+We wanted three things:
 
-In `s3-files`, writes are immediate and synchronous. Queue APIs, worker APIs, and Redis-backed job tracking are intentionally unsupported.
+- low durable storage overhead
+- fast application queries
+- a system that is still understandable by normal engineers
 
-## Install
+That is why FYLO does **not** create one tiny durable file per indexed field and does **not** depend on Redis-backed queued writes anymore.
+
+Instead, each collection looks like this:
+
+```text
+<root>/<collection>/
+  .fylo/
+    docs/
+      4U/
+        4UUB32VGUDW.json
+    indexes/
+      <collection>.idx.json
+    events/
+      <collection>.ndjson
+```
+
+## Installation
 
 ```bash
 bun add @delma/fylo
 ```
 
-## Engine Selection
+## Basic usage
 
-```typescript
+```ts
 import Fylo from '@delma/fylo'
 
-const legacy = new Fylo()
-
-const s3Files = new Fylo({
-    engine: 's3-files',
-    s3FilesRoot: '/mnt/fylo'
+const fylo = new Fylo({
+    root: '/mnt/fylo'
 })
+
+await fylo.createCollection('users')
+
+const id = await fylo.putData('users', {
+    name: 'Ada',
+    role: 'admin',
+    tags: ['engineering', 'platform']
+})
+
+const doc = await fylo.getDoc('users', id).once()
+console.log(doc[id])
 ```
 
-Static helpers such as `Fylo.createCollection()` and `Fylo.findDocs()` use environment defaults:
+## Configuration
+
+FYLO is filesystem-first now.
+
+You can configure the root in one of two ways:
 
 ```bash
-export FYLO_STORAGE_ENGINE=s3-files
-export FYLO_S3FILES_ROOT=/mnt/fylo
+export FYLO_ROOT=/mnt/fylo
 ```
 
-## Environment Variables
+Or:
 
-| Variable                                         | Purpose                                                                              |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------ |
-| `FYLO_STORAGE_ENGINE`                            | `legacy-s3` (default) or `s3-files`                                                  |
-| `FYLO_S3FILES_ROOT`                              | Mounted S3 Files root directory used by the `s3-files` engine                        |
-| `BUCKET_PREFIX`                                  | S3 bucket name prefix                                                                |
-| `S3_ACCESS_KEY_ID` / `AWS_ACCESS_KEY_ID`         | S3 credentials                                                                       |
-| `S3_SECRET_ACCESS_KEY` / `AWS_SECRET_ACCESS_KEY` | S3 credentials                                                                       |
-| `S3_REGION` / `AWS_REGION`                       | S3 region                                                                            |
-| `S3_ENDPOINT` / `AWS_ENDPOINT`                   | S3 endpoint (for LocalStack, MinIO, etc.)                                            |
-| `REDIS_URL`                                      | Redis connection URL used for pub/sub, document locks, and queued write coordination |
-| `FYLO_WRITE_MAX_ATTEMPTS`                        | Maximum retry attempts before a queued job is dead-lettered                          |
-| `FYLO_WRITE_RETRY_BASE_MS`                       | Base retry delay used for exponential backoff between recovery attempts              |
-| `FYLO_WORKER_ID`                                 | Optional stable identifier for a write worker process                                |
-| `FYLO_WORKER_BATCH_SIZE`                         | Number of queued jobs a worker pulls per read loop                                   |
-| `FYLO_WORKER_BLOCK_MS`                           | Redis stream block time for waiting on new jobs                                      |
-| `FYLO_WORKER_RECOVER_ON_START`                   | Whether the worker reclaims stale pending jobs on startup                            |
-| `FYLO_WORKER_RECOVER_IDLE_MS`                    | Minimum idle time before a pending job is reclaimed                                  |
-| `FYLO_WORKER_STOP_WHEN_IDLE`                     | Exit the worker loop when no jobs are available                                      |
-| `LOGGING`                                        | Enable debug logging                                                                 |
-| `STRICT`                                         | Enable schema validation via CHEX                                                    |
+```ts
+const fylo = new Fylo({ root: '/mnt/fylo' })
+```
 
-### S3 Files requirements
+If you do not configure a root, FYLO uses a project-local default:
 
-When `FYLO_STORAGE_ENGINE=s3-files`, FYLO expects:
+```text
+<current working directory>/.fylo-data
+```
 
-- an already provisioned AWS S3 Files file system
-- the mounted root directory to be available to the Bun process
-- bucket versioning enabled on the underlying S3 bucket
-- Linux/AWS compute assumptions that match AWS S3 Files mounting requirements
+For compatibility with older `s3-files` experiments, FYLO still accepts `s3FilesRoot` and still reads `FYLO_S3FILES_ROOT` as a fallback.
 
-FYLO no longer talks to the S3 API directly in this mode, but S3 remains the underlying source of truth because that is how S3 Files works.
+### Environment variables
 
-## Usage
+| Variable            | Purpose                                                          |
+| ------------------- | ---------------------------------------------------------------- |
+| `FYLO_ROOT`         | Preferred filesystem root for collections                        |
+| `FYLO_S3FILES_ROOT` | Backward-compatible alias for `FYLO_ROOT`                        |
+| `SCHEMA_DIR`        | Directory containing JSON validation schemas                     |
+| `STRICT`            | When truthy, validate documents with `@delma/chex` before writes |
+| `ENCRYPTION_KEY`    | Required when schemas declare `$encrypted` fields                |
 
-### CRUD — NoSQL API
+## Syncing to S3-compatible storage
 
-```typescript
+FYLO does **not** ship its own cloud sync engine.
+
+That is intentional.
+
+The package owns:
+
+- document storage behavior
+- query behavior
+- index maintenance
+
+You own:
+
+- how that root directory gets synced to AWS S3 Files, S3-compatible storage, or any other file-backed replication layer you trust
+
+That means you can choose the sync tool that matches your infrastructure:
+
+- AWS S3 Files
+- `aws s3 sync`
+- `rclone`
+- storage vendor tooling
+- platform-specific replication
+
+If you want FYLO to notify your own S3 client on document writes, you can plug in sync hooks:
+
+```ts
 import Fylo from '@delma/fylo'
 
-const fylo = new Fylo()
-
-// Collections
-await Fylo.createCollection('users')
-
-// Create
-const _id = await fylo.putData<_user>('users', { name: 'John Doe', age: 30 })
-
-// Read one
-const user = await Fylo.getDoc<_user>('users', _id).once()
-
-// Read many
-for await (const doc of Fylo.findDocs<_user>('users', { $limit: 10 }).collect()) {
-    console.log(doc)
-}
-
-// Update one
-await fylo.patchDoc<_user>('users', { [_id]: { age: 31 } })
-
-// Update many
-const updated = await fylo.patchDocs<_user>('users', {
-    $where: { $ops: [{ age: { $gte: 30 } }] },
-    $set: { age: 31 }
-})
-
-// Delete one
-await fylo.delDoc('users', _id)
-
-// Delete many
-const deleted = await fylo.delDocs<_user>('users', {
-    $ops: [{ name: { $like: '%Doe%' } }]
-})
-
-// Drop
-await Fylo.dropCollection('users')
-```
-
-### Queued Writes
-
-`legacy-s3` only.
-
-```typescript
-const fylo = new Fylo()
-
-// Default behavior waits for the queued write to finish.
-const _id = await fylo.putData('users', { name: 'John Doe' })
-
-// Async mode returns the queued job immediately.
-const queued = await fylo.putData('users', { name: 'Jane Doe' }, { wait: false })
-
-// Poll status if you need to track progress.
-const status = await fylo.getJobStatus(queued.jobId)
-
-// Process pending writes in-process when you are not running a separate worker.
-await fylo.processQueuedWrites()
-```
-
-When `wait: false` is used, the job is durable in Redis but the document is not visible in S3 until a worker commits it.
-
-Queued jobs that fail are left pending for recovery. Recovered jobs retry up to `FYLO_WRITE_MAX_ATTEMPTS` times before being moved to a dead-letter stream. You can inspect dead letters with `getDeadLetters()` and reclaim stale pending jobs with `processQueuedWrites(count, true)`.
-
-Operational helpers:
-
-- `getQueueStats()` returns current queue, pending, and dead-letter counts
-- `getDeadLetters()` lists exhausted jobs
-- `replayDeadLetter(streamId)` moves a dead-lettered job back into the main queue
-
-### Worker
-
-`legacy-s3` only.
-
-Run a dedicated write worker when you want queued writes to be flushed outside the request path:
-
-```bash
-bun run worker
-```
-
-The worker entrypoint lives at [worker.ts](/Users/iyor/Library/CloudStorage/Dropbox/myProjects/FYLO/src/worker.ts) and continuously drains the Redis stream, recovers stale pending jobs on startup, and respects the retry/dead-letter settings above.
-
-If `FYLO_STORAGE_ENGINE=s3-files`, `fylo.worker` exits with an explicit unsupported-engine error.
-
-### Migration
-
-Move legacy collections into an S3 Files-backed root with:
-
-```bash
-fylo.migrate users posts
-```
-
-Programmatic usage:
-
-```typescript
-import { migrateLegacyS3ToS3Files } from '@delma/fylo'
-
-await migrateLegacyS3ToS3Files({
-    collections: ['users', 'posts'],
-    s3FilesRoot: '/mnt/fylo',
-    verify: true
+const fylo = new Fylo({
+    root: '/mnt/fylo',
+    syncMode: 'await-sync',
+    sync: {
+        async onWrite(event) {
+            const file = Bun.file(event.path)
+            await myS3Client.putObject({
+                key: `${event.collection}/${event.docId}.json`,
+                body: await file.arrayBuffer()
+            })
+        },
+        async onDelete(event) {
+            await myS3Client.deleteObject({
+                key: `${event.collection}/${event.docId}.json`
+            })
+        }
+    }
 })
 ```
 
-### CRUD — SQL API
+There are two sync modes:
 
-```typescript
-const fylo = new Fylo()
+- `await-sync`: FYLO waits for your hook and throws if the remote sync fails
+- `fire-and-forget`: FYLO commits locally first and runs your hook in the background
 
-await fylo.executeSQL(`CREATE TABLE users`)
+Important detail for junior engineers:
 
-const _id = await fylo.executeSQL<_user>(`INSERT INTO users (name, age) VALUES ('John Doe', 30)`)
+- the filesystem write is still the source of truth
+- a sync hook is a replication helper, not the database itself
 
-const docs = await fylo.executeSQL<_user>(`SELECT * FROM users LIMIT 10`)
+## CRUD examples
 
-await fylo.executeSQL<_user>(`UPDATE users SET age = 31 WHERE name = 'John Doe'`)
+### Create
 
-await fylo.executeSQL<_user>(`DELETE FROM users WHERE name LIKE '%Doe%'`)
-
-await fylo.executeSQL(`DROP TABLE users`)
-```
-
-### Query Operators
-
-```typescript
-// Equality
-{
-    $ops: [{ status: { $eq: 'active' } }]
-}
-
-// Not equal
-{
-    $ops: [{ status: { $ne: 'archived' } }]
-}
-
-// Numeric range
-{
-    $ops: [{ age: { $gte: 18, $lt: 65 } }]
-}
-
-// Pattern matching
-{
-    $ops: [{ email: { $like: '%@gmail.com' } }]
-}
-
-// Array contains
-{
-    $ops: [{ tags: { $contains: 'urgent' } }]
-}
-
-// Multiple ops use OR semantics — matches if any op is satisfied
-{
-    $ops: [{ status: { $eq: 'active' } }, { priority: { $gte: 5 } }]
-}
-```
-
-### Joins
-
-```typescript
-const results = await Fylo.joinDocs<_post, _user>({
-    $leftCollection: 'posts',
-    $rightCollection: 'users',
-    $mode: 'inner', // "inner" | "left" | "right" | "outer"
-    $on: { userId: { $eq: 'id' } },
-    $select: ['title', 'name'],
-    $limit: 50
+```ts
+const userId = await fylo.putData('users', {
+    name: 'Jane Doe',
+    age: 29,
+    team: 'platform'
 })
 ```
 
-### Real-Time Streaming
+### Read one
 
-```typescript
-// Stream new/updated documents
-for await (const doc of Fylo.findDocs<_user>('users')) {
-    console.log(doc)
+```ts
+const user = await fylo.getDoc('users', userId).once()
+```
+
+### Find many
+
+```ts
+const results = {}
+
+for await (const doc of fylo
+    .findDocs('users', {
+        $ops: [{ age: { $gte: 18 } }]
+    })
+    .collect()) {
+    Object.assign(results, doc)
 }
+```
 
-// Stream deletions
-for await (const _id of Fylo.findDocs<_user>('users').onDelete()) {
-    console.log('deleted:', _id)
-}
+### Update one
 
-// Watch a single document
-for await (const doc of Fylo.getDoc<_user>('users', _id)) {
+```ts
+const nextId = await fylo.patchDoc('users', {
+    [userId]: {
+        team: 'core-platform'
+    }
+})
+```
+
+### Delete one
+
+```ts
+await fylo.delDoc('users', nextId)
+```
+
+## SQL support
+
+FYLO also supports SQL-like commands for app-facing document work:
+
+```ts
+await fylo.executeSQL(`
+  CREATE TABLE posts
+`)
+
+await fylo.executeSQL(`
+  INSERT INTO posts VALUES { "title": "Hello", "published": true }
+`)
+
+const posts = await fylo.executeSQL(`
+  SELECT * FROM posts WHERE published = true
+`)
+```
+
+## Query behavior
+
+FYLO queries use the collection index file first when they can, then hydrate only the matching documents.
+
+That means:
+
+- exact matches are fast
+- range queries are narrowed before document reads
+- contains-style queries can use indexed candidates
+- final document validation still happens before returning results
+
+This is why FYLO behaves more like an application document store than a data warehouse.
+
+## Realtime behavior
+
+FYLO keeps a filesystem event journal per collection.
+
+That is what powers listeners such as:
+
+```ts
+for await (const doc of fylo.findDocs('users', {
+    $ops: [{ role: { $eq: 'admin' } }]
+})) {
     console.log(doc)
 }
 ```
 
-### Bulk Import / Export
+## What FYLO no longer does
 
-```typescript
-const fylo = new Fylo()
+FYLO no longer centers:
 
-// Import from JSON array or NDJSON URL
-const count = await fylo.importBulkData<_user>(
-    'users',
-    new URL('https://example.com/users.json'),
-    1000
-)
+- Redis-backed queued writes
+- worker-based write draining
+- legacy bucket-per-collection S3 storage
+- built-in migration commands between old and new engines
 
-// Export all documents
-for await (const doc of Fylo.exportBulkData<_user>('users')) {
-    console.log(doc)
-}
-```
+If you see older references to those ideas in historic discussions, treat them as previous design stages, not the current product direction.
 
-### Rollback
+## Recovery story
 
-`rollback()` is now a legacy escape hatch.
+This part is important:
 
-Fylo still keeps best-effort rollback data for writes performed by the current instance. This is mainly useful for in-process failures and test workflows:
+- document files are the truth
+- index files can be rebuilt
 
-```typescript
-const fylo = new Fylo()
-await fylo.putData('users', { name: 'test' })
-await fylo.rollback() // undoes all writes in this instance
-```
-
-For queued writes, prefer:
-
-- `getJobStatus()` to inspect an individual write
-- `processQueuedWrites(count, true)` to recover stale pending jobs
-- `getDeadLetters()` to inspect exhausted jobs
-- compensating writes instead of `rollback()` after a commit
-
-`rollback()` may be removed from the main queued-write path in a future major release.
-
-### CLI
-
-```bash
-fylo.query "SELECT * FROM users WHERE age > 25 LIMIT 10"
-```
-
-### Schema Validation
-
-When `STRICT` is set, documents are validated against CHEX schemas before writes:
-
-```bash
-STRICT=true bun run start
-```
-
-Schemas are `.d.ts` interface declarations generated by [`@delma/chex`](https://github.com/Chidelma/CHEX).
+That means FYLO is designed so that the system can recover from index drift without treating the index as a sacred durable database.
 
 ## Development
 
 ```bash
-bun test           # Run all tests
-bun run build      # Compile TypeScript
-bun run typecheck  # Type-check without emitting
-bun run lint       # ESLint
+bun run typecheck
+bun run build
+bun test
 ```
 
-### Local S3 (LocalStack)
+## Performance testing
+
+FYLO includes an opt-in scale test for the filesystem engine:
 
 ```bash
-docker compose up aws
+FYLO_RUN_PERF_TESTS=true bun test tests/integration/s3-files.performance.test.js
 ```
 
-This starts LocalStack on `localhost:4566`. Set `S3_ENDPOINT=http://localhost:4566` to route S3 calls locally.
-
-## Security
-
-### What Fylo does NOT provide
-
-Fylo is a low-level storage abstraction. The following must be implemented by the integrating application:
-
-- **Authentication** — Fylo has no concept of users or sessions. Any caller with access to the Fylo instance can read and write any collection.
-- **Authorization** — `executeSQL` and all document operations accept any collection name with no permission check. In multi-tenant applications, a caller can access any collection unless the integrator enforces a boundary above Fylo.
-- **Rate limiting** — There is no built-in request throttling. An attacker with access to the instance can flood S3 with requests or trigger expensive operations without restriction. Add rate limiting and document-size limits in your service layer.
-
-### Secure configuration
-
-| Concern          | Guidance                                                                                                                                     |
-| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| AWS credentials  | Never commit credentials to version control. Use IAM instance roles or inject via CI secrets. Rotate any credentials that have been exposed. |
-| `ENCRYPTION_KEY` | Must be at least 32 characters. Use a high-entropy random value.                                                                             |
-| `CIPHER_SALT`    | Set a unique random value per deployment to prevent cross-instance precomputation attacks.                                                   |
-| `REDIS_URL`      | Always set explicitly. Use `rediss://` (TLS) in production with authentication credentials in the URL.                                       |
-| Collection names | Must match `^[a-z0-9][a-z0-9\-]*[a-z0-9]$`. Names are validated before any shell or S3 operation.                                            |
-
-### Encrypted fields
-
-Fields listed in `$encrypted` in a collection schema are encrypted with AES-256-CBC. By default a random IV is used per write (non-deterministic). Pass `deterministic: true` to `Cipher.encrypt()` only for fields that require `$eq`/`$ne` queries — deterministic encryption leaks value equality to observers of stored ciphertext.
-
-## License
-
-MIT
+This is useful when you want to see how index size and query latency behave as collections grow.

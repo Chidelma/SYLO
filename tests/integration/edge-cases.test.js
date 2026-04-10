@@ -1,22 +1,22 @@
-import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
+import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
+import { rm } from 'node:fs/promises'
 import Fylo from '../../src'
 import TTID from '@delma/ttid'
-import S3Mock from '../mocks/s3'
-import RedisMock from '../mocks/redis'
+import { createTestRoot } from '../helpers/root'
 const COLLECTION = 'ec-test'
-const fylo = new Fylo()
-mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
-mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
+const root = await createTestRoot('fylo-edge-')
+const fylo = new Fylo({ root })
 beforeAll(async () => {
-    await Fylo.createCollection(COLLECTION)
+    await fylo.createCollection(COLLECTION)
 })
 afterAll(async () => {
-    await Fylo.dropCollection(COLLECTION)
+    await fylo.dropCollection(COLLECTION)
+    await rm(root, { recursive: true, force: true })
 })
 describe('NO-SQL', () => {
     test('GET ONE — non-existent ID returns empty object', async () => {
         const fakeId = TTID.generate()
-        const result = await Fylo.getDoc(COLLECTION, fakeId).once()
+        const result = await fylo.getDoc(COLLECTION, fakeId).once()
         expect(Object.keys(result).length).toBe(0)
     })
     test('PUT / GET — forward slashes in values round-trip correctly', async () => {
@@ -27,7 +27,7 @@ describe('NO-SQL', () => {
             body: 'https://example.com/api/v1/resource'
         }
         const _id = await fylo.putData(COLLECTION, original)
-        const result = await Fylo.getDoc(COLLECTION, _id).once()
+        const result = await fylo.getDoc(COLLECTION, _id).once()
         const doc = result[_id]
         expect(doc.body).toBe(original.body)
         await fylo.delDoc(COLLECTION, _id)
@@ -40,12 +40,12 @@ describe('NO-SQL', () => {
             body: 'https://cdn.example.com//assets//image.png'
         }
         const _id = await fylo.putData(COLLECTION, original)
-        const result = await Fylo.getDoc(COLLECTION, _id).once()
+        const result = await fylo.getDoc(COLLECTION, _id).once()
         expect(result[_id].body).toBe(original.body)
         await fylo.delDoc(COLLECTION, _id)
     })
     test('$ops — multiple conditions act as OR union', async () => {
-        const cleanFylo = new Fylo()
+        const cleanFylo = new Fylo({ root })
         const id1 = await cleanFylo.putData(COLLECTION, {
             userId: 10,
             id: 100,
@@ -59,9 +59,11 @@ describe('NO-SQL', () => {
             body: 'second'
         })
         const results = {}
-        for await (const data of Fylo.findDocs(COLLECTION, {
-            $ops: [{ userId: { $eq: 10 } }, { userId: { $eq: 20 } }]
-        }).collect()) {
+        for await (const data of fylo
+            .findDocs(COLLECTION, {
+                $ops: [{ userId: { $eq: 10 } }, { userId: { $eq: 20 } }]
+            })
+            .collect()) {
             Object.assign(results, data)
         }
         expect(results[id1]).toBeDefined()
@@ -70,7 +72,7 @@ describe('NO-SQL', () => {
         await cleanFylo.delDoc(COLLECTION, id2)
     })
     test('$rename — renames fields in query output', async () => {
-        const cleanFylo = new Fylo()
+        const cleanFylo = new Fylo({ root })
         const _id = await cleanFylo.putData(COLLECTION, {
             userId: 1,
             id: 300,
@@ -78,10 +80,12 @@ describe('NO-SQL', () => {
             body: 'some body'
         })
         let renamed = {}
-        for await (const data of Fylo.findDocs(COLLECTION, {
-            $ops: [{ id: { $eq: 300 } }],
-            $rename: { title: 'name' }
-        }).collect()) {
+        for await (const data of fylo
+            .findDocs(COLLECTION, {
+                $ops: [{ id: { $eq: 300 } }],
+                $rename: { title: 'name' }
+            })
+            .collect()) {
             renamed = Object.values(data)[0]
         }
         expect(renamed.name).toBe('Rename Me')
@@ -89,7 +93,7 @@ describe('NO-SQL', () => {
         await cleanFylo.delDoc(COLLECTION, _id)
     })
     test('versioned putData — preserves creation-time prefix in TTID', async () => {
-        const cleanFylo = new Fylo()
+        const cleanFylo = new Fylo({ root })
         const _id1 = await cleanFylo.putData(COLLECTION, {
             userId: 1,
             id: 400,
@@ -100,7 +104,7 @@ describe('NO-SQL', () => {
             [_id1]: { userId: 1, id: 400, title: 'Updated', body: 'v2' }
         })
         expect(_id2.split('-')[0]).toBe(_id1.split('-')[0])
-        const result = await Fylo.getDoc(COLLECTION, _id2).once()
+        const result = await fylo.getDoc(COLLECTION, _id2).once()
         const doc = result[_id2]
         expect(doc).toBeDefined()
         expect(doc.title).toBe('Updated')
@@ -108,7 +112,7 @@ describe('NO-SQL', () => {
         await cleanFylo.delDoc(COLLECTION, _id2)
     })
     test('versioned putData — original version is no longer retrievable by old full TTID', async () => {
-        const cleanFylo = new Fylo()
+        const cleanFylo = new Fylo({ root })
         const _id1 = await cleanFylo.putData(COLLECTION, {
             userId: 1,
             id: 500,
@@ -124,7 +128,7 @@ describe('NO-SQL', () => {
 })
 describe('SQL', () => {
     test('UPDATE ONE — update a single document by querying its unique field', async () => {
-        const cleanFylo = new Fylo()
+        const cleanFylo = new Fylo({ root })
         await cleanFylo.putData(COLLECTION, {
             userId: 1,
             id: 600,
@@ -142,7 +146,7 @@ describe('SQL', () => {
         expect(Object.values(results)[0].title).toBe('After SQL Update')
     })
     test('DELETE ONE — delete a single document by querying its unique field', async () => {
-        const cleanFylo = new Fylo()
+        const cleanFylo = new Fylo({ root })
         await cleanFylo.putData(COLLECTION, {
             userId: 1,
             id: 700,

@@ -1,17 +1,16 @@
-import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
+import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
+import { rm } from 'node:fs/promises'
 import Fylo from '../../src'
 import { albumURL, postsURL } from '../data'
-import S3Mock from '../mocks/s3'
-import RedisMock from '../mocks/redis'
+import { createTestRoot } from '../helpers/root'
 const POSTS = `post`
 const ALBUMS = `album`
 let postsCount = 0
 let albumsCount = 0
-const fylo = new Fylo()
-mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
-mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
+const root = await createTestRoot('fylo-create-')
+const fylo = new Fylo({ root })
 beforeAll(async () => {
-    await Promise.all([Fylo.createCollection(POSTS), fylo.executeSQL(`CREATE TABLE ${ALBUMS}`)])
+    await Promise.all([fylo.createCollection(POSTS), fylo.executeSQL(`CREATE TABLE ${ALBUMS}`)])
     try {
         albumsCount = await fylo.importBulkData(ALBUMS, new URL(albumURL), 100)
         postsCount = await fylo.importBulkData(POSTS, new URL(postsURL), 100)
@@ -20,12 +19,13 @@ beforeAll(async () => {
     }
 })
 afterAll(async () => {
-    await Promise.all([Fylo.dropCollection(POSTS), fylo.executeSQL(`DROP TABLE ${ALBUMS}`)])
+    await Promise.all([fylo.dropCollection(POSTS), fylo.executeSQL(`DROP TABLE ${ALBUMS}`)])
+    await rm(root, { recursive: true, force: true })
 })
 describe('NO-SQL', async () => {
     test('PUT', async () => {
         let results = {}
-        for await (const data of Fylo.findDocs(POSTS).collect()) {
+        for await (const data of fylo.findDocs(POSTS).collect()) {
             results = { ...results, ...data }
         }
         expect(Object.keys(results).length).toEqual(postsCount)

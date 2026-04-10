@@ -1,15 +1,14 @@
-import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
+import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
+import { rm } from 'node:fs/promises'
 import Fylo from '../../src'
 import { photosURL, todosURL } from '../data'
-import S3Mock from '../mocks/s3'
-import RedisMock from '../mocks/redis'
+import { createTestRoot } from '../helpers/root'
 const PHOTOS = `photo`
 const TODOS = `todo`
-const fylo = new Fylo()
-mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
-mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
+const root = await createTestRoot('fylo-update-')
+const fylo = new Fylo({ root })
 beforeAll(async () => {
-    await Promise.all([Fylo.createCollection(PHOTOS), fylo.executeSQL(`CREATE TABLE ${TODOS}`)])
+    await Promise.all([fylo.createCollection(PHOTOS), fylo.executeSQL(`CREATE TABLE ${TODOS}`)])
     try {
         await fylo.importBulkData(PHOTOS, new URL(photosURL), 100)
         await fylo.importBulkData(TODOS, new URL(todosURL), 100)
@@ -18,12 +17,13 @@ beforeAll(async () => {
     }
 })
 afterAll(async () => {
-    await Promise.all([Fylo.dropCollection(PHOTOS), fylo.executeSQL(`DROP TABLE ${TODOS}`)])
+    await Promise.all([fylo.dropCollection(PHOTOS), fylo.executeSQL(`DROP TABLE ${TODOS}`)])
+    await rm(root, { recursive: true, force: true })
 })
 describe('NO-SQL', async () => {
     test('UPDATE ONE', async () => {
         const ids = []
-        for await (const data of Fylo.findDocs(PHOTOS, { $limit: 1, $onlyIds: true }).collect()) {
+        for await (const data of fylo.findDocs(PHOTOS, { $limit: 1, $onlyIds: true }).collect()) {
             ids.push(data)
         }
         try {
@@ -32,9 +32,11 @@ describe('NO-SQL', async () => {
             await fylo.rollback()
         }
         let results = {}
-        for await (const data of Fylo.findDocs(PHOTOS, {
-            $ops: [{ title: { $eq: 'All Mighty' } }]
-        }).collect()) {
+        for await (const data of fylo
+            .findDocs(PHOTOS, {
+                $ops: [{ title: { $eq: 'All Mighty' } }]
+            })
+            .collect()) {
             results = { ...results, ...data }
         }
         expect(Object.keys(results).length).toBe(1)
@@ -50,9 +52,11 @@ describe('NO-SQL', async () => {
             await fylo.rollback()
         }
         let results = {}
-        for await (const data of Fylo.findDocs(PHOTOS, {
-            $ops: [{ title: { $eq: 'All Mighti' } }]
-        }).collect()) {
+        for await (const data of fylo
+            .findDocs(PHOTOS, {
+                $ops: [{ title: { $eq: 'All Mighti' } }]
+            })
+            .collect()) {
             results = { ...results, ...data }
         }
         expect(Object.keys(results).length).toBe(count)
@@ -65,9 +69,11 @@ describe('NO-SQL', async () => {
             await fylo.rollback()
         }
         let results = {}
-        for await (const data of Fylo.findDocs(PHOTOS, {
-            $ops: [{ title: { $eq: 'All Mighter' } }]
-        }).collect()) {
+        for await (const data of fylo
+            .findDocs(PHOTOS, {
+                $ops: [{ title: { $eq: 'All Mighter' } }]
+            })
+            .collect()) {
             results = { ...results, ...data }
         }
         expect(Object.keys(results).length).toBe(count)

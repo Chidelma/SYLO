@@ -1,16 +1,15 @@
-import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
+import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
+import { rm } from 'node:fs/promises'
 import Fylo from '../../src'
 import { postsURL } from '../data'
-import S3Mock from '../mocks/s3'
-import RedisMock from '../mocks/redis'
+import { createTestRoot } from '../helpers/root'
 const POSTS = 'exp-post'
 const IMPORT_LIMIT = 20
 let importedCount = 0
-const fylo = new Fylo()
-mock.module('../../src/adapters/s3', () => ({ S3: S3Mock }))
-mock.module('../../src/adapters/redis', () => ({ Redis: RedisMock }))
+const root = await createTestRoot('fylo-export-')
+const fylo = new Fylo({ root })
 beforeAll(async () => {
-    await Fylo.createCollection(POSTS)
+    await fylo.createCollection(POSTS)
     try {
         importedCount = await fylo.importBulkData(POSTS, new URL(postsURL), IMPORT_LIMIT)
     } catch {
@@ -18,18 +17,19 @@ beforeAll(async () => {
     }
 })
 afterAll(async () => {
-    await Fylo.dropCollection(POSTS)
+    await fylo.dropCollection(POSTS)
+    await rm(root, { recursive: true, force: true })
 })
 describe('NO-SQL', () => {
     test('EXPORT count matches import', async () => {
         let exported = 0
-        for await (const _doc of Fylo.exportBulkData(POSTS)) {
+        for await (const _doc of fylo.exportBulkData(POSTS)) {
             exported++
         }
         expect(exported).toBe(importedCount)
     })
     test('EXPORT document shape', async () => {
-        for await (const doc of Fylo.exportBulkData(POSTS)) {
+        for await (const doc of fylo.exportBulkData(POSTS)) {
             expect(doc).toHaveProperty('title')
             expect(doc).toHaveProperty('userId')
             expect(doc).toHaveProperty('body')
@@ -37,7 +37,7 @@ describe('NO-SQL', () => {
         }
     })
     test('EXPORT all documents are valid posts', async () => {
-        for await (const doc of Fylo.exportBulkData(POSTS)) {
+        for await (const doc of fylo.exportBulkData(POSTS)) {
             expect(typeof doc.title).toBe('string')
             expect(typeof doc.userId).toBe('number')
             expect(doc.userId).toBeGreaterThan(0)
