@@ -1,10 +1,14 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { lookup } from 'node:dns/promises'
+import { readFile } from 'node:fs/promises'
+import { isIP } from 'node:net'
 import path from 'node:path'
 import { Parser } from './core/parser'
 import TTID from '@delma/ttid'
 import Gen from '@delma/chex'
 import { Cipher } from './adapters/cipher'
 import { S3FilesEngine } from './engines/s3-files'
+import { validateDocId } from './core/doc-id'
 import type { FyloOptions } from './sync'
 import './core/format'
 import './core/extensions'
@@ -18,6 +22,22 @@ export type {
     FyloWriteSyncEvent
 } from './sync'
 
+export type ImportBulkDataOptions = {
+    limit?: number
+    maxBytes?: number
+    allowedProtocols?: string[]
+    allowedHosts?: string[]
+    allowPrivateNetwork?: boolean
+}
+
+type NormalizedImportBulkDataOptions = {
+    limit?: number
+    maxBytes: number
+    allowedProtocols: string[]
+    allowedHosts?: string[]
+    allowPrivateNetwork: boolean
+}
+
 export default class Fylo {
     private static LOGGING = process.env.LOGGING
 
@@ -27,7 +47,7 @@ export default class Fylo {
 
     private static ttidLock: Promise<void> = Promise.resolve()
 
-    private static readonly SCHEMA_DIR = process.env.SCHEMA_DIR
+    private static readonly DEFAULT_IMPORT_MAX_BYTES = 50 * 1024 * 1024
 
     /** Collections whose schema `$encrypted` config has already been loaded. */
     private static readonly loadedEncryption: Set<string> = new Set()
@@ -143,31 +163,49 @@ export default class Fylo {
      */
     private static async loadEncryption(collection: string): Promise<void> {
         if (Fylo.loadedEncryption.has(collection)) return
-        Fylo.loadedEncryption.add(collection)
 
-        if (!Fylo.SCHEMA_DIR) return
+        const schemaDir = process.env.SCHEMA_DIR
+
+        if (!schemaDir) {
+            Fylo.loadedEncryption.add(collection)
+            return
+        }
+
+        const schemaPath = path.join(schemaDir, `${collection}.json`)
+        let schema: Record<string, unknown>
 
         try {
-            const res = await import(`${Fylo.SCHEMA_DIR}/${collection}.json`)
-            const schema = res.default as Record<string, unknown>
-            const encrypted = schema.$encrypted
-
-            if (Array.isArray(encrypted) && encrypted.length > 0) {
-                if (!Cipher.isConfigured()) {
-                    const secret = process.env.ENCRYPTION_KEY
-                    if (!secret)
-                        throw new Error(
-                            'Schema declares $encrypted fields but ENCRYPTION_KEY env var is not set'
-                        )
-                    if (secret.length < 32)
-                        throw new Error('ENCRYPTION_KEY must be at least 32 characters long')
-                    await Cipher.configure(secret)
-                }
-                Cipher.registerFields(collection, encrypted as string[])
+            schema = JSON.parse(await readFile(schemaPath, 'utf8')) as Record<string, unknown>
+        } catch (err) {
+            if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+                Fylo.loadedEncryption.add(collection)
+                return
             }
-        } catch {
-            // No schema file found — no encryption for this collection
+            throw err
         }
+
+        const encrypted = schema.$encrypted
+        if (encrypted !== undefined && !Array.isArray(encrypted))
+            throw new Error(`Schema $encrypted for ${collection} must be an array of field names`)
+
+        if (Array.isArray(encrypted) && encrypted.length > 0) {
+            if (!encrypted.every((field) => typeof field === 'string' && field.length > 0))
+                throw new Error(`Schema $encrypted for ${collection} must only contain strings`)
+
+            if (!Cipher.isConfigured()) {
+                const secret = process.env.ENCRYPTION_KEY
+                if (!secret)
+                    throw new Error(
+                        'Schema declares $encrypted fields but ENCRYPTION_KEY env var is not set'
+                    )
+                if (secret.length < 32)
+                    throw new Error('ENCRYPTION_KEY must be at least 32 characters long')
+                await Cipher.configure(secret)
+            }
+            Cipher.registerFields(collection, encrypted as string[])
+        }
+
+        Fylo.loadedEncryption.add(collection)
     }
 
     /**
@@ -177,6 +215,7 @@ export default class Fylo {
     async rollback() {}
 
     getDoc<T extends Record<string, any>>(collection: string, _id: _ttid, onlyId: boolean = false) {
+        validateDocId(_id)
         return this.engine.getDoc<T>(collection, _id, onlyId)
     }
 
@@ -230,15 +269,117 @@ export default class Fylo {
      * @param url The URL of the data to import.
      * @param limit The maximum number of documents to import.
      */
+    private static normalizeImportOptions(
+        limitOrOptions?: number | ImportBulkDataOptions
+    ): NormalizedImportBulkDataOptions {
+        const options =
+            typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions
+
+        return {
+            limit: options?.limit,
+            maxBytes: options?.maxBytes ?? Fylo.DEFAULT_IMPORT_MAX_BYTES,
+            allowedProtocols: options?.allowedProtocols ?? ['https:', 'http:', 'data:'],
+            allowedHosts: options?.allowedHosts,
+            allowPrivateNetwork: options?.allowPrivateNetwork ?? false
+        }
+    }
+
+    private static isPrivateAddress(address: string): boolean {
+        const normalized = address
+            .toLowerCase()
+            .replace(/^\[|\]$/g, '')
+            .split('%')[0]
+        const ipv4 = normalized.startsWith('::ffff:')
+            ? normalized.slice('::ffff:'.length)
+            : normalized
+
+        if (isIP(ipv4) === 4) {
+            const [first = 0, second = 0] = ipv4.split('.').map((part) => Number(part))
+            return (
+                first === 0 ||
+                first === 10 ||
+                first === 127 ||
+                (first === 169 && second === 254) ||
+                (first === 172 && second >= 16 && second <= 31) ||
+                (first === 192 && second === 168) ||
+                (first === 100 && second >= 64 && second <= 127)
+            )
+        }
+
+        if (isIP(normalized) === 6) {
+            if (normalized === '::1' || normalized === '::') return true
+
+            const firstSegment = Number.parseInt(normalized.split(':')[0] || '0', 16)
+            return (firstSegment & 0xfe00) === 0xfc00 || (firstSegment & 0xffc0) === 0xfe80
+        }
+
+        return false
+    }
+
+    private static hostAllowed(hostname: string, allowedHosts?: string[]): boolean {
+        if (!allowedHosts?.length) return true
+
+        const host = hostname.toLowerCase()
+        return allowedHosts.some((allowed) => {
+            const candidate = allowed.toLowerCase()
+            return host === candidate || host.endsWith(`.${candidate}`)
+        })
+    }
+
+    private static async assertImportUrlAllowed(
+        url: URL,
+        options: NormalizedImportBulkDataOptions
+    ) {
+        if (!options.allowedProtocols.includes(url.protocol))
+            throw new Error(`Import URL protocol is not allowed: ${url.protocol}`)
+
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') return
+
+        if (!Fylo.hostAllowed(url.hostname, options.allowedHosts))
+            throw new Error(`Import URL host is not allowed: ${url.hostname}`)
+
+        if (options.allowPrivateNetwork) return
+
+        const hostname = url.hostname.toLowerCase()
+        if (hostname === 'localhost' || hostname.endsWith('.localhost'))
+            throw new Error(`Import URL resolves to a private address: ${url.hostname}`)
+
+        const addresses =
+            isIP(hostname) === 0
+                ? (await lookup(hostname, { all: true })).map((result) => result.address)
+                : [hostname]
+
+        if (addresses.some((address) => Fylo.isPrivateAddress(address)))
+            throw new Error(`Import URL resolves to a private address: ${url.hostname}`)
+    }
+
     async importBulkData<T extends Record<string, any>>(
         collection: string,
         url: URL,
         limit?: number
+    ): Promise<number>
+    async importBulkData<T extends Record<string, any>>(
+        collection: string,
+        url: URL,
+        options?: ImportBulkDataOptions
+    ): Promise<number>
+    async importBulkData<T extends Record<string, any>>(
+        collection: string,
+        url: URL,
+        limitOrOptions?: number | ImportBulkDataOptions
     ) {
+        const importOptions = Fylo.normalizeImportOptions(limitOrOptions)
+        const limit = importOptions.limit
+
+        if (limit !== undefined && limit <= 0) return 0
+        await Fylo.assertImportUrlAllowed(url, importOptions)
+
         const res = await fetch(url)
 
+        if (!res.ok) throw new Error(`Import request failed with status ${res.status}`)
         if (!res.headers.get('content-type')?.includes('application/json'))
             throw new Error('Response is not JSON')
+        if (!res.body) throw new Error('Response body is empty')
 
         let count = 0
         let batchNum = 0
@@ -247,7 +388,11 @@ export default class Fylo {
             if (!batch.length) return
 
             const items =
-                limit && count + batch.length > limit ? batch.slice(0, limit - count) : batch
+                limit !== undefined && count + batch.length > limit
+                    ? batch.slice(0, limit - count)
+                    : batch
+
+            if (!items.length) return
 
             batchNum++
 
@@ -273,8 +418,13 @@ export default class Fylo {
 
         let pending = new Uint8Array(0)
         let batch: T[] = []
+        let totalBytes = 0
 
         for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+            totalBytes += chunk.length
+            if (totalBytes > importOptions.maxBytes)
+                throw new Error(`Import response exceeded ${importOptions.maxBytes} bytes`)
+
             if (isJsonArray === null) isJsonArray = chunk[0] === 0x5b
 
             if (isJsonArray) {
@@ -295,7 +445,7 @@ export default class Fylo {
                 if (batch.length === Fylo.MAX_CPUS) {
                     await flush(batch)
                     batch = []
-                    if (limit && count >= limit) return count
+                    if (limit !== undefined && count >= limit) return count
                 }
             }
         }
@@ -312,7 +462,7 @@ export default class Fylo {
             const items: T[] = Array.isArray(data) ? data : [data]
 
             for (let i = 0; i < items.length; i += Fylo.MAX_CPUS) {
-                if (limit && count >= limit) break
+                if (limit !== undefined && count >= limit) break
                 await flush(items.slice(i, i + Fylo.MAX_CPUS))
             }
         } else {
@@ -346,6 +496,7 @@ export default class Fylo {
         _id: _ttid,
         onlyId: boolean = false
     ) {
+        validateDocId(_id)
         return Fylo.defaultEngine.getDoc<T>(collection, _id, onlyId)
     }
 
@@ -456,6 +607,7 @@ export default class Fylo {
         const _id = Object.keys(newDoc).shift() as _ttid
 
         if (!_id) throw new Error('this document does not contain an TTID')
+        validateDocId(_id)
 
         let existingDoc = oldDoc[_id]
         if (!existingDoc) {
@@ -483,6 +635,7 @@ export default class Fylo {
     }
 
     private async executeDelDocDirect(collection: string, _id: _ttid) {
+        validateDocId(_id)
         await this.engine.deleteDocument(collection, _id)
 
         if (Fylo.LOGGING) console.log(`Finished Deleting ${_id}`)

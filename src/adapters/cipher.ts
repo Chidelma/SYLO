@@ -1,5 +1,5 @@
 /**
- * AES-256-CBC encryption adapter for field-level value encryption.
+ * AES-256-GCM encryption adapter for field-level value encryption.
  *
  * Two modes are supported via the `deterministic` flag on `encrypt()`:
  *
@@ -7,11 +7,8 @@
  *   encryption operation. Identical plaintexts produce different ciphertexts.
  *   Use this for fields that do not need exact-match ($eq/$ne) queries.
  *
- * - **Deterministic IV (opt-in)**: The IV is derived from HMAC-SHA256 of the
- *   plaintext, so identical values always produce identical ciphertext. This
- *   enables exact-match queries on encrypted fields but leaks equality — an
- *   observer can determine which records share field values without decrypting.
- *   Use only when $eq/$ne queries on encrypted fields are required.
+ * Exact-match queries use a separate keyed HMAC blind index. This leaks equality
+ * and frequency for indexed values, but stored document bodies use random nonces.
  *
  * Encrypted fields are declared per-collection in JSON schema files via the
  * `$encrypted` array. The encryption key is sourced from `ENCRYPTION_KEY` env var.
@@ -20,6 +17,7 @@
 
 export class Cipher {
     private static key: CryptoKey | null = null
+    private static legacyCbcKey: CryptoKey | null = null
     private static hmacKey: CryptoKey | null = null
 
     /** Per-collection encrypted field sets, loaded from schema `$encrypted` arrays. */
@@ -76,7 +74,7 @@ export class Cipher {
             )
         }
 
-        // Derive 48 bytes: 32 for AES key + 16 for HMAC key
+        // Derive 64 bytes: 32 for AES-GCM key + 32 for HMAC blind indexes.
         const bits = await crypto.subtle.deriveBits(
             {
                 name: 'PBKDF2',
@@ -85,74 +83,111 @@ export class Cipher {
                 hash: 'SHA-256'
             },
             keyMaterial,
-            384
+            512
         )
 
         const derived = new Uint8Array(bits)
 
-        Cipher.key = await crypto.subtle.importKey(
+        const key = await crypto.subtle.importKey(
             'raw',
             derived.slice(0, 32),
-            { name: 'AES-CBC' },
+            { name: 'AES-GCM' },
             false,
             ['encrypt', 'decrypt']
         )
 
-        Cipher.hmacKey = await crypto.subtle.importKey(
+        const legacyCbcKey = await crypto.subtle.importKey(
             'raw',
-            derived.slice(32),
+            derived.slice(0, 32),
+            { name: 'AES-CBC' },
+            false,
+            ['decrypt']
+        )
+
+        const hmacKey = await crypto.subtle.importKey(
+            'raw',
+            derived.slice(32, 64),
             { name: 'HMAC', hash: 'SHA-256' },
             false,
             ['sign']
         )
+
+        Cipher.key = key
+        Cipher.legacyCbcKey = legacyCbcKey
+        Cipher.hmacKey = hmacKey
     }
 
     static reset(): void {
         Cipher.key = null
+        Cipher.legacyCbcKey = null
         Cipher.hmacKey = null
         Cipher.collections = new Map()
     }
 
     /**
-     * Deterministic IV from HMAC-SHA256 of plaintext, truncated to 16 bytes.
+     * Deterministic nonce from HMAC-SHA256 of plaintext, truncated to 12 bytes.
      */
-    private static async deriveIV(plaintext: string): Promise<Uint8Array> {
+    private static async deriveNonce(plaintext: string): Promise<Uint8Array> {
         const encoder = new TextEncoder()
         const sig = await crypto.subtle.sign('HMAC', Cipher.hmacKey!, encoder.encode(plaintext))
-        return new Uint8Array(sig).slice(0, 16)
+        return new Uint8Array(sig).slice(0, 12)
+    }
+
+    private static base64Url(bytes: Uint8Array): string {
+        let binary = ''
+        for (let i = 0; i < bytes.length; i += 0x8000) {
+            binary += String.fromCharCode(...bytes.slice(i, i + 0x8000))
+        }
+
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+    }
+
+    private static fromBase64Url(encoded: string): Uint8Array {
+        const b64 = encoded.replace(/-/g, '+').replace(/_/g, '/')
+        const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4)
+        return Uint8Array.from(atob(padded), (c) => c.charCodeAt(0))
+    }
+
+    /**
+     * Produces a keyed lookup token for encrypted exact-match indexes.
+     */
+    static async blindIndex(value: string): Promise<string> {
+        if (!Cipher.hmacKey) throw new Error('Cipher not configured — set ENCRYPTION_KEY env var')
+
+        const sig = await crypto.subtle.sign(
+            'HMAC',
+            Cipher.hmacKey,
+            new TextEncoder().encode(value)
+        )
+        return `idx1.${Cipher.base64Url(new Uint8Array(sig))}`
     }
 
     /**
      * Encrypts a value. Returns a URL-safe base64 string (no slashes).
      *
      * @param value - The plaintext to encrypt.
-     * @param deterministic - When true, derives IV from HMAC of plaintext (same
-     *   input always produces same ciphertext). Required for $eq/$ne queries on
-     *   encrypted fields. Defaults to false (random IV per operation).
+     * @param deterministic - Compatibility mode for legacy deterministic callers.
+     *   Prefer `blindIndex()` for query indexes and random nonces for stored data.
      */
     static async encrypt(value: string, deterministic = false): Promise<string> {
         if (!Cipher.key) throw new Error('Cipher not configured — set ENCRYPTION_KEY env var')
 
-        const iv = deterministic
-            ? await Cipher.deriveIV(value)
-            : crypto.getRandomValues(new Uint8Array(16))
+        const nonce = deterministic
+            ? await Cipher.deriveNonce(value)
+            : crypto.getRandomValues(new Uint8Array(12))
         const encoder = new TextEncoder()
 
         const encrypted = await crypto.subtle.encrypt(
-            { name: 'AES-CBC', iv: iv as any },
+            { name: 'AES-GCM', iv: nonce as any },
             Cipher.key,
             encoder.encode(value)
         )
 
-        // Concatenate IV + ciphertext and encode as URL-safe base64
-        const combined = new Uint8Array(iv.length + encrypted.byteLength)
-        combined.set(iv)
-        combined.set(new Uint8Array(encrypted), iv.length)
+        const combined = new Uint8Array(nonce.length + encrypted.byteLength)
+        combined.set(nonce)
+        combined.set(new Uint8Array(encrypted), nonce.length)
 
-        return btoa(String.fromCharCode(...combined))
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_')
-            .replace(/=+$/, '')
+        return `v2.${Cipher.base64Url(combined)}`
     }
 
     /**
@@ -161,17 +196,32 @@ export class Cipher {
     static async decrypt(encoded: string): Promise<string> {
         if (!Cipher.key) throw new Error('Cipher not configured — set ENCRYPTION_KEY env var')
 
-        // Restore standard base64
-        const b64 = encoded.replace(/-/g, '+').replace(/_/g, '/')
-        const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4)
+        if (!encoded.startsWith('v2.')) return await Cipher.decryptLegacyCbc(encoded)
 
-        const combined = Uint8Array.from(atob(padded), (c) => c.charCodeAt(0))
+        const combined = Cipher.fromBase64Url(encoded.slice(3))
+        const nonce = combined.slice(0, 12)
+        const ciphertext = combined.slice(12)
+
+        const decrypted = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: nonce },
+            Cipher.key,
+            ciphertext
+        )
+
+        return new TextDecoder().decode(decrypted)
+    }
+
+    private static async decryptLegacyCbc(encoded: string): Promise<string> {
+        if (!Cipher.legacyCbcKey)
+            throw new Error('Cipher not configured — set ENCRYPTION_KEY env var')
+
+        const combined = Cipher.fromBase64Url(encoded)
         const iv = combined.slice(0, 16)
         const ciphertext = combined.slice(16)
 
         const decrypted = await crypto.subtle.decrypt(
             { name: 'AES-CBC', iv },
-            Cipher.key,
+            Cipher.legacyCbcKey,
             ciphertext
         )
 

@@ -1,5 +1,6 @@
 import { mkdir, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { assertPathInside, validateDocId } from '../../core/doc-id'
 import type { EventBus, LockManager, StorageEngine } from '../types'
 import type { S3FilesEvent } from './types'
 
@@ -63,7 +64,11 @@ export class FilesystemLockManager implements LockManager {
     ) {}
 
     private lockDir(collection: string, docId: _ttid) {
-        return path.join(this.root, collection, '.fylo', 'locks', `${docId}.lock`)
+        validateDocId(docId)
+        const locksRoot = path.join(this.root, collection, '.fylo', 'locks')
+        const target = path.join(locksRoot, `${docId}.lock`)
+        assertPathInside(locksRoot, target)
+        return target
     }
 
     async acquire(

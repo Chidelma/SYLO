@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import TTID from '@delma/ttid'
 import { Dir } from '../core/directory'
 import { validateCollectionName } from '../core/collection'
+import { assertPathInside, validateDocId } from '../core/doc-id'
 import { Cipher } from '../adapters/cipher'
 import {
     FyloSyncError,
@@ -88,7 +89,11 @@ export class S3FilesEngine {
     }
 
     private docPath(collection: string, docId: _ttid) {
-        return path.join(this.docsRoot(collection), docId.slice(0, 2), `${docId}.json`)
+        validateDocId(docId)
+        const docsRoot = this.docsRoot(collection)
+        const target = path.join(docsRoot, docId.slice(0, 2), `${docId}.json`)
+        assertPathInside(docsRoot, target)
+        return target
     }
 
     private async runSyncTask(
@@ -322,7 +327,7 @@ export class S3FilesEngine {
                         Cipher.isConfigured() &&
                         Cipher.isEncryptedField(collection, parentField)
                     ) {
-                        return await Cipher.encrypt(String(item).replaceAll('/', '%2F'), true)
+                        return await Cipher.encrypt(String(item).replaceAll('/', '%2F'))
                     }
                     return item
                 })
@@ -338,10 +343,7 @@ export class S3FilesEngine {
                 if (fieldValue && typeof fieldValue === 'object')
                     copy[field] = await this.encodeEncrypted(collection, fieldValue, nextField)
                 else if (Cipher.isConfigured() && Cipher.isEncryptedField(collection, nextField)) {
-                    copy[field] = await Cipher.encrypt(
-                        String(fieldValue).replaceAll('/', '%2F'),
-                        true
-                    )
+                    copy[field] = await Cipher.encrypt(String(fieldValue).replaceAll('/', '%2F'))
                 } else copy[field] = fieldValue
             }
             return copy as T
@@ -464,6 +466,7 @@ export class S3FilesEngine {
     }
 
     async putDocument<T extends Record<string, any>>(collection: string, docId: _ttid, doc: T) {
+        validateDocId(docId)
         await this.withCollectionWriteLock(collection, async () => {
             const owner = Bun.randomUUIDv7()
             if (!(await this.locks.acquire(collection, docId, owner)))
@@ -478,7 +481,7 @@ export class S3FilesEngine {
                     ts: Date.now(),
                     action: 'insert',
                     id: docId,
-                    doc
+                    doc: await this.encodeEncrypted(collection, doc)
                 })
                 await this.runSyncTask(collection, docId, 'put', targetPath, async () => {
                     await this.syncWrite({
@@ -502,6 +505,8 @@ export class S3FilesEngine {
         patch: Partial<T>,
         oldDoc?: T
     ) {
+        validateDocId(oldId)
+        validateDocId(newId)
         return await this.withCollectionWriteLock(collection, async () => {
             const owner = Bun.randomUUIDv7()
             if (!(await this.locks.acquire(collection, oldId, owner)))
@@ -522,7 +527,7 @@ export class S3FilesEngine {
                     ts: Date.now(),
                     action: 'delete',
                     id: oldId,
-                    doc: existing
+                    doc: await this.encodeEncrypted(collection, existing)
                 })
                 await this.documents.writeStoredDoc(collection, newId, nextDoc)
                 await this.rebuildIndexes(collection, newId, nextDoc)
@@ -530,7 +535,7 @@ export class S3FilesEngine {
                     ts: Date.now(),
                     action: 'insert',
                     id: newId,
-                    doc: nextDoc
+                    doc: await this.encodeEncrypted(collection, nextDoc)
                 })
                 await this.runSyncTask(collection, newId, 'patch', newPath, async () => {
                     await this.syncDelete({
@@ -556,6 +561,7 @@ export class S3FilesEngine {
     }
 
     async deleteDocument<T extends Record<string, any>>(collection: string, docId: _ttid) {
+        validateDocId(docId)
         await this.withCollectionWriteLock(collection, async () => {
             const owner = Bun.randomUUIDv7()
             if (!(await this.locks.acquire(collection, docId, owner)))
@@ -572,7 +578,7 @@ export class S3FilesEngine {
                     ts: Date.now(),
                     action: 'delete',
                     id: docId,
-                    doc: existing.data
+                    doc: await this.encodeEncrypted(collection, existing.data)
                 })
                 await this.runSyncTask(collection, docId, 'delete', targetPath, async () => {
                     await this.syncDelete({
@@ -593,6 +599,7 @@ export class S3FilesEngine {
         docId: _ttid,
         onlyId: boolean = false
     ) {
+        validateDocId(docId)
         const engine = this
 
         return {
@@ -602,7 +609,8 @@ export class S3FilesEngine {
 
                 for await (const event of engine.events.listen(collection)) {
                     if (event.action !== 'insert' || event.id !== docId || !event.doc) continue
-                    yield onlyId ? event.id : ({ [event.id]: event.doc } as FyloRecord<T>)
+                    const doc = await engine.decodeEncrypted(collection, event.doc as T)
+                    yield onlyId ? event.id : ({ [event.id]: doc } as FyloRecord<T>)
                 }
             },
             async once() {
@@ -634,9 +642,10 @@ export class S3FilesEngine {
 
                 for await (const event of engine.events.listen(collection)) {
                     if (event.action !== 'insert' || !event.doc) continue
-                    if (!engine.queryEngine.matchesQuery(event.id, event.doc as T, query)) continue
+                    const doc = await engine.decodeEncrypted(collection, event.doc as T)
+                    if (!engine.queryEngine.matchesQuery(event.id, doc, query)) continue
                     const processed = engine.queryEngine.processDoc(
-                        { [event.id]: event.doc as T } as FyloRecord<T>,
+                        { [event.id]: doc } as FyloRecord<T>,
                         query
                     )
                     if (processed !== undefined) yield processed
@@ -648,7 +657,8 @@ export class S3FilesEngine {
             async *onDelete() {
                 for await (const event of engine.events.listen(collection)) {
                     if (event.action !== 'delete' || !event.doc) continue
-                    if (!engine.queryEngine.matchesQuery(event.id, event.doc as T, query)) continue
+                    const doc = await engine.decodeEncrypted(collection, event.doc as T)
+                    if (!engine.queryEngine.matchesQuery(event.id, doc, query)) continue
                     yield event.id
                 }
             }

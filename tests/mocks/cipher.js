@@ -32,6 +32,9 @@ export class CipherMock {
     static async encrypt(value) {
         return btoa(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
     }
+    static async blindIndex(value) {
+        return `idx.${btoa(value).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')}`
+    }
     static async decrypt(encoded) {
         const b64 = encoded.replace(/-/g, '+').replace(/_/g, '/')
         const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4)
