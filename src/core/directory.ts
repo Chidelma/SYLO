@@ -26,7 +26,7 @@ export class Dir {
                 for (let i = 0; i < fieldValue.length; i++) {
                     let val = String(fieldValue[i]).replaceAll('/', this.SLASH_ASCII)
                     if (Cipher.isConfigured() && Cipher.isEncryptedField(collection, newField)) {
-                        val = await Cipher.encrypt(val, true)
+                        val = await Cipher.blindIndex(val)
                     }
                     keys.data.push(`${_id}/${newField}/${i}/${val}`)
                     keys.indexes.push(`${newField}/${i}/${val}/${_id}`)
@@ -36,7 +36,7 @@ export class Dir {
 
             let val = String(fieldValue).replaceAll('/', this.SLASH_ASCII)
             if (Cipher.isConfigured() && Cipher.isEncryptedField(collection, newField)) {
-                val = await Cipher.encrypt(val, true)
+                val = await Cipher.blindIndex(val)
             }
             keys.data.push(`${_id}/${newField}/${val}`)
             keys.indexes.push(`${newField}/${val}/${_id}`)

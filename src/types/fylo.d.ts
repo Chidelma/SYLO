@@ -62,6 +62,14 @@ interface _fyloOptions {
     syncMode?: _fyloSyncMode
 }
 
+interface _importBulkDataOptions {
+    limit?: number
+    maxBytes?: number
+    allowedProtocols?: string[]
+    allowedHosts?: string[]
+    allowPrivateNetwork?: boolean
+}
+
 declare module '@delma/fylo' {
     export class FyloSyncError extends Error {
         readonly collection: string
@@ -77,6 +85,7 @@ declare module '@delma/fylo' {
     export type FyloSyncHooks<T extends Record<string, any> = Record<string, any>> =
         _fyloSyncHooks<T>
     export type FyloOptions = _fyloOptions
+    export type ImportBulkDataOptions = _importBulkDataOptions
 
     export default class {
         constructor(options?: _fyloOptions)
@@ -102,7 +111,11 @@ declare module '@delma/fylo' {
         createCollection(collection: string): Promise<void>
         dropCollection(collection: string): Promise<void>
 
-        importBulkData(collection: string, url: URL, limit?: number): Promise<number>
+        importBulkData(
+            collection: string,
+            url: URL,
+            limitOrOptions?: number | _importBulkDataOptions
+        ): Promise<number>
 
         exportBulkData<T extends Record<string, any>>(
             collection: string

@@ -94,6 +94,33 @@ For compatibility with older `s3-files` experiments, FYLO still accepts `s3Files
 | `SCHEMA_DIR`        | Directory containing JSON validation schemas                     |
 | `STRICT`            | When truthy, validate documents with `@delma/chex` before writes |
 | `ENCRYPTION_KEY`    | Required when schemas declare `$encrypted` fields                |
+| `CIPHER_SALT`       | Recommended unique salt for field encryption key derivation      |
+
+## Security-sensitive behavior
+
+### Encrypted fields
+
+Schemas can declare encrypted fields with a `$encrypted` array. When a collection schema declares encrypted fields, FYLO fails closed unless `ENCRYPTION_KEY` is set and at least 32 characters long.
+
+Encrypted document values are stored with AES-GCM. Exact-match queries on encrypted fields use keyed HMAC blind indexes, so equality and frequency can still be inferred from index tokens, but plaintext field values are not written to document files, index files, or event journals.
+
+If you are upgrading encrypted collections from a version before `2.1.1`, rewrite encrypted documents or otherwise rebuild affected indexes before relying on `$eq` queries for encrypted fields. Older encrypted document bodies can still be read, but old deterministic encrypted index entries do not match the new HMAC blind-index format.
+
+### Bulk imports
+
+`importBulkData()` is intended for trusted JSON or JSONL sources. By default, HTTP(S) imports reject localhost, private, loopback, link-local, and other private-network addresses, and responses are capped at 50 MiB.
+
+You can tighten the import boundary with explicit options:
+
+```ts
+await fylo.importBulkData('users', new URL('https://data.example.com/users.json'), {
+    limit: 1000,
+    maxBytes: 5 * 1024 * 1024,
+    allowedHosts: ['data.example.com']
+})
+```
+
+Only set `allowPrivateNetwork: true` when the import URL is fully trusted by your application.
 
 ## Syncing to S3-compatible storage
 

@@ -1,0 +1,13 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.git
+.github
+.fylo-data
+db
+dist
+node_modules
+logs
+*.log
+SECURITY_AUDIT.txt

@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
-import { readFile, rm } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import Fylo from '../../src'
 import { createTestRoot } from '../helpers/root'
@@ -44,6 +44,21 @@ describe('Encryption', () => {
         )
         expect(raw).not.toContain('alice@example.com')
         expect(raw).not.toContain('123-45-6789')
+    })
+    test('encrypted values are not plaintext in indexes or event journals', async () => {
+        const index = await readFile(
+            path.join(root, COLLECTION, '.fylo', 'indexes', `${COLLECTION}.idx.json`),
+            'utf8'
+        )
+        const events = await readFile(
+            path.join(root, COLLECTION, '.fylo', 'events', `${COLLECTION}.ndjson`),
+            'utf8'
+        )
+
+        expect(index).not.toContain('alice@example.com')
+        expect(index).not.toContain('123-45-6789')
+        expect(events).not.toContain('alice@example.com')
+        expect(events).not.toContain('123-45-6789')
     })
     test('$eq query works on encrypted field', async () => {
         let found = false
@@ -144,5 +159,33 @@ describe('Encryption', () => {
             }
         }
         expect(found).toBe(true)
+    })
+    test('schema encrypted fields fail closed when ENCRYPTION_KEY is absent', async () => {
+        const previousSchemaDir = process.env.SCHEMA_DIR
+        const previousEncryptionKey = process.env.ENCRYPTION_KEY
+        const schemaRoot = await createTestRoot('fylo-schema-')
+        const collection = `fail-closed-${Date.now()}`
+
+        CipherMock.reset()
+        await writeFile(
+            path.join(schemaRoot, `${collection}.json`),
+            JSON.stringify({ $encrypted: ['secret'] })
+        )
+        process.env.SCHEMA_DIR = schemaRoot
+        delete process.env.ENCRYPTION_KEY
+
+        try {
+            const guardedFylo = new Fylo({ root })
+            await guardedFylo.createCollection(collection)
+            await expect(
+                guardedFylo.putData(collection, { secret: 'do not store' })
+            ).rejects.toThrow('ENCRYPTION_KEY')
+        } finally {
+            if (previousSchemaDir === undefined) delete process.env.SCHEMA_DIR
+            else process.env.SCHEMA_DIR = previousSchemaDir
+            if (previousEncryptionKey === undefined) delete process.env.ENCRYPTION_KEY
+            else process.env.ENCRYPTION_KEY = previousEncryptionKey
+            await rm(schemaRoot, { recursive: true, force: true })
+        }
     })
 })

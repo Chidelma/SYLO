@@ -59,6 +59,15 @@ describe('s3-files engine', () => {
         const result = await fylo.getDoc(POSTS, id).once()
         expect(result[id].body).toBe(longBody)
     })
+    test('importBulkData rejects oversized responses and private-network URLs by default', async () => {
+        const tooLarge = new URL('data:application/json,%5B%7B%22title%22%3A%22x%22%7D%5D')
+        await expect(fylo.importBulkData(POSTS, tooLarge, { maxBytes: 4 })).rejects.toThrow(
+            'exceeded'
+        )
+        await expect(
+            fylo.importBulkData(POSTS, new URL('http://127.0.0.1/data.json'))
+        ).rejects.toThrow('private address')
+    })
     test('stores only user document data in the file body', async () => {
         const id = await fylo.putData(POSTS, {
             title: 'Lean doc',

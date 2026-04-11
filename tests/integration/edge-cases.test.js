@@ -19,6 +19,12 @@ describe('NO-SQL', () => {
         const result = await fylo.getDoc(COLLECTION, fakeId).once()
         expect(Object.keys(result).length).toBe(0)
     })
+    test('GET/DELETE reject invalid document IDs before filesystem access', async () => {
+        expect(() => fylo.getDoc(COLLECTION, '../not-a-ttid')).toThrow('Invalid document ID')
+        await expect(fylo.delDoc(COLLECTION, '../not-a-ttid')).rejects.toThrow(
+            'Invalid document ID'
+        )
+    })
     test('PUT / GET — forward slashes in values round-trip correctly', async () => {
         const original = {
             userId: 1,

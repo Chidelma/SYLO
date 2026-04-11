@@ -76,7 +76,7 @@ export class S3FilesQueryEngine {
     async normalizeQueryValue(collection: string, fieldPath: string, value: unknown) {
         let rawValue = String(value).replaceAll('/', '%2F')
         if (Cipher.isConfigured() && Cipher.isEncryptedField(collection, fieldPath))
-            rawValue = await Cipher.encrypt(rawValue, true)
+            rawValue = await Cipher.blindIndex(rawValue)
         return this.context.normalizeIndexValue(rawValue)
     }
 
