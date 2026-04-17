@@ -122,6 +122,45 @@ await fylo.importBulkData('users', new URL('https://data.example.com/users.json'
 
 Only set `allowPrivateNetwork: true` when the import URL is fully trusted by your application.
 
+### Authentication and authorization
+
+FYLO does not authenticate users directly. Your application should verify sessions, JWTs, OAuth tokens, or API keys before calling FYLO.
+
+After your app has an authenticated identity, FYLO can enforce an authorization policy through `fylo.as(authContext)`. Scoped clients fail closed unless a policy is configured:
+
+```ts
+import Fylo from '@delma/fylo'
+
+const fylo = new Fylo({
+    root: '/mnt/fylo',
+    auth: {
+        authorize({ auth, action, collection, data }) {
+            if (auth.roles?.includes('admin')) return true
+            if (collection !== 'posts') return false
+            if (action === 'doc:create') {
+                return (data as { tenantId?: string }).tenantId === auth.tenantId
+            }
+            return action === 'doc:read' || action === 'doc:find'
+        }
+    }
+})
+
+const user = await verifyRequest(request)
+const db = fylo.as({
+    subjectId: user.id,
+    tenantId: user.tenantId,
+    roles: user.roles
+})
+
+const posts = db.findDocs('posts', {
+    $ops: [{ tenantId: { $eq: user.tenantId } }]
+})
+```
+
+The policy receives actions such as `doc:read`, `doc:create`, `doc:update`, `doc:delete`, `bulk:import`, `bulk:export`, `join:execute`, and `sql:execute`. For multi-tenant applications, store tenant or owner fields in each document and deny broad operations like `sql:execute` unless the caller is trusted.
+
+Authorization does not replace filesystem, mount, or object-store permissions. Anyone with direct access to the FYLO root can still access stored files, so keep OS/S3/IAM permissions tight and use encrypted fields for sensitive values.
+
 ## Syncing to S3-compatible storage
 
 FYLO does **not** ship its own cloud sync engine.

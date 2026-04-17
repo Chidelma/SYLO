@@ -55,9 +55,45 @@ interface _fyloSyncHooks<T extends Record<string, any> = Record<string, any>> {
     onDelete?: (event: _fyloDeleteSyncEvent) => Promise<void> | void
 }
 
+type _fyloAuthAction =
+    | 'collection:create'
+    | 'collection:drop'
+    | 'doc:read'
+    | 'doc:find'
+    | 'doc:create'
+    | 'doc:update'
+    | 'doc:delete'
+    | 'bulk:import'
+    | 'bulk:export'
+    | 'join:execute'
+    | 'sql:execute'
+
+interface _fyloAuthContext {
+    subjectId: string
+    tenantId?: string
+    roles?: string[]
+    [key: string]: unknown
+}
+
+interface _fyloAuthorizeInput {
+    auth: _fyloAuthContext
+    action: _fyloAuthAction
+    collection?: string
+    collections?: string[]
+    docId?: string
+    data?: unknown
+    query?: unknown
+    sql?: string
+}
+
+interface _fyloAuthPolicy {
+    authorize(input: _fyloAuthorizeInput): boolean | Promise<boolean>
+}
+
 interface _fyloOptions {
     root?: string
     s3FilesRoot?: string
+    auth?: _fyloAuthPolicy
     sync?: _fyloSyncHooks
     syncMode?: _fyloSyncMode
 }
@@ -85,7 +121,70 @@ declare module '@delma/fylo' {
     export type FyloSyncHooks<T extends Record<string, any> = Record<string, any>> =
         _fyloSyncHooks<T>
     export type FyloOptions = _fyloOptions
+    export type FyloAuthAction = _fyloAuthAction
+    export type FyloAuthContext = _fyloAuthContext
+    export type FyloAuthorizeInput = _fyloAuthorizeInput
+    export type FyloAuthPolicy = _fyloAuthPolicy
     export type ImportBulkDataOptions = _importBulkDataOptions
+
+    export class FyloAuthError extends Error {
+        readonly action: _fyloAuthAction
+        readonly collection?: string
+        readonly docId?: string
+    }
+
+    export class AuthenticatedFylo {
+        rollback(): Promise<void>
+        createCollection(collection: string): Promise<void>
+        dropCollection(collection: string): Promise<void>
+        getDoc(collection: string, _id: _ttid, onlyId?: boolean): _getDoc
+        findDocs<T extends Record<string, any>>(
+            collection: string,
+            query?: _storeQuery<T>
+        ): _findDocs
+        joinDocs<T extends Record<string, any>, U extends Record<string, any>>(
+            join: _join<T, U>
+        ): Promise<_joinDocs<T, U>>
+        exportBulkData<T extends Record<string, any>>(
+            collection: string
+        ): AsyncGenerator<T, void, unknown>
+        importBulkData(
+            collection: string,
+            url: URL,
+            limitOrOptions?: number | _importBulkDataOptions
+        ): Promise<number>
+        executeSQL<T extends Record<string, any>, U extends Record<string, any> = {}>(
+            SQL: string
+        ): Promise<number | void | any[] | _ttid | Record<any, any>>
+        batchPutData<T extends Record<string, any>>(
+            collection: string,
+            batch: Array<T>
+        ): Promise<_ttid[]>
+        putData<T extends Record<string, any>>(collection: string, data: T): Promise<_ttid>
+        putData<T extends Record<string, any>>(
+            collection: string,
+            data: Record<_ttid, T>
+        ): Promise<_ttid>
+        putData<T extends Record<string, any>>(
+            collection: string,
+            data: Record<_ttid, T> | T,
+            options?: { wait?: boolean; timeoutMs?: number }
+        ): Promise<_ttid>
+        patchDoc<T extends Record<string, any>>(
+            collection: string,
+            newDoc: Record<_ttid, Partial<T>>,
+            oldDoc?: Record<_ttid, T>
+        ): Promise<_ttid>
+        patchDocs<T extends Record<string, any>>(
+            collection: string,
+            updateSchema: _storeUpdate<T>
+        ): Promise<number>
+        delDoc(collection: string, _id: _ttid): Promise<void>
+        delDocs<T extends Record<string, any>>(
+            collection: string,
+            deleteSchema?: _storeDelete<T>
+        ): Promise<number>
+    }
 
     export default class {
         constructor(options?: _fyloOptions)
@@ -110,6 +209,8 @@ declare module '@delma/fylo' {
 
         createCollection(collection: string): Promise<void>
         dropCollection(collection: string): Promise<void>
+
+        as(auth: _fyloAuthContext, policy?: _fyloAuthPolicy): AuthenticatedFylo
 
         importBulkData(
             collection: string,
@@ -138,6 +239,11 @@ declare module '@delma/fylo' {
         putData<T extends Record<string, any>>(
             collection: string,
             data: Record<_ttid, T>
+        ): Promise<_ttid>
+        putData<T extends Record<string, any>>(
+            collection: string,
+            data: Record<_ttid, T> | T,
+            options?: { wait?: boolean; timeoutMs?: number }
         ): Promise<_ttid>
 
         patchDoc<T extends Record<string, any>>(

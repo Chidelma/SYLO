@@ -6,13 +6,17 @@ import path from 'node:path'
 import { Parser } from './core/parser'
 import TTID from '@delma/ttid'
 import Gen from '@delma/chex'
+import { FyloAuthError } from './auth'
 import { Cipher } from './adapters/cipher'
 import { S3FilesEngine } from './engines/s3-files'
 import { validateDocId } from './core/doc-id'
+import type { FyloAuthAction, FyloAuthContext, FyloAuthorizeInput, FyloAuthPolicy } from './auth'
 import type { FyloOptions } from './sync'
 import './core/format'
 import './core/extensions'
 
+export { FyloAuthError } from './auth'
+export type { FyloAuthAction, FyloAuthContext, FyloAuthorizeInput, FyloAuthPolicy } from './auth'
 export { FyloSyncError } from './sync'
 export type {
     FyloDeleteSyncEvent,
@@ -53,8 +57,10 @@ export default class Fylo {
     private static readonly loadedEncryption: Set<string> = new Set()
 
     private readonly engine: S3FilesEngine
+    private readonly authPolicy?: FyloAuthPolicy
 
     constructor(options: FyloOptions = {}) {
+        this.authPolicy = options.auth
         this.engine = new S3FilesEngine(options.root ?? options.s3FilesRoot ?? Fylo.defaultRoot(), {
             sync: options.sync,
             syncMode: options.syncMode
@@ -154,6 +160,11 @@ export default class Fylo {
 
     async dropCollection(collection: string) {
         return await this.engine.dropCollection(collection)
+    }
+
+    as(auth: FyloAuthContext, policy: FyloAuthPolicy | undefined = this.authPolicy) {
+        if (!policy) throw new Error('FYLO auth policy is not configured')
+        return new AuthenticatedFylo(this, auth, policy)
     }
 
     /**
@@ -458,7 +469,12 @@ export default class Fylo {
                 offset += c.length
             }
 
-            const data = JSON.parse(new TextDecoder().decode(body))
+            let data: unknown
+            try {
+                data = JSON.parse(new TextDecoder().decode(body))
+            } catch {
+                throw new Error('Invalid JSON in import response')
+            }
             const items: T[] = Array.isArray(data) ? data : [data]
 
             for (let i = 0; i < items.length; i += Fylo.MAX_CPUS) {
@@ -649,6 +665,11 @@ export default class Fylo {
     async putData<T extends Record<string, any>>(
         collection: string,
         data: Record<_ttid, T> | T,
+        options?: { wait?: boolean; timeoutMs?: number }
+    ): Promise<_ttid>
+    async putData<T extends Record<string, any>>(
+        collection: string,
+        data: Record<_ttid, T> | T,
         options: { wait?: boolean; timeoutMs?: number } = {}
     ): Promise<_ttid> {
         if (options.wait === false) {
@@ -781,5 +802,200 @@ export default class Fylo {
      */
     static findDocs<T extends Record<string, any>>(collection: string, query?: _storeQuery<T>) {
         return Fylo.defaultEngine.findDocs<T>(collection, query)
+    }
+}
+
+export class AuthenticatedFylo {
+    constructor(
+        private readonly fylo: Fylo,
+        private readonly auth: FyloAuthContext,
+        private readonly policy: FyloAuthPolicy
+    ) {}
+
+    private async authorize(input: Omit<FyloAuthorizeInput, 'auth'>) {
+        const args = { auth: this.auth, ...input }
+        if (!(await this.policy.authorize(args))) throw new FyloAuthError(args)
+    }
+
+    private firstDocId(data: Record<string, unknown>) {
+        return Object.keys(data).find((key) => TTID.isTTID(key))
+    }
+
+    async rollback() {
+        return await this.fylo.rollback()
+    }
+
+    async createCollection(collection: string) {
+        await this.authorize({ action: 'collection:create', collection })
+        return await this.fylo.createCollection(collection)
+    }
+
+    async dropCollection(collection: string) {
+        await this.authorize({ action: 'collection:drop', collection })
+        return await this.fylo.dropCollection(collection)
+    }
+
+    getDoc<T extends Record<string, any>>(collection: string, _id: _ttid, onlyId: boolean = false) {
+        validateDocId(_id)
+        const authorize = this.authorize.bind(this)
+        const source = this.fylo.getDoc<T>(collection, _id, onlyId)
+
+        return {
+            async *[Symbol.asyncIterator]() {
+                await authorize({ action: 'doc:read', collection, docId: _id })
+                yield* source
+            },
+            async once() {
+                await authorize({ action: 'doc:read', collection, docId: _id })
+                return await source.once()
+            },
+            async *onDelete() {
+                await authorize({ action: 'doc:read', collection, docId: _id })
+                yield* source.onDelete()
+            }
+        }
+    }
+
+    findDocs<T extends Record<string, any>>(collection: string, query?: _storeQuery<T>) {
+        const authorize = this.authorize.bind(this)
+        const source = this.fylo.findDocs<T>(collection, query)
+
+        return {
+            async *[Symbol.asyncIterator]() {
+                await authorize({ action: 'doc:find', collection, query })
+                yield* source
+            },
+            async *collect() {
+                await authorize({ action: 'doc:find', collection, query })
+                yield* source.collect()
+            },
+            async *onDelete() {
+                await authorize({ action: 'doc:find', collection, query })
+                yield* source.onDelete()
+            }
+        }
+    }
+
+    async joinDocs<T extends Record<string, any>, U extends Record<string, any>>(
+        join: _join<T, U>
+    ) {
+        await this.authorize({
+            action: 'join:execute',
+            collections: [join.$leftCollection, join.$rightCollection],
+            query: join
+        })
+        return await this.fylo.joinDocs(join)
+    }
+
+    async *exportBulkData<T extends Record<string, any>>(collection: string) {
+        await this.authorize({ action: 'bulk:export', collection })
+        yield* this.fylo.exportBulkData<T>(collection)
+    }
+
+    async importBulkData<T extends Record<string, any>>(
+        collection: string,
+        url: URL,
+        limit?: number
+    ): Promise<number>
+    async importBulkData<T extends Record<string, any>>(
+        collection: string,
+        url: URL,
+        options?: ImportBulkDataOptions
+    ): Promise<number>
+    async importBulkData<T extends Record<string, any>>(
+        collection: string,
+        url: URL,
+        limitOrOptions?: number | ImportBulkDataOptions
+    ) {
+        await this.authorize({
+            action: 'bulk:import',
+            collection,
+            data: { url: url.toString(), options: limitOrOptions }
+        })
+        if (typeof limitOrOptions === 'number')
+            return await this.fylo.importBulkData<T>(collection, url, limitOrOptions)
+        return await this.fylo.importBulkData<T>(collection, url, limitOrOptions)
+    }
+
+    async executeSQL<
+        T extends Record<string, any>,
+        U extends Record<string, any> = Record<string, unknown>
+    >(SQL: string) {
+        await this.authorize({ action: 'sql:execute', sql: SQL })
+        return await this.fylo.executeSQL<T, U>(SQL)
+    }
+
+    async batchPutData<T extends Record<string, any>>(collection: string, batch: Array<T>) {
+        await this.authorize({ action: 'doc:create', collection, data: batch })
+        return await this.fylo.batchPutData(collection, batch)
+    }
+
+    async putData<T extends Record<string, any>>(collection: string, data: T): Promise<_ttid>
+    async putData<T extends Record<string, any>>(
+        collection: string,
+        data: Record<_ttid, T>
+    ): Promise<_ttid>
+    async putData<T extends Record<string, any>>(
+        collection: string,
+        data: Record<_ttid, T> | T,
+        options?: { wait?: boolean; timeoutMs?: number }
+    ): Promise<_ttid>
+    async putData<T extends Record<string, any>>(
+        collection: string,
+        data: Record<_ttid, T> | T,
+        options: { wait?: boolean; timeoutMs?: number } = {}
+    ): Promise<_ttid> {
+        await this.authorize({
+            action: 'doc:create',
+            collection,
+            docId: this.firstDocId(data),
+            data
+        })
+        return await this.fylo.putData(collection, data, options)
+    }
+
+    async patchDoc<T extends Record<string, any>>(
+        collection: string,
+        newDoc: Record<_ttid, Partial<T>>,
+        oldDoc: Record<_ttid, T> = {},
+        options: { wait?: boolean; timeoutMs?: number } = {}
+    ): Promise<_ttid> {
+        await this.authorize({
+            action: 'doc:update',
+            collection,
+            docId: this.firstDocId(newDoc),
+            data: newDoc
+        })
+        return await this.fylo.patchDoc(collection, newDoc, oldDoc, options)
+    }
+
+    async patchDocs<T extends Record<string, any>>(
+        collection: string,
+        updateSchema: _storeUpdate<T>
+    ) {
+        await this.authorize({
+            action: 'doc:update',
+            collection,
+            query: updateSchema.$where,
+            data: updateSchema.$set
+        })
+        return await this.fylo.patchDocs(collection, updateSchema)
+    }
+
+    async delDoc(
+        collection: string,
+        _id: _ttid,
+        options: { wait?: boolean; timeoutMs?: number } = {}
+    ): Promise<void> {
+        await this.authorize({ action: 'doc:delete', collection, docId: _id })
+        return await this.fylo.delDoc(collection, _id, options)
+    }
+
+    async delDocs<T extends Record<string, any>>(
+        collection: string,
+        deleteSchema?: _storeDelete<T>
+    ) {
+        await this.authorize({ action: 'doc:delete', collection, query: deleteSchema })
+        return await this.fylo.delDocs(collection, deleteSchema)
     }
 }

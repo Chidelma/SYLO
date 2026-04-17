@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import Fylo from '../../src'
@@ -68,6 +68,12 @@ describe('s3-files engine', () => {
             fylo.importBulkData(POSTS, new URL('http://127.0.0.1/data.json'))
         ).rejects.toThrow('private address')
     })
+    test('importBulkData reports malformed JSON with a sanitized error', async () => {
+        const invalidJson = new URL('data:application/json,%5Bnot-json')
+        await expect(fylo.importBulkData(POSTS, invalidJson)).rejects.toThrow(
+            'Invalid JSON in import response'
+        )
+    })
     test('stores only user document data in the file body', async () => {
         const id = await fylo.putData(POSTS, {
             title: 'Lean doc',
@@ -94,6 +100,25 @@ describe('s3-files engine', () => {
         )
         expect(indexStat.isFile()).toBe(true)
         await expect(stat(path.join(root, POSTS, '.fylo', 'index.db'))).rejects.toThrow()
+    })
+    test('corrupted index files report sanitized errors', async () => {
+        const corruptCollection = 's3files-corrupt-index'
+        await fylo.createCollection(corruptCollection)
+        await writeFile(
+            path.join(root, corruptCollection, '.fylo', 'indexes', `${corruptCollection}.idx.json`),
+            '{not-json',
+            'utf8'
+        )
+
+        const iter = fylo
+            .findDocs(corruptCollection, {
+                $ops: [{ title: { $eq: 'anything' } }]
+            })
+            .collect()
+
+        await expect(iter.next()).rejects.toThrow(
+            `Invalid FYLO index file for collection: ${corruptCollection}`
+        )
     })
     test('uses the collection index file to support exact, range, and contains queries', async () => {
         const queryCollection = 's3files-query'
