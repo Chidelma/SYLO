@@ -1,3 +1,5 @@
+import type { FyloAuthPolicy } from './auth'
+
 export type FyloSyncMode = 'await-sync' | 'fire-and-forget'
 
 export interface FyloWriteSyncEvent<T extends Record<string, any> = Record<string, any>> {
@@ -24,6 +26,7 @@ export interface FyloSyncHooks<T extends Record<string, any> = Record<string, an
 export interface FyloOptions<T extends Record<string, any> = Record<string, any>> {
     root?: string
     s3FilesRoot?: string
+    auth?: FyloAuthPolicy
     sync?: FyloSyncHooks<T>
     syncMode?: FyloSyncMode
 }

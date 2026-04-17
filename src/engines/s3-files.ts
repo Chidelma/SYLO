@@ -238,9 +238,14 @@ export class S3FilesEngine {
         const cache = this.createEmptyIndexCache()
 
         try {
-            const raw = JSON.parse(await this.storage.read(this.indexFilePath(collection))) as
-                | StoredCollectionIndex
-                | undefined
+            const indexPayload = await this.storage.read(this.indexFilePath(collection))
+            let raw: StoredCollectionIndex | undefined
+
+            try {
+                raw = JSON.parse(indexPayload) as StoredCollectionIndex | undefined
+            } catch {
+                throw new Error(`Invalid FYLO index file for collection: ${collection}`)
+            }
 
             if (raw?.version === 1 && raw.docs) {
                 for (const [docId, entries] of Object.entries(raw.docs) as Array<
