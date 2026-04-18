@@ -43,8 +43,8 @@ jobs:
     name: NightJar blackbox tests
     runs-on: ubuntu-latest
     env:
-      BLACKBOX_REPOSITORY: ${{ vars.FYLO_BLACKBOX_REPOSITORY || secrets.FYLO_BLACKBOX_REPOSITORY || vars.NIGHTJAR_BLACKBOX_REPOSITORY || secrets.NIGHTJAR_BLACKBOX_REPOSITORY }}
-      BLACKBOX_SSH_KEY: ${{ secrets.FYLO_BLACKBOX_SSH_KEY || secrets.NIGHTJAR_BLACKBOX_SSH_KEY }}
+      BLACKBOX_REPOSITORY: ${{ vars.BLACKBOX_REPOSITORY }}
+      BLACKBOX_SSH_KEY: ${{ secrets.BLACKBOX_SSH_KEY }}
     steps:
       - name: Checkout FYLO
         uses: actions/checkout@v4
@@ -70,11 +70,11 @@ jobs:
       - name: Require private blackbox credentials
         run: |
           if [ -z "$BLACKBOX_REPOSITORY" ]; then
-            echo "::error::Missing FYLO_BLACKBOX_REPOSITORY/NIGHTJAR_BLACKBOX_REPOSITORY variable or secret"
+            echo "::error::Missing BLACKBOX_REPOSITORY variable"
             exit 1
           fi
           if [ -z "$BLACKBOX_SSH_KEY" ]; then
-            echo "::error::Missing FYLO_BLACKBOX_SSH_KEY or NIGHTJAR_BLACKBOX_SSH_KEY secret"
+            echo "::error::Missing BLACKBOX_SSH_KEY secret"
             exit 1
           fi
 
