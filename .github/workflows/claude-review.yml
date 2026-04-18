@@ -83,10 +83,12 @@ jobs:
             PR NUMBER: ${{ github.event.pull_request.number }}
 
             Review this pull request now that the other checks have passed.
-            Focus on correctness, regressions, security, performance, maintainability, and missing tests.
-            Do not leave purely stylistic comments unless they point to a concrete bug or risk.
-            Use inline comments for specific actionable findings.
-            Use a single top-level PR comment for the summary, including when there are no findings.
+
+            Start from the PR diff, then inspect the surrounding project code needed to understand system-level impact. Evaluate how these changes affect the whole project, including existing public APIs, data flows, persistence, build and deploy behavior, tests, documentation, security boundaries, performance, and backwards compatibility.
+
+            Focus on correctness, regressions, security, performance, maintainability, and missing tests. Do not leave purely stylistic comments unless they point to a concrete bug or risk.
+
+            Use inline comments for specific actionable findings. Use a single top-level PR comment for the summary, including when there are no findings. In the summary, briefly state what project areas you inspected beyond the diff.
           claude_args: |
             --max-turns 6
             --model claude-opus-4-7
