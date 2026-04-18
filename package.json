@@ -33,7 +33,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Chidelma/Fylo.git"
+    "url": "git+https://github.com/d31ma/Fylo.git"
   },
   "homepage": "https://fylo.del.ma",
   "license": "MIT",
@@ -47,6 +47,6 @@
   ],
   "author": "Chidelma",
   "bugs": {
-    "url": "https://github.com/Chidelma/Fylo/issues"
+    "url": "https://github.com/d31ma/Fylo/issues"
   }
 }
