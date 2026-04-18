@@ -2,7 +2,8 @@ name: Publish
 
 on:
   push:
-    branches: [release/*]
+    branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:
@@ -96,12 +97,45 @@ jobs:
             bun test fylo --timeout 120000
           fi
 
+  version:
+    name: Read version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read.outputs.version }}
+      tag_exists: ${{ steps.check.outputs.exists }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read package version
+        id: read
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Check version tag
+        id: check
+        env:
+          TAG: v${{ steps.read.outputs.version }}
+        run: |
+          if git rev-parse "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $TAG already exists; skipping publish and release."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
-    needs: [test, blackbox]
+    needs: [test, blackbox, version]
+    if: needs.version.outputs.tag_exists == 'false'
     permissions:
-      contents: write   # create git tags
+      contents: read
       id-token: write   # npm provenance
 
     steps:
@@ -127,34 +161,39 @@ jobs:
       - name: Upgrade npm
         run: npm install -g npm@latest
 
-      - name: Resolve version from branch
-        id: version
-        run: |
-          BRANCH="${GITHUB_REF#refs/heads/}"
-          VERSION="${BRANCH#release/}"
-          PKG_VERSION=$(bun -e "console.log(require('./package.json').version)")
-          if [ "$VERSION" != "$PKG_VERSION" ]; then
-            echo "Branch version ($VERSION) does not match package.json ($PKG_VERSION). Skipping publish."
-            exit 1
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
       - name: Publish to npm (Trusted Publishing via OIDC)
         run: |
           echo "registry=https://registry.npmjs.org/" >> ~/.npmrc
           npm publish --access public --provenance
 
+  github-release:
+    name: Create GitHub release
+    runs-on: ubuntu-latest
+    needs: [version, publish]
+    if: needs.version.outputs.tag_exists == 'false'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Create and push version tag
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -f -a "v${{ steps.version.outputs.version }}" -m "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}" --force
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin "v$VERSION"
 
       - name: Create GitHub release
-        run: |
-          gh release create "v${{ steps.version.outputs.version }}" \
-            --title "v${{ steps.version.outputs.version }}" \
-            --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --generate-notes
