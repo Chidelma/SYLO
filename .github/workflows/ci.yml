@@ -38,3 +38,66 @@ jobs:
 
       - name: Run tests
         run: bun test
+
+  blackbox:
+    name: NightJar blackbox tests
+    runs-on: ubuntu-latest
+    env:
+      BLACKBOX_REPOSITORY: ${{ vars.FYLO_BLACKBOX_REPOSITORY || secrets.FYLO_BLACKBOX_REPOSITORY || vars.NIGHTJAR_BLACKBOX_REPOSITORY || secrets.NIGHTJAR_BLACKBOX_REPOSITORY }}
+      BLACKBOX_SSH_KEY: ${{ secrets.FYLO_BLACKBOX_SSH_KEY || secrets.NIGHTJAR_BLACKBOX_SSH_KEY }}
+    steps:
+      - name: Checkout FYLO
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build package
+        run: bun run build
+
+      - name: Pack package under test
+        id: pack
+        run: |
+          npm pack --json --ignore-scripts > /tmp/fylo-pack.json
+          filename=$(node -e "console.log(require('/tmp/fylo-pack.json')[0].filename)")
+          echo "tarball=$PWD/$filename" >> "$GITHUB_OUTPUT"
+
+      - name: Require private blackbox credentials
+        run: |
+          if [ -z "$BLACKBOX_REPOSITORY" ]; then
+            echo "::error::Missing FYLO_BLACKBOX_REPOSITORY/NIGHTJAR_BLACKBOX_REPOSITORY variable or secret"
+            exit 1
+          fi
+          if [ -z "$BLACKBOX_SSH_KEY" ]; then
+            echo "::error::Missing FYLO_BLACKBOX_SSH_KEY or NIGHTJAR_BLACKBOX_SSH_KEY secret"
+            exit 1
+          fi
+
+      - name: Checkout private blackbox suite
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.BLACKBOX_REPOSITORY }}
+          ssh-key: ${{ env.BLACKBOX_SSH_KEY }}
+          ref: ${{ vars.FYLO_BLACKBOX_REF || vars.NIGHTJAR_BLACKBOX_REF || 'main' }}
+          path: .blackbox-tests
+
+      - name: Run FYLO blackbox tests
+        working-directory: .blackbox-tests
+        env:
+          FYLO_PACKAGE_TARBALL: ${{ steps.pack.outputs.tarball }}
+          NIGHTJAR_SUITE: fylo
+        run: |
+          if [ -f package.json ] || [ -f bun.lock ] || [ -f bun.lockb ]; then
+            bun install --frozen-lockfile
+          fi
+
+          if [ -f package.json ] && jq -e '.scripts.blackbox' package.json >/dev/null; then
+            bun run blackbox
+          else
+            bun test fylo --timeout 120000
+          fi
