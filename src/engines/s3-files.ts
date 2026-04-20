@@ -1,7 +1,7 @@
 import { rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
-import TTID from '@delma/ttid'
+import TTID from '@d31ma/ttid'
 import { Dir } from '../core/directory'
 import { validateCollectionName } from '../core/collection'
 import { assertPathInside, validateDocId } from '../core/doc-id'

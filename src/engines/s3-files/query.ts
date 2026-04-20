@@ -1,4 +1,4 @@
-import TTID from '@delma/ttid'
+import TTID from '@d31ma/ttid'
 import { Cipher } from '../../adapters/cipher'
 import type { CollectionIndexCache, FyloRecord, S3FilesQueryResult } from './types'
 

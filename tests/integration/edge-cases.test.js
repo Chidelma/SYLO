@@ -1,7 +1,7 @@
 import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import { rm } from 'node:fs/promises'
 import Fylo from '../../src'
-import TTID from '@delma/ttid'
+import TTID from '@d31ma/ttid'
 import { createTestRoot } from '../helpers/root'
 const COLLECTION = 'ec-test'
 const root = await createTestRoot('fylo-edge-')

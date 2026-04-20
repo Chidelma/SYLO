@@ -106,7 +106,7 @@ interface _importBulkDataOptions {
     allowPrivateNetwork?: boolean
 }
 
-declare module '@delma/fylo' {
+declare module '@d31ma/fylo' {
     export class FyloSyncError extends Error {
         readonly collection: string
         readonly docId: _ttid

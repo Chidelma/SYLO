@@ -37,13 +37,20 @@ Instead, each collection looks like this:
 ## Installation
 
 ```bash
-bun add @delma/fylo
+bun add @d31ma/fylo
+```
+
+If you install the package from GitHub Packages, configure your `.npmrc` first:
+
+```text
+@d31ma:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
 ```
 
 ## Basic usage
 
 ```ts
-import Fylo from '@delma/fylo'
+import Fylo from '@d31ma/fylo'
 
 const fylo = new Fylo({
     root: '/mnt/fylo'
@@ -92,7 +99,7 @@ For compatibility with older `s3-files` experiments, FYLO still accepts `s3Files
 | `FYLO_ROOT`         | Preferred filesystem root for collections                        |
 | `FYLO_S3FILES_ROOT` | Backward-compatible alias for `FYLO_ROOT`                        |
 | `SCHEMA_DIR`        | Directory containing JSON validation schemas                     |
-| `STRICT`            | When truthy, validate documents with `@delma/chex` before writes |
+| `STRICT`            | When truthy, validate documents with `@d31ma/chex` before writes |
 | `ENCRYPTION_KEY`    | Required when schemas declare `$encrypted` fields                |
 | `CIPHER_SALT`       | Recommended unique salt for field encryption key derivation      |
 
@@ -129,7 +136,7 @@ FYLO does not authenticate users directly. Your application should verify sessio
 After your app has an authenticated identity, FYLO can enforce an authorization policy through `fylo.as(authContext)`. Scoped clients fail closed unless a policy is configured:
 
 ```ts
-import Fylo from '@delma/fylo'
+import Fylo from '@d31ma/fylo'
 
 const fylo = new Fylo({
     root: '/mnt/fylo',
@@ -188,7 +195,7 @@ That means you can choose the sync tool that matches your infrastructure:
 If you want FYLO to notify your own S3 client on document writes, you can plug in sync hooks:
 
 ```ts
-import Fylo from '@delma/fylo'
+import Fylo from '@d31ma/fylo'
 
 const fylo = new Fylo({
     root: '/mnt/fylo',

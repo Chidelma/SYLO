@@ -1,5 +1,5 @@
 import path from 'node:path'
-import TTID from '@delma/ttid'
+import TTID from '@d31ma/ttid'
 import { assertPathInside, validateDocId } from '../../core/doc-id'
 import type { StorageEngine } from '../types'
 import type { StoredDoc } from './types'
