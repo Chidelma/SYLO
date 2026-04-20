@@ -6,10 +6,16 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   test:
     name: Test (Bun ${{ matrix.bun-version }})
     runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     strategy:
       matrix:
@@ -18,6 +24,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@d31ma'
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -45,9 +58,17 @@ jobs:
     env:
       BLACKBOX_REPOSITORY: ${{ vars.BLACKBOX_REPOSITORY }}
       BLACKBOX_SSH_KEY: ${{ secrets.BLACKBOX_SSH_KEY }}
+      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout FYLO
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@d31ma'
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
