@@ -6,10 +6,16 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  packages: read
+
 jobs:
   test:
     name: Test (Bun ${{ matrix.bun-version }})
     runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     strategy:
       matrix:
@@ -18,6 +24,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@d31ma'
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -45,9 +58,17 @@ jobs:
     env:
       BLACKBOX_REPOSITORY: ${{ vars.BLACKBOX_REPOSITORY }}
       BLACKBOX_SSH_KEY: ${{ secrets.BLACKBOX_SSH_KEY }}
+      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout FYLO
         uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@d31ma'
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -85,6 +106,29 @@ jobs:
           ssh-key: ${{ env.BLACKBOX_SSH_KEY }}
           ref: ${{ vars.FYLO_BLACKBOX_REF || vars.NIGHTJAR_BLACKBOX_REF || 'main' }}
           path: .blackbox-tests
+
+      - name: Patch FYLO blackbox helper for GitHub Packages
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+          const helperPath = '.blackbox-tests/fylo/helpers.mjs'
+          const source = fs.readFileSync(helperPath, 'utf8')
+          const marker = "  const install = run('bun', ['add', tarball], { cwd: root })\n"
+          const injected =
+            "  await writeFile(\n" +
+            "    path.join(root, '.npmrc'),\n" +
+            "    '@d31ma:registry=https://npm.pkg.github.com\\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\\n'\n" +
+            "  )\n\n" +
+            marker
+          if (!source.includes(marker)) throw new Error(`Unexpected helper format in ${helperPath}`)
+          fs.writeFileSync(helperPath, source.replace(marker, injected))
+          for (const entry of fs.readdirSync('.blackbox-tests/fylo')) {
+            if (!entry.endsWith('.mjs')) continue
+            const filePath = `.blackbox-tests/fylo/${entry}`
+            const fileSource = fs.readFileSync(filePath, 'utf8')
+            fs.writeFileSync(filePath, fileSource.replaceAll('@delma/fylo', '@d31ma/fylo'))
+          }
+          NODE
 
       - name: Run FYLO blackbox tests
         working-directory: .blackbox-tests

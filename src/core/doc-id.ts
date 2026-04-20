@@ -1,5 +1,5 @@
 import path from 'node:path'
-import TTID from '@delma/ttid'
+import TTID from '@d31ma/ttid'
 
 export function validateDocId(docId: string): asserts docId is _ttid {
     if (!TTID.isTTID(docId)) throw new Error(`Invalid document ID: ${docId}`)

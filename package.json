@@ -1,6 +1,6 @@
 {
-  "name": "@delma/fylo",
-  "version": "2.2.0",
+  "name": "@d31ma/fylo",
+  "version": "2.2.1",
   "main": "./dist/index.js",
   "types": "./dist/types/index.d.ts",
   "bin": {
@@ -24,8 +24,8 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@delma/chex": "0.3.3",
-    "@delma/ttid": "1.3.4"
+    "@d31ma/chex": "0.4.1",
+    "@d31ma/ttid": "1.3.7"
   },
   "type": "module",
   "peerDependencies": {
@@ -34,6 +34,9 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/d31ma/Fylo.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   },
   "homepage": "https://fylo.del.ma",
   "license": "MIT",

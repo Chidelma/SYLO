@@ -1,4 +1,4 @@
-declare module '@delma/ttid' {
+declare module '@d31ma/ttid' {
     export type _ttid = string | `${string}-${string}` | `${string}-${string}-${string}`
 
     export interface _timestamps {
@@ -15,7 +15,7 @@ declare module '@delma/ttid' {
     }
 }
 
-declare module '@delma/chex' {
+declare module '@d31ma/chex' {
     export default class Gen {
         static generateDeclaration(json: unknown, interfaceName?: string): string
         static sanitizePropertyName(key: string): string
@@ -28,5 +28,5 @@ declare module '@delma/chex' {
     }
 }
 
-type _ttid = import('@delma/ttid')._ttid
-type _timestamps = import('@delma/ttid')._timestamps
+type _ttid = import('@d31ma/ttid')._ttid
+type _timestamps = import('@d31ma/ttid')._timestamps

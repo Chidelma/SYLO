@@ -1,4 +1,4 @@
-import TTID from '@delma/ttid'
+import TTID from '@d31ma/ttid'
 
 class Format {
     static table(docs: Record<string, any>) {
