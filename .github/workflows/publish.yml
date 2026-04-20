@@ -13,7 +13,7 @@ jobs:
       contents: read
       packages: read
     env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout
@@ -48,7 +48,7 @@ jobs:
     env:
       BLACKBOX_REPOSITORY: ${{ vars.BLACKBOX_REPOSITORY }}
       BLACKBOX_SSH_KEY: ${{ secrets.BLACKBOX_SSH_KEY }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout FYLO
         uses: actions/checkout@v4
@@ -147,7 +147,7 @@ jobs:
       contents: read
       packages: write
     env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
       - name: Checkout
