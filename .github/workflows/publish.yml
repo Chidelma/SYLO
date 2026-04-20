@@ -90,11 +90,20 @@ jobs:
           ref: ${{ vars.FYLO_BLACKBOX_REF || vars.NIGHTJAR_BLACKBOX_REF || 'main' }}
           path: .blackbox-tests
 
+      - name: Configure scoped registry for blackbox consumers
+        working-directory: .blackbox-tests
+        run: |
+          cat > .npmrc <<'EOF'
+          @d31ma:registry=https://npm.pkg.github.com
+          //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+          EOF
+
       - name: Run FYLO blackbox tests
         working-directory: .blackbox-tests
         env:
           FYLO_PACKAGE_TARBALL: ${{ steps.pack.outputs.tarball }}
           NIGHTJAR_SUITE: fylo
+          NPM_CONFIG_USERCONFIG: ${{ github.workspace }}/.blackbox-tests/.npmrc
         run: |
           if [ -f package.json ] || [ -f bun.lock ] || [ -f bun.lockb ]; then
             bun install --frozen-lockfile
