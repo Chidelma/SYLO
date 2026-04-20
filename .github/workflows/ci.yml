@@ -107,12 +107,22 @@ jobs:
           ref: ${{ vars.FYLO_BLACKBOX_REF || vars.NIGHTJAR_BLACKBOX_REF || 'main' }}
           path: .blackbox-tests
 
-      - name: Configure scoped registry for blackbox consumers
+      - name: Patch FYLO blackbox helper for GitHub Packages
         run: |
-          cat > "$HOME/.npmrc" <<'EOF'
-          @d31ma:registry=https://npm.pkg.github.com
-          //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
-          EOF
+          node <<'NODE'
+          const fs = require('node:fs')
+          const helperPath = '.blackbox-tests/fylo/helpers.mjs'
+          const source = fs.readFileSync(helperPath, 'utf8')
+          const marker = "  const install = run('bun', ['add', tarball], { cwd: root })\n"
+          const injected =
+            "  await writeFile(\n" +
+            "    path.join(root, '.npmrc'),\n" +
+            "    '@d31ma:registry=https://npm.pkg.github.com\\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\\n'\n" +
+            "  )\n\n" +
+            marker
+          if (!source.includes(marker)) throw new Error(`Unexpected helper format in ${helperPath}`)
+          fs.writeFileSync(helperPath, source.replace(marker, injected))
+          NODE
 
       - name: Run FYLO blackbox tests
         working-directory: .blackbox-tests
