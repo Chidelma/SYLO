@@ -10,10 +10,15 @@ permissions:
   contents: read
   packages: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Test (Bun ${{ matrix.bun-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -23,12 +28,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@d31ma'
 
@@ -52,21 +57,44 @@ jobs:
       - name: Run tests
         run: bun test
 
-  blackbox:
+  blackbox-config:
+    name: Detect blackbox configuration
+    runs-on: ubuntu-latest
+    outputs:
+      enabled: ${{ steps.detect.outputs.enabled }}
+    env:
+      BLACKBOX_REPOSITORY: ${{ vars.FYLO_BLACKBOX_REPOSITORY || secrets.FYLO_BLACKBOX_REPOSITORY || vars.BLACKBOX_REPOSITORY || secrets.BLACKBOX_REPOSITORY || vars.NIGHTJAR_BLACKBOX_REPOSITORY || secrets.NIGHTJAR_BLACKBOX_REPOSITORY }}
+      BLACKBOX_SSH_KEY: ${{ secrets.FYLO_BLACKBOX_SSH_KEY || secrets.BLACKBOX_SSH_KEY || secrets.NIGHTJAR_BLACKBOX_SSH_KEY }}
+
+    steps:
+      - id: detect
+        name: Check private suite credentials
+        run: |
+          if [ -n "$BLACKBOX_REPOSITORY" ] && [ -n "$BLACKBOX_SSH_KEY" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Blackbox configuration not present; skipping private package validation."
+          fi
+
+  package-blackbox:
     name: NightJar blackbox tests
     runs-on: ubuntu-latest
+    needs: blackbox-config
+    if: needs.blackbox-config.outputs.enabled == 'true'
+    timeout-minutes: 20
     env:
-      BLACKBOX_REPOSITORY: ${{ vars.BLACKBOX_REPOSITORY }}
-      BLACKBOX_SSH_KEY: ${{ secrets.BLACKBOX_SSH_KEY }}
+      BLACKBOX_REPOSITORY: ${{ vars.FYLO_BLACKBOX_REPOSITORY || secrets.FYLO_BLACKBOX_REPOSITORY || vars.BLACKBOX_REPOSITORY || secrets.BLACKBOX_REPOSITORY || vars.NIGHTJAR_BLACKBOX_REPOSITORY || secrets.NIGHTJAR_BLACKBOX_REPOSITORY }}
+      BLACKBOX_SSH_KEY: ${{ secrets.FYLO_BLACKBOX_SSH_KEY || secrets.BLACKBOX_SSH_KEY || secrets.NIGHTJAR_BLACKBOX_SSH_KEY }}
       NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout FYLO
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@d31ma'
 
@@ -100,11 +128,11 @@ jobs:
           fi
 
       - name: Checkout private blackbox suite
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: ${{ env.BLACKBOX_REPOSITORY }}
           ssh-key: ${{ env.BLACKBOX_SSH_KEY }}
-          ref: ${{ vars.FYLO_BLACKBOX_REF || vars.NIGHTJAR_BLACKBOX_REF || 'main' }}
+          ref: ${{ vars.FYLO_BLACKBOX_REF || vars.BLACKBOX_REF || vars.NIGHTJAR_BLACKBOX_REF || 'main' }}
           path: .blackbox-tests
 
       - name: Patch FYLO blackbox helper for GitHub Packages
