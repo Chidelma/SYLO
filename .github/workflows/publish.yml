@@ -105,6 +105,12 @@ jobs:
             marker
           if (!source.includes(marker)) throw new Error(`Unexpected helper format in ${helperPath}`)
           fs.writeFileSync(helperPath, source.replace(marker, injected))
+          for (const entry of fs.readdirSync('.blackbox-tests/fylo')) {
+            if (!entry.endsWith('.mjs')) continue
+            const filePath = `.blackbox-tests/fylo/${entry}`
+            const fileSource = fs.readFileSync(filePath, 'utf8')
+            fs.writeFileSync(filePath, fileSource.replaceAll('@delma/fylo', '@d31ma/fylo'))
+          }
           NODE
 
       - name: Run FYLO blackbox tests
