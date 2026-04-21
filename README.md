@@ -34,6 +34,22 @@ Instead, each collection looks like this:
       <collection>.ndjson
 ```
 
+When WORM mode is enabled, FYLO also keeps lineage metadata:
+
+```text
+<root>/<collection>/
+  .fylo/
+    docs/
+    versions/
+      <version-id>.meta.json
+    heads/
+      <lineage-id>.json
+    indexes/
+      <collection>.idx.json
+    events/
+      <collection>.ndjson
+```
+
 ## Installation
 
 ```bash
@@ -46,6 +62,11 @@ If you install the package from GitHub Packages, configure your `.npmrc` first:
 @d31ma:registry=https://npm.pkg.github.com
 //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
 ```
+
+FYLO publishes two CLI entrypoints:
+
+- `fylo.query` for SQL and admin commands
+- `fylo.admin` as an explicit admin alias for operational flows
 
 ## Basic usage
 
@@ -168,6 +189,53 @@ The policy receives actions such as `doc:read`, `doc:create`, `doc:update`, `doc
 
 Authorization does not replace filesystem, mount, or object-store permissions. Anyone with direct access to the FYLO root can still access stored files, so keep OS/S3/IAM permissions tight and use encrypted fields for sensitive values.
 
+If you expose FYLO rebuild tooling in a multi-tenant app, treat it as an administrative action. The policy action name for that path is `collection:rebuild`.
+
+## WORM mode
+
+WORM mode makes FYLO append-only at the logical document level.
+
+- every update writes a new immutable document version
+- FYLO keeps one logical head per lineage for normal queries
+- `getDoc(versionId)` can still read a specific retained version directly
+- `getLatest()` resolves the current head for a version or lineage ID
+- `getHistory()` walks the retained version chain from newest to oldest
+
+Timestamp note:
+
+- `createdAt` and `updatedAt` come from the TTID, which is also the document filename
+- FYLO does not use filesystem metadata such as `mtime` for query semantics
+- that keeps timestamp behavior stable across sync tools, copies, restores, and object-store rewrites
+
+Enable it like this:
+
+```ts
+const fylo = new Fylo({
+    root: '/mnt/fylo',
+    worm: {
+        mode: 'append-only',
+        deletePolicy: 'tombstone'
+    }
+})
+```
+
+There are two WORM delete policies:
+
+- `reject`: `delDoc()` and `delDocs()` throw
+- `tombstone`: FYLO removes the head from active query results while preserving retained versions and history
+
+Example:
+
+```ts
+const firstId = await fylo.putData('posts', { title: 'v1' })
+const secondId = await fylo.patchDoc('posts', {
+    [firstId]: { title: 'v2' }
+})
+
+const latest = await fylo.getLatest('posts', firstId)
+const history = await fylo.getHistory('posts', secondId)
+```
+
 ## Syncing to S3-compatible storage
 
 FYLO does **not** ship its own cloud sync engine.
@@ -216,6 +284,29 @@ const fylo = new Fylo({
     }
 })
 ```
+
+In WORM mode, sync hooks include extra lineage metadata under `event.worm`:
+
+```ts
+sync: {
+    async onWrite(event) {
+        if (event.worm?.headOperation === 'advance') {
+            console.log('new version', event.docId, 'advanced lineage', event.worm.lineageId)
+        }
+    },
+    async onDelete(event) {
+        if (event.worm?.deleteMode === 'tombstone') {
+            console.log('lineage tombstoned at', event.worm.headPath)
+        }
+    }
+}
+```
+
+Important sync detail:
+
+- non-WORM patches still emit a delete for the old document file and a write for the new file
+- WORM patches emit only the new version write plus `event.worm.headOperation = 'advance'`
+- WORM tombstones emit a logical delete against the head path, with the retained version file exposed as `event.worm.versionPath`
 
 There are two sync modes:
 
@@ -304,6 +395,8 @@ That means:
 - contains-style queries can use indexed candidates
 - final document validation still happens before returning results
 
+For timestamp filters such as `$created` and `$updated`, FYLO derives the values from the TTID rather than the underlying file metadata.
+
 This is why FYLO behaves more like an application document store than a data warehouse.
 
 ## Realtime behavior
@@ -339,6 +432,90 @@ This part is important:
 - index files can be rebuilt
 
 That means FYLO is designed so that the system can recover from index drift without treating the index as a sacred durable database.
+
+Use `rebuildCollection()` when:
+
+- the index file drifts from document reality
+- WORM head files or version metadata need to be normalized
+- you want to repair retained lineage metadata after a manual filesystem recovery
+
+Rebuild timestamp rule:
+
+- FYLO rebuilds timestamp behavior from TTIDs
+- it does not trust filesystem metadata like `mtime` as the source of `createdAt` or `updatedAt`
+
+```ts
+const result = await fylo.rebuildCollection('posts')
+console.log(result)
+```
+
+`rebuildCollection()`:
+
+- scans retained document files
+- rebuilds the collection index from scratch
+- in WORM mode, rewrites head files and version metadata
+- preserves tombstoned lineages by carrying forward retained `deletedAt` metadata
+
+Typical result shape:
+
+```ts
+{
+    collection: 'posts',
+    worm: true,
+    docsScanned: 42,
+    indexedDocs: 30,
+    headsRebuilt: 30,
+    versionMetasRebuilt: 42,
+    staleHeadsRemoved: 1,
+    staleVersionMetasRemoved: 0
+}
+```
+
+You can also run rebuilds from the bundled CLI:
+
+```bash
+fylo.admin rebuild posts --root /mnt/fylo --json
+```
+
+Or:
+
+```bash
+fylo.query rebuild posts --root /mnt/fylo
+```
+
+`fylo.query` remains backward-compatible with raw SQL input:
+
+```bash
+fylo.query "SELECT * FROM posts WHERE published = true"
+fylo.query sql "SELECT * FROM posts WHERE published = true"
+```
+
+Admin commands also support direct collection inspection and version navigation:
+
+```bash
+fylo.admin inspect posts --root /mnt/fylo --json
+fylo.admin get posts 4UUB32VGUDW --root /mnt/fylo --json
+fylo.admin latest posts 4UUB32VGUDW --root /mnt/fylo --worm --json
+fylo.admin latest posts 4UUB32VGUDW --root /mnt/fylo --worm --id-only
+fylo.admin history posts 4UUB32VGUDW --root /mnt/fylo --worm --json
+fylo.query sql "SELECT * FROM posts" --page-size 25 --align left
+fylo.query sql "SELECT * FROM posts" --no-pager
+```
+
+CLI WORM note:
+
+- pass `--worm` when operating on WORM-enabled collections for commands like `latest`, `history`, and `rebuild`
+- `inspect` still reports retained head/version metadata when those files exist on disk
+
+CLI formatting note:
+
+- text output now auto-fits to the terminal width when possible
+- long cell values wrap across multiple lines instead of always truncating
+- use `--page-size <n>` to repeat headers every `n` rows in text output
+- use `--align <left|center|right|auto>` to control cell alignment
+- large interactive text output now opens in a pager automatically when FYLO detects a TTY
+- use `--no-pager` to force direct stdout output
+- set `FYLO_PAGER` to override the pager command, or `FYLO_PAGER=off` / `NO_PAGER=1` to disable paging
 
 ## Development
 

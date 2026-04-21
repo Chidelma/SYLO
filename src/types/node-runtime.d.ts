@@ -1,6 +1,15 @@
 declare const process: {
     env: Record<string, string | undefined>
     cwd(): string
+    argv: string[]
+    stdin?: {
+        isTTY?: boolean
+    }
+    stdout?: {
+        isTTY?: boolean
+        columns?: number
+        rows?: number
+    }
 }
 
 declare const Buffer: {

@@ -21,6 +21,23 @@ export type StoredDoc<T extends Record<string, any>> = {
     data: T
 }
 
+export type StoredVersionMeta = {
+    version: 1
+    versionId: _ttid
+    lineageId: string
+    previousVersionId?: _ttid
+    supersededAt?: number
+    deletedAt?: number
+}
+
+export type StoredHead = {
+    version: 1
+    lineageId: string
+    currentVersionId: _ttid
+    deleted?: boolean
+    deletedAt?: number
+}
+
 export type StoredIndexEntry = {
     fieldPath: string
     rawValue: string
@@ -39,4 +56,27 @@ export type CollectionIndexCache = {
     fieldHash: Map<string, Map<string, Set<_ttid>>>
     fieldNumeric: Map<string, Array<{ docId: _ttid; numericValue: number }>>
     fieldString: Map<string, Array<{ docId: _ttid; rawValue: string }>>
+}
+
+export type CollectionRebuildResult = {
+    collection: string
+    worm: boolean
+    docsScanned: number
+    indexedDocs: number
+    headsRebuilt: number
+    versionMetasRebuilt: number
+    staleHeadsRemoved: number
+    staleVersionMetasRemoved: number
+}
+
+export type CollectionInspectResult = {
+    collection: string
+    exists: boolean
+    worm: boolean
+    docsStored: number
+    indexedDocs: number
+    headFiles: number
+    activeHeads: number
+    deletedHeads: number
+    versionMetas: number
 }

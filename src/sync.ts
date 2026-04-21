@@ -1,6 +1,28 @@
 import type { FyloAuthPolicy } from './auth'
 
 export type FyloSyncMode = 'await-sync' | 'fire-and-forget'
+export type FyloWormMode = 'off' | 'append-only'
+
+export interface FyloWormOptions {
+    mode?: FyloWormMode
+    deletePolicy?: 'reject' | 'tombstone'
+}
+
+export interface FyloWormWriteSyncInfo {
+    lineageId: _ttid
+    headOperation: 'create' | 'advance'
+    headDocId: _ttid
+    headPath: string
+}
+
+export interface FyloWormDeleteSyncInfo {
+    lineageId: _ttid
+    headOperation: 'delete'
+    headDocId: _ttid
+    headPath: string
+    deleteMode: 'physical' | 'tombstone'
+    versionPath?: string
+}
 
 export interface FyloWriteSyncEvent<T extends Record<string, any> = Record<string, any>> {
     operation: 'put' | 'patch'
@@ -9,6 +31,7 @@ export interface FyloWriteSyncEvent<T extends Record<string, any> = Record<strin
     previousDocId?: _ttid
     path: string
     data: T
+    worm?: FyloWormWriteSyncInfo
 }
 
 export interface FyloDeleteSyncEvent {
@@ -16,6 +39,7 @@ export interface FyloDeleteSyncEvent {
     collection: string
     docId: _ttid
     path: string
+    worm?: FyloWormDeleteSyncInfo
 }
 
 export interface FyloSyncHooks<T extends Record<string, any> = Record<string, any>> {
@@ -29,6 +53,7 @@ export interface FyloOptions<T extends Record<string, any> = Record<string, any>
     auth?: FyloAuthPolicy
     sync?: FyloSyncHooks<T>
     syncMode?: FyloSyncMode
+    worm?: FyloWormOptions
 }
 
 export class FyloSyncError extends Error {
