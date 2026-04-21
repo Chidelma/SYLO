@@ -1,6 +1,19 @@
 declare namespace Bun {
     function sleep(ms: number): Promise<void>
     function randomUUIDv7(): string
+    function spawn(
+        cmd: string[],
+        options?: {
+            stdin?: Blob | 'pipe'
+            stdout?: 'pipe' | 'inherit'
+            stderr?: 'pipe' | 'inherit'
+            cwd?: string
+        }
+    ): {
+        stdout?: ReadableStream<Uint8Array>
+        stderr?: ReadableStream<Uint8Array>
+        exited: Promise<number>
+    }
 
     class Glob {
         constructor(pattern: string)

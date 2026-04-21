@@ -1,10 +1,11 @@
 {
   "name": "@d31ma/fylo",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "main": "./dist/index.js",
   "types": "./dist/types/index.d.ts",
   "bin": {
-    "fylo.query": "./dist/cli/index.js"
+    "fylo.query": "./dist/cli/index.js",
+    "fylo.admin": "./dist/cli/index.js"
   },
   "scripts": {
     "build": "rm -rf dist && tsc && mkdir -p dist/types && cp src/types/*.d.ts dist/types/",

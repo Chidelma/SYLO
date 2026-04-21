@@ -1,457 +1,420 @@
 import TTID from '@d31ma/ttid'
 
-class Format {
-    static table(docs: Record<string, any>) {
-        // Calculate the _id column width (considering both the column name and the actual keys)
-        const idColumnWidth = Math.max(...Object.keys(docs).map((key) => key.length)) + 2 // Add padding
+export type TableAlignment = 'left' | 'center' | 'right' | 'auto'
 
-        const { maxWidths, maxHeight } = this.getHeaderDim(Object.values(docs))
+export type FormatTableOptions = {
+    emptyMessage?: string
+    maxColumnWidth?: number
+    maxKeyColumnWidth?: number
+    terminalWidth?: number | 'auto'
+    pageSize?: number
+    wrap?: boolean
+    cellAlign?: TableAlignment
+    keyAlign?: Exclude<TableAlignment, 'auto'>
+    headerAlign?: Exclude<TableAlignment, 'auto'>
+}
 
-        let key = Object.keys(docs).shift()!
+type NormalizedRow = Record<string, unknown>
 
-        const keys = key.split(',')
+type Column = {
+    key: string
+    width: number
+    minWidth: number
+}
 
-        if (TTID.isTTID(key) || keys.some((key) => TTID.isTTID(key ?? ''))) {
-            key = '_id'
-        } else key = '_key'
+const DEFAULT_EMPTY_MESSAGE = '(no rows)'
+const DEFAULT_MAX_COLUMN_WIDTH = 48
+const DEFAULT_MAX_KEY_COLUMN_WIDTH = 72
+const DEFAULT_MIN_CONTENT_WIDTH = 4
 
-        // Add the _id column to the front of maxWidths
-        const fullWidths = {
-            [key]: idColumnWidth,
-            ...maxWidths
-        }
+const ANSI_PATTERN = /\u001b\[[0-9;]*m/g
+const COMBINING_MARK_PATTERN = /\p{Mark}/u
 
-        // Render the header
-        const header = this.renderHeader(fullWidths, maxHeight, key)
-        console.log('\n' + header)
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
 
-        // Render the data rows
-        const dataRows = this.renderDataRows(docs, fullWidths, key)
-        console.log(dataRows)
+function stripAnsi(value: string) {
+    return value.replace(ANSI_PATTERN, '')
+}
+
+function isWideCodePoint(codePoint: number) {
+    return (
+        codePoint >= 0x1100 &&
+        (codePoint <= 0x115f ||
+            codePoint === 0x2329 ||
+            codePoint === 0x232a ||
+            (codePoint >= 0x2e80 && codePoint <= 0xa4cf && codePoint !== 0x303f) ||
+            (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+            (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+            (codePoint >= 0xfe10 && codePoint <= 0xfe19) ||
+            (codePoint >= 0xfe30 && codePoint <= 0xfe6f) ||
+            (codePoint >= 0xff00 && codePoint <= 0xff60) ||
+            (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
+            (codePoint >= 0x1f300 && codePoint <= 0x1faff))
+    )
+}
+
+function displayWidth(value: string) {
+    let width = 0
+
+    for (const char of stripAnsi(value)) {
+        if (COMBINING_MARK_PATTERN.test(char)) continue
+
+        const codePoint = char.codePointAt(0)
+        if (!codePoint || codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)) continue
+
+        width += isWideCodePoint(codePoint) ? 2 : 1
     }
 
-    private static getHeaderDim(docs: Record<string, any>[]) {
-        let maxWidths: Record<string, any> = {}
-        let maxHeight = 1
+    return width
+}
 
-        // Create a copy to avoid mutating the original array
-        const docsCopy = [...docs]
+function truncateToWidth(value: string, maxWidth: number) {
+    if (maxWidth <= 0) return ''
+    if (displayWidth(value) <= maxWidth) return value
+    if (maxWidth <= 3) return '.'.repeat(maxWidth)
 
-        while (docsCopy.length > 0) {
-            const doc = docsCopy.shift()!
-            const widths = this.getValueWidth(doc)
-            const height = this.getHeaderHeight(doc) // Fix: get height for this doc
-            maxHeight = Math.max(maxHeight, height) // Fix: take maximum height
-            maxWidths = this.increaseWidths(maxWidths, widths)
-        }
+    let result = ''
+    let width = 0
 
-        return { maxWidths, maxHeight }
+    for (const char of value) {
+        const charWidth = displayWidth(char)
+        if (width + charWidth > maxWidth - 3) break
+        result += char
+        width += charWidth
     }
 
-    private static getValueWidth(doc: Record<string, any>) {
-        const keyWidths: Record<string, any> = {}
+    return `${result}...`
+}
 
-        for (const key in doc) {
-            if (typeof doc[key] === 'object' && doc[key] !== null && !Array.isArray(doc[key])) {
-                keyWidths[key] = this.getValueWidth(doc[key])
-            } else {
-                // Consider both the key name length and the value length
-                const valueWidth = JSON.stringify(doc[key]).length
-                const keyWidth = key.length
-                // Add padding: 1 space before + content + 1 space after
-                keyWidths[key] = Math.max(valueWidth, keyWidth) + 2
-            }
+function padLeft(value: string, width: number) {
+    return `${value}${' '.repeat(Math.max(0, width - displayWidth(value)))}`
+}
+
+function padRight(value: string, width: number) {
+    return `${' '.repeat(Math.max(0, width - displayWidth(value)))}${value}`
+}
+
+function padCenter(value: string, width: number) {
+    const visibleWidth = displayWidth(value)
+    const padding = Math.max(0, width - visibleWidth)
+    const left = Math.floor(padding / 2)
+    const right = padding - left
+    return `${' '.repeat(left)}${value}${' '.repeat(right)}`
+}
+
+function flattenRow(
+    value: unknown,
+    path: string[] = [],
+    output: Map<string, unknown> = new Map()
+): Map<string, unknown> {
+    if (isPlainRecord(value) && Object.keys(value).length > 0) {
+        for (const [key, child] of Object.entries(value)) {
+            flattenRow(child, [...path, key], output)
         }
-
-        return keyWidths
+        return output
     }
 
-    private static increaseWidths(oldWidths: Record<string, any>, newWidths: Record<string, any>) {
-        const increasedWidths: Record<string, any> = { ...oldWidths }
+    const columnKey = path.length > 0 ? path.join('.') : 'value'
+    output.set(columnKey, value)
+    return output
+}
 
-        for (const key in newWidths) {
-            if (
-                oldWidths[key] &&
-                typeof newWidths[key] === 'object' &&
-                typeof oldWidths[key] === 'object'
-            ) {
-                increasedWidths[key] = this.increaseWidths(oldWidths[key], newWidths[key])
-            } else if (
-                oldWidths[key] &&
-                typeof newWidths[key] === 'number' &&
-                typeof oldWidths[key] === 'number'
-            ) {
-                increasedWidths[key] = Math.max(newWidths[key], oldWidths[key])
-            } else {
-                increasedWidths[key] = newWidths[key]
-            }
-        }
+function normalizeRow(value: unknown): NormalizedRow {
+    return Object.fromEntries(flattenRow(value))
+}
 
-        // Handle keys that exist in newWidths but not in oldWidths
-        for (const key in newWidths) {
-            if (!(key in increasedWidths)) {
-                increasedWidths[key] = newWidths[key]
-            }
-        }
-
-        // Also ensure column family names fit within their total width
-        for (const key in increasedWidths) {
-            if (typeof increasedWidths[key] === 'object' && increasedWidths[key] !== null) {
-                const totalChildWidth = this.calculateTotalWidth(increasedWidths[key])
-                const keyWidth = key.length
-
-                // If the column family name (with padding) is longer than the total child width,
-                // we need to adjust the child column widths proportionally
-                const keyWidthWithPadding = keyWidth + 2 // Add padding for family name too
-                if (keyWidthWithPadding > totalChildWidth) {
-                    const childKeys = Object.keys(increasedWidths[key])
-                    const extraWidth = keyWidthWithPadding - totalChildWidth
-                    const widthPerChild = Math.ceil(extraWidth / childKeys.length)
-
-                    for (const childKey of childKeys) {
-                        if (typeof increasedWidths[key][childKey] === 'number') {
-                            increasedWidths[key][childKey] += widthPerChild
-                        }
-                    }
-                }
-            }
-        }
-
-        return increasedWidths
-    }
-
-    private static getHeaderHeight(doc: Record<string, any>): number {
-        let maxDepth = 1 // Fix: start with 1 for current level
-
-        for (const key in doc) {
-            if (typeof doc[key] === 'object' && doc[key] !== null && !Array.isArray(doc[key])) {
-                const nestedDepth = 1 + this.getHeaderHeight(doc[key]) // Fix: add 1 for current level
-                maxDepth = Math.max(maxDepth, nestedDepth) // Fix: track maximum depth
-            }
-        }
-
-        return maxDepth
-    }
-
-    private static renderHeader(
-        widths: Record<string, any>,
-        height: number,
-        idColumnKey: string
-    ): string {
-        const lines: string[] = []
-
-        // Flatten the structure to get all columns
-        const columns = this.flattenColumns(widths)
-
-        // Add top border
-        lines.push(this.renderTopBorder(columns))
-
-        // Add header content rows
-        for (let level = 0; level < height; level++) {
-            lines.push(this.renderHeaderRow(widths, level, height, idColumnKey))
-
-            // Add middle border between levels (except after last level)
-            if (level < height - 1) {
-                lines.push(this.renderMiddleBorder(columns))
-            }
-        }
-
-        // Add bottom border
-        lines.push(this.renderBottomBorder(columns))
-
-        return lines.join('\n')
-    }
-
-    private static renderDataRows<T extends Record<string, any>>(
-        docs: Record<string, T>,
-        widths: Record<string, any>,
-        idColumnKey: string
-    ): string {
-        const lines: string[] = []
-        const columns = this.flattenColumns(widths)
-        const entries = Object.entries(docs)
-
-        for (let i = 0; i < entries.length; i++) {
-            const [docId, doc] = entries[i]
-            // Render data row
-            lines.push(this.renderDataRow(docId, doc, widths, columns, idColumnKey))
-
-            // Add separator between rows (except for last row)
-            if (i < entries.length - 1) {
-                lines.push(this.renderRowSeparator(columns))
-            }
-        }
-
-        // Add final bottom border
-        lines.push(this.renderBottomBorder(columns))
-
-        return lines.join('\n')
-    }
-
-    private static renderDataRow(
-        docId: string,
-        doc: Record<string, any>,
-        widths: Record<string, any>,
-        columns: Array<{ name: string; width: number; path: string[] }>,
-        idColumnKey: string
-    ): string {
-        let line = '│'
-
-        // Handle the ID column (could be _id or another key)
-        if (idColumnKey in widths && typeof widths[idColumnKey] === 'number') {
-            const contentWidth = widths[idColumnKey] - 2
-            const content = docId
-            const padding = Math.max(0, contentWidth - content.length)
-            const leftPad = Math.floor(padding / 2)
-            const rightPad = padding - leftPad
-
-            line += ' ' + ' '.repeat(leftPad) + content + ' '.repeat(rightPad) + ' │'
-        }
-
-        // Handle data columns
-        for (const column of columns) {
-            // Skip the ID column as it's handled separately
-            if (column.name === idColumnKey) continue
-
-            const value = this.getNestedValue(doc, column.path)
-            const stringValue = this.formatValue(value)
-            const contentWidth = column.width - 2 // Subtract padding
-
-            // Truncate if value is too long
-            const truncatedValue =
-                stringValue.length > contentWidth
-                    ? stringValue.substring(0, contentWidth - 3) + '...'
-                    : stringValue
-
-            const padding = Math.max(0, contentWidth - truncatedValue.length)
-            const leftPad = Math.floor(padding / 2)
-            const rightPad = padding - leftPad
-
-            line += ' ' + ' '.repeat(leftPad) + truncatedValue + ' '.repeat(rightPad) + ' │'
-        }
-
-        return line
-    }
-
-    private static getNestedValue(obj: Record<string, any>, path: string[]): any {
-        let current = obj
-
-        for (const key of path) {
-            if (current === null || current === undefined || typeof current !== 'object') {
-                return undefined
-            }
-            current = current[key]
-        }
-
-        return current
-    }
-
-    private static formatValue(value: any): string {
-        if (value === null) return 'null'
-        if (value === undefined) return ''
-        if (Array.isArray(value)) return JSON.stringify(value)
-        if (typeof value === 'object') return JSON.stringify(value)
-        if (typeof value === 'string') return value
+function formatValue(value: unknown) {
+    if (value === null) return 'null'
+    if (value === undefined) return ''
+    if (typeof value === 'string') return value
+    if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint')
         return String(value)
-    }
 
-    private static renderRowSeparator(
-        columns: Array<{ name: string; width: number; path: string[] }>
-    ): string {
-        let line = '├'
-
-        for (let i = 0; i < columns.length; i++) {
-            line += '─'.repeat(columns[i].width)
-            if (i < columns.length - 1) {
-                line += '┼'
-            }
-        }
-
-        line += '┤'
-        return line
-    }
-
-    private static flattenColumns(
-        widths: Record<string, any>,
-        path: string[] = []
-    ): Array<{ name: string; width: number; path: string[] }> {
-        const columns: Array<{ name: string; width: number; path: string[] }> = []
-
-        for (const key in widths) {
-            const currentPath = [...path, key]
-
-            if (typeof widths[key] === 'object' && widths[key] !== null) {
-                // Recursively flatten nested objects
-                columns.push(...this.flattenColumns(widths[key], currentPath))
-            } else {
-                // This is a leaf column
-                columns.push({
-                    name: key,
-                    width: widths[key],
-                    path: currentPath
-                })
-            }
-        }
-
-        return columns
-    }
-
-    private static renderHeaderRow(
-        widths: Record<string, any>,
-        currentLevel: number,
-        totalHeight: number,
-        idColumnKey: string
-    ): string {
-        let line = '│'
-
-        // Handle the ID column specially (could be _id or another key)
-        if (idColumnKey in widths && typeof widths[idColumnKey] === 'number') {
-            if (currentLevel === 0) {
-                // Show the ID column header at the top level
-                const contentWidth = widths[idColumnKey] - 2
-                const headerText = idColumnKey === '_id' ? '_id' : idColumnKey
-                const padding = Math.max(0, contentWidth - headerText.length)
-                const leftPad = Math.floor(padding / 2)
-                const rightPad = padding - leftPad
-
-                line += ' ' + ' '.repeat(leftPad) + headerText + ' '.repeat(rightPad) + ' │'
-            } else {
-                // Empty cell for other levels
-                line += ' '.repeat(widths[idColumnKey]) + '│'
-            }
-        }
-
-        const processLevel = (
-            obj: Record<string, any>,
-            level: number,
-            targetLevel: number
-        ): string => {
-            let result = ''
-
-            for (const key in obj) {
-                // Skip the ID column as it's handled separately
-                if (key === idColumnKey) continue
-
-                if (typeof obj[key] === 'object' && obj[key] !== null) {
-                    if (level === targetLevel) {
-                        // This is a column family at the target level
-                        const totalWidth = this.calculateTotalWidth(obj[key])
-                        const contentWidth = totalWidth - 2 // Subtract padding
-                        const padding = Math.max(0, contentWidth - key.length)
-                        const leftPad = Math.floor(padding / 2)
-                        const rightPad = padding - leftPad
-
-                        // Add 1 space padding + centered content + 1 space padding
-                        result += ' ' + ' '.repeat(leftPad) + key + ' '.repeat(rightPad) + ' │'
-                    } else if (level < targetLevel) {
-                        // Recurse deeper
-                        result += processLevel(obj[key], level + 1, targetLevel)
-                    }
-                } else {
-                    if (level === targetLevel) {
-                        // This is a leaf column at the target level
-                        const contentWidth = obj[key] - 2 // Subtract padding
-                        const padding = Math.max(0, contentWidth - key.length)
-                        const leftPad = Math.floor(padding / 2)
-                        const rightPad = padding - leftPad
-
-                        // Add 1 space padding + centered content + 1 space padding
-                        result += ' ' + ' '.repeat(leftPad) + key + ' '.repeat(rightPad) + ' │'
-                    } else if (level < targetLevel) {
-                        // Empty cell - span the full width
-                        result += ' '.repeat(obj[key]) + '│'
-                    }
-                }
-            }
-
-            return result
-        }
-
-        line += processLevel(widths, 0, currentLevel)
-        return line
-    }
-
-    private static calculateTotalWidth(obj: Record<string, any>): number {
-        let total = 0
-        let columnCount = 0
-
-        for (const key in obj) {
-            if (typeof obj[key] === 'object' && obj[key] !== null) {
-                total += this.calculateTotalWidth(obj[key])
-                columnCount += this.countLeafColumns(obj[key])
-            } else {
-                total += obj[key]
-                columnCount++
-            }
-        }
-
-        // Add space for separators between columns (one less than column count)
-        return total + Math.max(0, columnCount - 1)
-    }
-
-    private static countLeafColumns(obj: Record<string, any>): number {
-        let count = 0
-
-        for (const key in obj) {
-            if (typeof obj[key] === 'object' && obj[key] !== null) {
-                count += this.countLeafColumns(obj[key])
-            } else {
-                count++
-            }
-        }
-
-        return count
-    }
-
-    private static renderTopBorder(
-        columns: Array<{ name: string; width: number; path: string[] }>
-    ): string {
-        let line = '┌'
-
-        for (let i = 0; i < columns.length; i++) {
-            line += '─'.repeat(columns[i].width)
-            if (i < columns.length - 1) {
-                line += '┬'
-            }
-        }
-
-        line += '┐'
-        return line
-    }
-
-    private static renderMiddleBorder(
-        columns: Array<{ name: string; width: number; path: string[] }>
-    ): string {
-        let line = '├'
-
-        for (let i = 0; i < columns.length; i++) {
-            line += '─'.repeat(columns[i].width)
-            if (i < columns.length - 1) {
-                line += '┼'
-            }
-        }
-
-        line += '┤'
-        return line
-    }
-
-    private static renderBottomBorder(
-        columns: Array<{ name: string; width: number; path: string[] }>
-    ): string {
-        let line = '└'
-
-        for (let i = 0; i < columns.length; i++) {
-            line += '─'.repeat(columns[i].width)
-            if (i < columns.length - 1) {
-                line += '┴'
-            }
-        }
-
-        line += '┘'
-        return line
+    try {
+        return JSON.stringify(value)
+    } catch {
+        return String(value)
     }
 }
 
-console.format = function (docs: Record<string, any>) {
-    Format.table(docs)
+function resolveTerminalWidth(terminalWidth?: number | 'auto') {
+    if (typeof terminalWidth === 'number' && Number.isFinite(terminalWidth) && terminalWidth > 0)
+        return Math.floor(terminalWidth)
+
+    const stdoutWidth = process.stdout?.columns
+    if (typeof stdoutWidth === 'number' && stdoutWidth > 0) return stdoutWidth
+
+    const envWidth = Number(process.env.COLUMNS)
+    if (Number.isFinite(envWidth) && envWidth > 0) return Math.floor(envWidth)
+
+    return undefined
+}
+
+function detectRowKeyLabel(keys: string[]) {
+    return keys.some((key) =>
+        key
+            .split(',')
+            .map((part) => part.trim())
+            .some((part) => TTID.isTTID(part))
+    )
+        ? '_id'
+        : '_key'
+}
+
+function buildColumns(
+    rows: Array<{ key: string; values: NormalizedRow }>,
+    maxColumnWidth: number
+): Column[] {
+    const widths = new Map<string, number>()
+    const order: string[] = []
+
+    for (const row of rows) {
+        for (const [columnKey, value] of Object.entries(row.values)) {
+            if (!widths.has(columnKey)) {
+                widths.set(columnKey, 0)
+                order.push(columnKey)
+            }
+
+            const contentWidth = Math.max(
+                displayWidth(columnKey),
+                Math.min(displayWidth(formatValue(value)), maxColumnWidth)
+            )
+            widths.set(columnKey, Math.max(widths.get(columnKey) ?? 0, contentWidth))
+        }
+    }
+
+    return order.map((columnKey) => ({
+        key: columnKey,
+        width: (widths.get(columnKey) ?? displayWidth(columnKey)) + 2,
+        minWidth: DEFAULT_MIN_CONTENT_WIDTH + 1
+    }))
+}
+
+function renderBorder(columns: Column[], left: string, middle: string, right: string) {
+    return `${left}${columns.map((column) => '─'.repeat(column.width)).join(middle)}${right}`
+}
+
+function totalTableWidth(columns: Column[]) {
+    return columns.reduce((sum, column) => sum + column.width, 0) + columns.length + 1
+}
+
+function fitColumnsToTerminal(columns: Column[], terminalWidth?: number) {
+    if (!terminalWidth || totalTableWidth(columns) <= terminalWidth) return columns
+
+    const fitted = columns.map((column) => ({ ...column }))
+
+    while (totalTableWidth(fitted) > terminalWidth) {
+        let candidateIndex = -1
+
+        for (let index = 0; index < fitted.length; index++) {
+            const column = fitted[index]!
+            if (column.width <= column.minWidth) continue
+
+            if (candidateIndex === -1 || column.width > fitted[candidateIndex]!.width) {
+                candidateIndex = index
+            }
+        }
+
+        if (candidateIndex === -1) break
+        fitted[candidateIndex]!.width -= 1
+    }
+
+    return fitted
+}
+
+function wrapToWidth(value: string, maxWidth: number) {
+    if (maxWidth <= 0) return ['']
+    if (value.length === 0) return ['']
+
+    const lines: string[] = []
+    const paragraphs = value.split('\n')
+
+    for (const paragraph of paragraphs) {
+        if (paragraph.length === 0) {
+            lines.push('')
+            continue
+        }
+
+        const words = paragraph.split(/\s+/).filter(Boolean)
+        let current = ''
+
+        for (const word of words) {
+            const candidate = current.length > 0 ? `${current} ${word}` : word
+
+            if (displayWidth(candidate) <= maxWidth) {
+                current = candidate
+                continue
+            }
+
+            if (current.length > 0) {
+                lines.push(current)
+                current = ''
+            }
+
+            if (displayWidth(word) <= maxWidth) {
+                current = word
+                continue
+            }
+
+            let remaining = word
+            while (displayWidth(remaining) > maxWidth) {
+                const segment = truncateToWidth(remaining, maxWidth)
+                const bareSegment = segment.endsWith('...') ? segment.slice(0, -3) : segment
+                lines.push(bareSegment)
+                remaining = remaining.slice(bareSegment.length)
+            }
+            current = remaining
+        }
+
+        lines.push(current)
+    }
+
+    return lines
+}
+
+function alignValue(value: string, width: number, alignment: Exclude<TableAlignment, 'auto'>) {
+    if (alignment === 'left') return padLeft(value, width)
+    if (alignment === 'right') return padRight(value, width)
+    return padCenter(value, width)
+}
+
+function resolveAlignment(
+    value: unknown,
+    requested: TableAlignment
+): Exclude<TableAlignment, 'auto'> {
+    if (requested !== 'auto') return requested
+    if (typeof value === 'number' || typeof value === 'bigint') return 'right'
+    if (typeof value === 'boolean') return 'center'
+    return 'left'
+}
+
+function formatCellLines(
+    value: unknown,
+    contentWidth: number,
+    alignment: TableAlignment,
+    wrap: boolean
+) {
+    const formatted = formatValue(value)
+    const lines = wrap
+        ? wrapToWidth(formatted, contentWidth)
+        : [truncateToWidth(formatted, contentWidth)]
+    const resolvedAlignment = resolveAlignment(value, alignment)
+    return lines.map((line) => alignValue(line, contentWidth, resolvedAlignment))
+}
+
+function renderLogicalRow(
+    cells: Array<{ value: unknown; width: number; align: TableAlignment }>,
+    wrap: boolean
+) {
+    const renderedCells = cells.map((cell) =>
+        formatCellLines(cell.value, Math.max(0, cell.width - 2), cell.align, wrap)
+    )
+    const rowHeight = renderedCells.reduce((max, lines) => Math.max(max, lines.length), 1)
+    const lines: string[] = []
+
+    for (let lineIndex = 0; lineIndex < rowHeight; lineIndex++) {
+        const segments = renderedCells.map((cellLines, cellIndex) => {
+            const contentWidth = Math.max(0, cells[cellIndex]!.width - 2)
+            const content = cellLines[lineIndex] ?? ' '.repeat(contentWidth)
+            return ` ${content} `
+        })
+        lines.push(`│${segments.join('│')}│`)
+    }
+
+    return lines
+}
+
+function chunkRows<T>(rows: T[], size?: number) {
+    if (!size || size <= 0) return [rows]
+
+    const pages: T[][] = []
+    for (let index = 0; index < rows.length; index += size) {
+        pages.push(rows.slice(index, index + size))
+    }
+    return pages
+}
+
+export function formatTable(
+    docs: Record<string, unknown>,
+    options: FormatTableOptions = {}
+): string {
+    const entries = Object.entries(docs)
+    if (entries.length === 0) return options.emptyMessage ?? DEFAULT_EMPTY_MESSAGE
+
+    const maxColumnWidth = options.maxColumnWidth ?? DEFAULT_MAX_COLUMN_WIDTH
+    const maxKeyColumnWidth = options.maxKeyColumnWidth ?? DEFAULT_MAX_KEY_COLUMN_WIDTH
+    const terminalWidth = resolveTerminalWidth(options.terminalWidth)
+    const wrap = options.wrap ?? false
+    const cellAlign = options.cellAlign ?? 'auto'
+    const keyAlign = options.keyAlign ?? 'left'
+    const headerAlign = options.headerAlign ?? 'center'
+    const rowKeyLabel = detectRowKeyLabel(entries.map(([key]) => key))
+    const rows = entries.map(([key, value]) => ({
+        key,
+        values: normalizeRow(value)
+    }))
+
+    const columns = buildColumns(rows, maxColumnWidth)
+    const keyContentWidth = rows.reduce(
+        (maxWidth, row) => Math.max(maxWidth, Math.min(displayWidth(row.key), maxKeyColumnWidth)),
+        displayWidth(rowKeyLabel)
+    )
+    const keyColumn: Column = {
+        key: rowKeyLabel,
+        width: keyContentWidth + 2,
+        minWidth: DEFAULT_MIN_CONTENT_WIDTH + 2
+    }
+
+    const allColumns = fitColumnsToTerminal([keyColumn, ...columns], terminalWidth)
+    const dataColumns = allColumns.slice(1)
+    const pages = chunkRows(rows, options.pageSize)
+    const renderedPages: string[] = []
+
+    for (const pageRows of pages) {
+        const lines = [
+            renderBorder(allColumns, '┌', '┬', '┐'),
+            ...renderLogicalRow(
+                [
+                    { value: rowKeyLabel, width: allColumns[0]!.width, align: headerAlign },
+                    ...dataColumns.map((column) => ({
+                        value: column.key,
+                        width: column.width,
+                        align: headerAlign
+                    }))
+                ],
+                wrap
+            ),
+            renderBorder(allColumns, '├', '┼', '┤')
+        ]
+
+        for (let index = 0; index < pageRows.length; index++) {
+            const row = pageRows[index]!
+            lines.push(
+                ...renderLogicalRow(
+                    [
+                        { value: row.key, width: allColumns[0]!.width, align: keyAlign },
+                        ...dataColumns.map((column) => ({
+                            value: row.values[column.key],
+                            width: column.width,
+                            align: cellAlign
+                        }))
+                    ],
+                    wrap
+                )
+            )
+
+            if (index < pageRows.length - 1) lines.push(renderBorder(allColumns, '├', '┼', '┤'))
+        }
+
+        lines.push(renderBorder(allColumns, '└', '┴', '┘'))
+        renderedPages.push(lines.join('\n'))
+    }
+
+    return renderedPages.join('\n\n')
+}
+
+export function printTable(docs: Record<string, unknown>, options: FormatTableOptions = {}) {
+    console.log(formatTable(docs, options))
 }

@@ -9,10 +9,10 @@ import Gen from '@d31ma/chex'
 import { FyloAuthError } from './auth'
 import { Cipher } from './adapters/cipher'
 import { S3FilesEngine } from './engines/s3-files'
+import type { CollectionInspectResult, CollectionRebuildResult } from './engines/s3-files/types'
 import { validateDocId } from './core/doc-id'
 import type { FyloAuthAction, FyloAuthContext, FyloAuthorizeInput, FyloAuthPolicy } from './auth'
-import type { FyloOptions } from './sync'
-import './core/format'
+import type { FyloOptions, FyloWormMode, FyloWormOptions } from './sync'
 import './core/extensions'
 
 export { FyloAuthError } from './auth'
@@ -23,7 +23,11 @@ export type {
     FyloOptions,
     FyloSyncHooks,
     FyloSyncMode,
-    FyloWriteSyncEvent
+    FyloWriteSyncEvent,
+    FyloWormDeleteSyncInfo,
+    FyloWormMode,
+    FyloWormOptions,
+    FyloWormWriteSyncInfo
 } from './sync'
 
 export type ImportBulkDataOptions = {
@@ -33,6 +37,22 @@ export type ImportBulkDataOptions = {
     allowedHosts?: string[]
     allowPrivateNetwork?: boolean
 }
+
+export type FyloHistoryEntry<T extends Record<string, any> = Record<string, any>> = {
+    id: _ttid
+    createdAt: number
+    updatedAt: number
+    data: T
+    lineageId: _ttid
+    previousVersionId?: _ttid
+    supersededAt?: number
+    isHead: boolean
+    deleted: boolean
+    deletedAt?: number
+}
+
+export type FyloRebuildResult = CollectionRebuildResult
+export type FyloInspectResult = CollectionInspectResult
 
 type NormalizedImportBulkDataOptions = {
     limit?: number
@@ -63,7 +83,8 @@ export default class Fylo {
         this.authPolicy = options.auth
         this.engine = new S3FilesEngine(options.root ?? options.s3FilesRoot ?? Fylo.defaultRoot(), {
             sync: options.sync,
-            syncMode: options.syncMode
+            syncMode: options.syncMode,
+            worm: options.worm
         })
     }
 
@@ -154,12 +175,28 @@ export default class Fylo {
         await Fylo.defaultEngine.dropCollection(collection)
     }
 
+    static async rebuildCollection(collection: string) {
+        return await Fylo.defaultEngine.rebuildCollection(collection)
+    }
+
+    static async inspectCollection(collection: string) {
+        return await Fylo.defaultEngine.inspectCollection(collection)
+    }
+
     async createCollection(collection: string) {
         return await this.engine.createCollection(collection)
     }
 
     async dropCollection(collection: string) {
         return await this.engine.dropCollection(collection)
+    }
+
+    async rebuildCollection(collection: string): Promise<FyloRebuildResult> {
+        return await this.engine.rebuildCollection(collection)
+    }
+
+    async inspectCollection(collection: string): Promise<FyloInspectResult> {
+        return await this.engine.inspectCollection(collection)
     }
 
     as(auth: FyloAuthContext, policy: FyloAuthPolicy | undefined = this.authPolicy) {
@@ -228,6 +265,29 @@ export default class Fylo {
     getDoc<T extends Record<string, any>>(collection: string, _id: _ttid, onlyId: boolean = false) {
         validateDocId(_id)
         return this.engine.getDoc<T>(collection, _id, onlyId)
+    }
+
+    async getLatest<T extends Record<string, any>>(
+        collection: string,
+        _id: _ttid
+    ): Promise<Record<_ttid, T>>
+    async getLatest(collection: string, _id: _ttid, onlyId: true): Promise<_ttid | undefined>
+    async getLatest<T extends Record<string, any>>(
+        collection: string,
+        _id: _ttid,
+        onlyId: boolean = false
+    ) {
+        validateDocId(_id)
+        if (onlyId) return await this.engine.getLatest(collection, _id, true)
+        return await this.engine.getLatest<T>(collection, _id)
+    }
+
+    async getHistory<T extends Record<string, any>>(
+        collection: string,
+        _id: _ttid
+    ): Promise<FyloHistoryEntry<T>[]> {
+        validateDocId(_id)
+        return await this.engine.getHistory<T>(collection, _id)
     }
 
     findDocs<T extends Record<string, any>>(collection: string, query?: _storeQuery<T>) {
@@ -598,15 +658,17 @@ export default class Fylo {
 
         if (Fylo.STRICT) doc = (await Gen.validateData(collection, doc)) as T
 
-        return { _id, doc }
+        return { _id, doc, previousId: TTID.isTTID(currId) ? (currId as _ttid) : undefined }
     }
 
     private async executePutDataDirect<T extends Record<string, any>>(
         collection: string,
         _id: _ttid,
-        doc: T
+        doc: T,
+        previousId?: _ttid
     ) {
-        await this.engine.putDocument(collection, _id, doc)
+        if (previousId) await this.engine.replaceDocumentVersion(collection, previousId, _id, doc)
+        else await this.engine.putDocument(collection, _id, doc)
 
         if (Fylo.LOGGING) console.log(`Finished Writing ${_id}`)
 
@@ -676,8 +738,8 @@ export default class Fylo {
             this.unsupportedLegacyApi('putData(..., { wait: false })')
         }
 
-        const { _id, doc } = await this.prepareInsert(collection, data)
-        await this.executePutDataDirect(collection, _id, doc)
+        const { _id, doc, previousId } = await this.prepareInsert(collection, data)
+        await this.executePutDataDirect(collection, _id, doc, previousId)
         return _id
     }
 
@@ -835,6 +897,16 @@ export class AuthenticatedFylo {
         return await this.fylo.dropCollection(collection)
     }
 
+    async rebuildCollection(collection: string): Promise<FyloRebuildResult> {
+        await this.authorize({ action: 'collection:rebuild', collection })
+        return await this.fylo.rebuildCollection(collection)
+    }
+
+    async inspectCollection(collection: string): Promise<FyloInspectResult> {
+        await this.authorize({ action: 'collection:inspect', collection })
+        return await this.fylo.inspectCollection(collection)
+    }
+
     getDoc<T extends Record<string, any>>(collection: string, _id: _ttid, onlyId: boolean = false) {
         validateDocId(_id)
         const authorize = this.authorize.bind(this)
@@ -854,6 +926,29 @@ export class AuthenticatedFylo {
                 yield* source.onDelete()
             }
         }
+    }
+
+    async getLatest<T extends Record<string, any>>(
+        collection: string,
+        _id: _ttid
+    ): Promise<Record<_ttid, T>>
+    async getLatest(collection: string, _id: _ttid, onlyId: true): Promise<_ttid | undefined>
+    async getLatest<T extends Record<string, any>>(
+        collection: string,
+        _id: _ttid,
+        onlyId: boolean = false
+    ) {
+        await this.authorize({ action: 'doc:read', collection, docId: _id })
+        if (onlyId) return await this.fylo.getLatest(collection, _id, true)
+        return await this.fylo.getLatest<T>(collection, _id)
+    }
+
+    async getHistory<T extends Record<string, any>>(
+        collection: string,
+        _id: _ttid
+    ): Promise<FyloHistoryEntry<T>[]> {
+        await this.authorize({ action: 'doc:read', collection, docId: _id })
+        return await this.fylo.getHistory<T>(collection, _id)
     }
 
     findDocs<T extends Record<string, any>>(collection: string, query?: _storeQuery<T>) {

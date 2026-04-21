@@ -22,10 +22,6 @@ interface ObjectConstructor {
     appendGroup: (target: Record<string, any>, source: Record<string, any>) => Record<string, any>
 }
 
-interface Console {
-    format: (docs: Record<string, any>) => void
-}
-
 type _joinDocs<T, U> =
     | _ttid[]
     | Record<string, _ttid[]>
@@ -33,6 +29,64 @@ type _joinDocs<T, U> =
     | Record<`${_ttid}, ${_ttid}`, T | U | (T & U) | (Partial<T> & Partial<U>)>
 
 type _fyloSyncMode = 'await-sync' | 'fire-and-forget'
+type _fyloWormMode = 'off' | 'append-only'
+
+interface _fyloWormOptions {
+    mode?: _fyloWormMode
+    deletePolicy?: 'reject' | 'tombstone'
+}
+
+interface _fyloHistoryEntry<T extends Record<string, any>> {
+    id: _ttid
+    createdAt: number
+    updatedAt: number
+    data: T
+    lineageId: _ttid
+    previousVersionId?: _ttid
+    supersededAt?: number
+    isHead: boolean
+    deleted: boolean
+    deletedAt?: number
+}
+
+interface _fyloRebuildResult {
+    collection: string
+    worm: boolean
+    docsScanned: number
+    indexedDocs: number
+    headsRebuilt: number
+    versionMetasRebuilt: number
+    staleHeadsRemoved: number
+    staleVersionMetasRemoved: number
+}
+
+interface _fyloInspectResult {
+    collection: string
+    exists: boolean
+    worm: boolean
+    docsStored: number
+    indexedDocs: number
+    headFiles: number
+    activeHeads: number
+    deletedHeads: number
+    versionMetas: number
+}
+
+interface _fyloWormWriteSyncInfo {
+    lineageId: _ttid
+    headOperation: 'create' | 'advance'
+    headDocId: _ttid
+    headPath: string
+}
+
+interface _fyloWormDeleteSyncInfo {
+    lineageId: _ttid
+    headOperation: 'delete'
+    headDocId: _ttid
+    headPath: string
+    deleteMode: 'physical' | 'tombstone'
+    versionPath?: string
+}
 
 interface _fyloWriteSyncEvent<T extends Record<string, any> = Record<string, any>> {
     operation: 'put' | 'patch'
@@ -41,6 +95,7 @@ interface _fyloWriteSyncEvent<T extends Record<string, any> = Record<string, any
     previousDocId?: _ttid
     path: string
     data: T
+    worm?: _fyloWormWriteSyncInfo
 }
 
 interface _fyloDeleteSyncEvent {
@@ -48,6 +103,7 @@ interface _fyloDeleteSyncEvent {
     collection: string
     docId: _ttid
     path: string
+    worm?: _fyloWormDeleteSyncInfo
 }
 
 interface _fyloSyncHooks<T extends Record<string, any> = Record<string, any>> {
@@ -58,6 +114,8 @@ interface _fyloSyncHooks<T extends Record<string, any> = Record<string, any>> {
 type _fyloAuthAction =
     | 'collection:create'
     | 'collection:drop'
+    | 'collection:inspect'
+    | 'collection:rebuild'
     | 'doc:read'
     | 'doc:find'
     | 'doc:create'
@@ -96,6 +154,7 @@ interface _fyloOptions {
     auth?: _fyloAuthPolicy
     sync?: _fyloSyncHooks
     syncMode?: _fyloSyncMode
+    worm?: _fyloWormOptions
 }
 
 interface _importBulkDataOptions {
@@ -115,6 +174,13 @@ declare module '@d31ma/fylo' {
     }
 
     export type FyloSyncMode = _fyloSyncMode
+    export type FyloWormMode = _fyloWormMode
+    export type FyloWormOptions = _fyloWormOptions
+    export type FyloHistoryEntry<T extends Record<string, any>> = _fyloHistoryEntry<T>
+    export type FyloRebuildResult = _fyloRebuildResult
+    export type FyloInspectResult = _fyloInspectResult
+    export type FyloWormWriteSyncInfo = _fyloWormWriteSyncInfo
+    export type FyloWormDeleteSyncInfo = _fyloWormDeleteSyncInfo
     export type FyloWriteSyncEvent<T extends Record<string, any> = Record<string, any>> =
         _fyloWriteSyncEvent<T>
     export type FyloDeleteSyncEvent = _fyloDeleteSyncEvent
@@ -137,7 +203,18 @@ declare module '@d31ma/fylo' {
         rollback(): Promise<void>
         createCollection(collection: string): Promise<void>
         dropCollection(collection: string): Promise<void>
+        inspectCollection(collection: string): Promise<_fyloInspectResult>
+        rebuildCollection(collection: string): Promise<_fyloRebuildResult>
         getDoc(collection: string, _id: _ttid, onlyId?: boolean): _getDoc
+        getLatest<T extends Record<string, any>>(
+            collection: string,
+            _id: _ttid
+        ): Promise<Record<_ttid, T>>
+        getLatest(collection: string, _id: _ttid, onlyId: true): Promise<_ttid | undefined>
+        getHistory<T extends Record<string, any>>(
+            collection: string,
+            _id: _ttid
+        ): Promise<_fyloHistoryEntry<T>[]>
         findDocs<T extends Record<string, any>>(
             collection: string,
             query?: _storeQuery<T>
@@ -206,11 +283,24 @@ declare module '@d31ma/fylo' {
 
         static createCollection(collection: string): Promise<void>
         static dropCollection(collection: string): Promise<void>
+        static inspectCollection(collection: string): Promise<_fyloInspectResult>
+        static rebuildCollection(collection: string): Promise<_fyloRebuildResult>
 
         createCollection(collection: string): Promise<void>
         dropCollection(collection: string): Promise<void>
+        inspectCollection(collection: string): Promise<_fyloInspectResult>
+        rebuildCollection(collection: string): Promise<_fyloRebuildResult>
 
         as(auth: _fyloAuthContext, policy?: _fyloAuthPolicy): AuthenticatedFylo
+        getLatest<T extends Record<string, any>>(
+            collection: string,
+            _id: _ttid
+        ): Promise<Record<_ttid, T>>
+        getLatest(collection: string, _id: _ttid, onlyId: true): Promise<_ttid | undefined>
+        getHistory<T extends Record<string, any>>(
+            collection: string,
+            _id: _ttid
+        ): Promise<_fyloHistoryEntry<T>[]>
 
         importBulkData(
             collection: string,

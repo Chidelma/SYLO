@@ -90,6 +90,96 @@ describe('sync hooks', () => {
         ])
     })
 
+    test('worm sync hooks expose lineage/head metadata for append-only patches and tombstones', async () => {
+        const root = await createRoot('fylo-sync-worm-')
+        const calls = []
+        const fylo = new Fylo({
+            root,
+            worm: {
+                mode: 'append-only',
+                deletePolicy: 'tombstone'
+            },
+            sync: {
+                onWrite: async (event) => {
+                    calls.push({ hook: 'write', ...event })
+                },
+                onDelete: async (event) => {
+                    calls.push({ hook: 'delete', ...event })
+                }
+            }
+        })
+
+        const collection = 'worm-sync-posts'
+        await fylo.createCollection(collection)
+
+        const id = await fylo.putData(collection, { title: 'Hello worm sync' })
+        const nextId = await fylo.patchDoc(collection, {
+            [id]: { title: 'Hello worm sync 2' }
+        })
+        await fylo.delDoc(collection, nextId)
+
+        expect(calls).toEqual([
+            {
+                hook: 'write',
+                operation: 'put',
+                collection,
+                docId: id,
+                path: path.join(root, collection, '.fylo', 'docs', id.slice(0, 2), `${id}.json`),
+                data: { title: 'Hello worm sync' },
+                worm: {
+                    lineageId: id,
+                    headOperation: 'create',
+                    headDocId: id,
+                    headPath: path.join(root, collection, '.fylo', 'heads', `${id}.json`)
+                }
+            },
+            {
+                hook: 'write',
+                operation: 'patch',
+                collection,
+                docId: nextId,
+                previousDocId: id,
+                path: path.join(
+                    root,
+                    collection,
+                    '.fylo',
+                    'docs',
+                    nextId.slice(0, 2),
+                    `${nextId}.json`
+                ),
+                data: { title: 'Hello worm sync 2' },
+                worm: {
+                    lineageId: id,
+                    headOperation: 'advance',
+                    headDocId: nextId,
+                    headPath: path.join(root, collection, '.fylo', 'heads', `${id}.json`)
+                }
+            },
+            {
+                hook: 'delete',
+                operation: 'delete',
+                collection,
+                docId: nextId,
+                path: path.join(root, collection, '.fylo', 'heads', `${id}.json`),
+                worm: {
+                    lineageId: id,
+                    headOperation: 'delete',
+                    headDocId: nextId,
+                    headPath: path.join(root, collection, '.fylo', 'heads', `${id}.json`),
+                    deleteMode: 'tombstone',
+                    versionPath: path.join(
+                        root,
+                        collection,
+                        '.fylo',
+                        'docs',
+                        nextId.slice(0, 2),
+                        `${nextId}.json`
+                    )
+                }
+            }
+        ])
+    })
+
     test('fire-and-forget does not block the local write', async () => {
         const root = await createRoot('fylo-sync-fire-')
         let releaseHook

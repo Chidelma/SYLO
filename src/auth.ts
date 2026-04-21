@@ -1,6 +1,8 @@
 export type FyloAuthAction =
     | 'collection:create'
     | 'collection:drop'
+    | 'collection:inspect'
+    | 'collection:rebuild'
     | 'doc:read'
     | 'doc:find'
     | 'doc:create'
