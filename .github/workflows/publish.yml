@@ -191,7 +191,18 @@ jobs:
     name: Publish to GitHub Packages
     runs-on: ubuntu-latest
     needs: [test, blackbox-config, package-blackbox, version]
-    if: needs.version.outputs.tag_exists == 'false' && (needs.blackbox-config.outputs.enabled == 'false' || needs.package-blackbox.result == 'success')
+    if: >-
+      ${{
+        always() &&
+        needs.test.result == 'success' &&
+        needs.blackbox-config.result == 'success' &&
+        needs.version.result == 'success' &&
+        needs.version.outputs.tag_exists == 'false' &&
+        (
+          needs.blackbox-config.outputs.enabled == 'false' ||
+          needs.package-blackbox.result == 'success'
+        )
+      }}
     timeout-minutes: 15
     permissions:
       contents: read
