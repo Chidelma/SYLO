@@ -1,17 +1,19 @@
 {
   "name": "@d31ma/fylo",
-  "version": "2.3.0",
+  "version": "3.0.0",
   "main": "./dist/index.js",
   "types": "./dist/types/index.d.ts",
   "bin": {
     "fylo.query": "./dist/cli/index.js",
-    "fylo.admin": "./dist/cli/index.js"
+    "fylo.admin": "./dist/cli/index.js",
+    "fylo.exec": "./dist/cli/index.js"
   },
   "scripts": {
-    "build": "rm -rf dist && tsc && mkdir -p dist/types && cp src/types/*.d.ts dist/types/",
+    "build": "node ./scripts/build.mjs",
+    "build:exe": "mkdir -p ./dist/bin && bun build --compile ./src/cli/index.js --outfile ./dist/bin/fylo",
     "test": "bun test",
-    "typecheck": "tsc -p tsconfig.typecheck.json",
-    "lint": "prettier --check \"src/**/*.{ts,d.ts}\" \"tests/**/*.js\" README.md",
+    "typecheck": "tsc --noEmit",
+    "lint": "prettier --check \"src/**/*.js\" \"tests/**/*.js\" README.md",
     "format": "prettier --write src tests"
   },
   "devDependencies": {
@@ -29,9 +31,6 @@
     "@d31ma/ttid": "1.3.7"
   },
   "type": "module",
-  "peerDependencies": {
-    "typescript": "^5.0.0"
-  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/d31ma/Fylo.git"
@@ -44,9 +43,11 @@
   "keywords": [
     "storage",
     "database",
-    "s3",
-    "aws",
-    "typescript",
+    "filesystem",
+    "document-store",
+    "javascript",
+    "jsdoc",
+    "executable",
     "bun"
   ],
   "author": "Chidelma",

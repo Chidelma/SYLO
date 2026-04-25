@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { rm, unlink, writeFile } from 'node:fs/promises'
+import { rm, unlink } from 'node:fs/promises'
 import path from 'node:path'
-import Fylo from '../../src'
-import { createTestRoot } from '../helpers/root'
+import Fylo from '../../src/index.js'
+import { createTestRoot } from '../helpers/root.js'
 
 const ROOT = await createTestRoot('fylo-rebuild-')
 const BASIC_COLLECTION = 'rebuild-posts'
@@ -43,7 +43,7 @@ describe('rebuildCollection', () => {
             `${BASIC_COLLECTION}.idx.json`
         )
 
-        await writeFile(indexPath, JSON.stringify({ version: 1, docs: {} }), 'utf8')
+        await Bun.write(indexPath, JSON.stringify({ version: 1, docs: {} }))
 
         const before = []
         for await (const doc of fylo
@@ -135,7 +135,7 @@ describe('rebuildCollection', () => {
         await unlink(activeFirstMetaPath)
         await unlink(activeSecondMetaPath)
         await unlink(tombstoneHeadPath)
-        await writeFile(indexPath, JSON.stringify({ version: 1, docs: {} }), 'utf8')
+        await Bun.write(indexPath, JSON.stringify({ version: 1, docs: {} }))
 
         const rebuild = await wormFylo.rebuildCollection(WORM_COLLECTION)
         const activeLatest = await wormFylo.getLatest(WORM_COLLECTION, activeFirst)

@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
-import Fylo, { FyloAuthError } from '../../src'
-import { createTestRoot } from '../helpers/root'
+import Fylo, { FyloAuthError } from '../../src/index.js'
+import { createTestRoot } from '../helpers/root.js'
 
 const root = await createTestRoot('fylo-auth-')
 

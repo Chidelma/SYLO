@@ -1,8 +1,8 @@
 import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import { rm } from 'node:fs/promises'
-import Fylo from '../../src'
-import { commentsURL, usersURL } from '../data'
-import { createTestRoot } from '../helpers/root'
+import Fylo from '../../src/index.js'
+import { commentsURL, usersURL } from '../data.js'
+import { createTestRoot } from '../helpers/root.js'
 const COMMENTS = `comment`
 const USERS = `user`
 let commentsResults = {}
@@ -16,9 +16,7 @@ beforeAll(async () => {
             fylo.importBulkData(COMMENTS, new URL(commentsURL), 100),
             fylo.importBulkData(USERS, new URL(usersURL), 100)
         ])
-    } catch {
-        await fylo.rollback()
-    }
+    } catch {}
     for await (const data of fylo.findDocs(COMMENTS, { $limit: 1 }).collect()) {
         commentsResults = { ...commentsResults, ...data }
     }
@@ -33,9 +31,7 @@ describe('NO-SQL', async () => {
         const id = Object.keys(commentsResults).shift()
         try {
             await fylo.delDoc(COMMENTS, id)
-        } catch {
-            await fylo.rollback()
-        }
+        } catch {}
         commentsResults = {}
         for await (const data of fylo.findDocs(COMMENTS).collect()) {
             commentsResults = { ...commentsResults, ...data }
@@ -48,7 +44,6 @@ describe('NO-SQL', async () => {
             await fylo.delDocs(COMMENTS, { $ops: [{ name: { $like: '%et%' } }] })
         } catch (e) {
             console.error(e)
-            await fylo.rollback()
         }
         commentsResults = {}
         for await (const data of fylo
@@ -63,9 +58,7 @@ describe('NO-SQL', async () => {
     test('DELETE ALL', async () => {
         try {
             await fylo.delDocs(COMMENTS)
-        } catch {
-            await fylo.rollback()
-        }
+        } catch {}
         commentsResults = {}
         for await (const data of fylo.findDocs(COMMENTS).collect()) {
             commentsResults = { ...commentsResults, ...data }
@@ -78,9 +71,7 @@ describe('SQL', async () => {
         const name = Object.values(usersResults).shift().name
         try {
             await fylo.executeSQL(`DELETE FROM ${USERS} WHERE name = '${name}'`)
-        } catch {
-            await fylo.rollback()
-        }
+        } catch {}
         usersResults = await fylo.executeSQL(`SELECT * FROM ${USERS} WHERE name = '${name}'`)
         const idx = Object.values(usersResults).findIndex((com) => com.name === name)
         expect(idx).toBe(-1)
@@ -88,9 +79,7 @@ describe('SQL', async () => {
     test('DELETE ALL', async () => {
         try {
             await fylo.executeSQL(`DELETE FROM ${USERS}`)
-        } catch {
-            await fylo.rollback()
-        }
+        } catch {}
         usersResults = await fylo.executeSQL(`SELECT * FROM ${USERS}`)
         expect(Object.keys(usersResults).length).toBe(0)
     })

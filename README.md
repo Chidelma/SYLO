@@ -8,7 +8,7 @@ The important mental model is simple:
 - the index file is just an accelerator
 - if the index ever gets out of date, FYLO can rebuild it from the documents
 
-FYLO now ships with **one engine**: a filesystem-first storage model designed to work well with AWS S3 Files and other synced filesystem setups.
+FYLO now ships with **one engine**: a filesystem storage model. Cloud replication, object-store syncing, and mounted storage are deployment concerns around that engine, not separate FYLO engines.
 
 ## Why this design?
 
@@ -63,10 +63,11 @@ If you install the package from GitHub Packages, configure your `.npmrc` first:
 //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
 ```
 
-FYLO publishes two CLI entrypoints:
+FYLO publishes three CLI entrypoints:
 
 - `fylo.query` for SQL and admin commands
 - `fylo.admin` as an explicit admin alias for operational flows
+- `fylo.exec` for the language-agnostic JSON machine interface
 
 ## Basic usage
 
@@ -111,18 +112,20 @@ If you do not configure a root, FYLO uses a project-local default:
 <current working directory>/.fylo-data
 ```
 
-For compatibility with older `s3-files` experiments, FYLO still accepts `s3FilesRoot` and still reads `FYLO_S3FILES_ROOT` as a fallback.
+Use the `root` constructor option or `FYLO_ROOT` environment variable to
+configure where collections are stored. The legacy `filesystemRoot`,
+`s3FilesRoot`, `FYLO_FILESYSTEM_ROOT`, and `FYLO_S3FILES_ROOT` options
+and environment variables were removed in v3.0.0.
 
 ### Environment variables
 
-| Variable            | Purpose                                                          |
-| ------------------- | ---------------------------------------------------------------- |
-| `FYLO_ROOT`         | Preferred filesystem root for collections                        |
-| `FYLO_S3FILES_ROOT` | Backward-compatible alias for `FYLO_ROOT`                        |
-| `SCHEMA_DIR`        | Directory containing JSON validation schemas                     |
-| `STRICT`            | When truthy, validate documents with `@d31ma/chex` before writes |
-| `ENCRYPTION_KEY`    | Required when schemas declare `$encrypted` fields                |
-| `CIPHER_SALT`       | Recommended unique salt for field encryption key derivation      |
+| Variable         | Purpose                                                          |
+| ---------------- | ---------------------------------------------------------------- |
+| `FYLO_ROOT`      | Filesystem root for collections                                  |
+| `SCHEMA_DIR`     | Directory containing JSON validation schemas                     |
+| `STRICT`         | When truthy, validate documents with `@d31ma/chex` before writes |
+| `ENCRYPTION_KEY` | Required when schemas declare `$encrypted` fields                |
+| `CIPHER_SALT`    | Recommended unique salt for field encryption key derivation      |
 
 ## Security-sensitive behavior
 
@@ -132,7 +135,9 @@ Schemas can declare encrypted fields with a `$encrypted` array. When a collectio
 
 Encrypted document values are stored with AES-GCM. Exact-match queries on encrypted fields use keyed HMAC blind indexes, so equality and frequency can still be inferred from index tokens, but plaintext field values are not written to document files, index files, or event journals.
 
-If you are upgrading encrypted collections from a version before `2.1.1`, rewrite encrypted documents or otherwise rebuild affected indexes before relying on `$eq` queries for encrypted fields. Older encrypted document bodies can still be read, but old deterministic encrypted index entries do not match the new HMAC blind-index format.
+Documents encrypted with AES-GCM (v2.1.1 and later) are fully
+supported. The legacy AES-CBC read path was removed in v3.0.0; documents
+written before v2.1.1 cannot be decrypted by this release.
 
 ### Bulk imports
 
@@ -236,7 +241,7 @@ const latest = await fylo.getLatest('posts', firstId)
 const history = await fylo.getHistory('posts', secondId)
 ```
 
-## Syncing to S3-compatible storage
+## Syncing to external storage
 
 FYLO does **not** ship its own cloud sync engine.
 
@@ -250,17 +255,17 @@ The package owns:
 
 You own:
 
-- how that root directory gets synced to AWS S3 Files, S3-compatible storage, or any other file-backed replication layer you trust
+- how that root directory gets synced to mounted storage, S3-compatible storage, or any other file-backed replication layer you trust
 
 That means you can choose the sync tool that matches your infrastructure:
 
-- AWS S3 Files
+- mounted filesystems
 - `aws s3 sync`
 - `rclone`
 - storage vendor tooling
 - platform-specific replication
 
-If you want FYLO to notify your own S3 client on document writes, you can plug in sync hooks:
+If you want FYLO to notify your own storage client on document writes, you can plug in sync hooks:
 
 ```ts
 import Fylo from '@d31ma/fylo'
@@ -424,6 +429,56 @@ FYLO no longer centers:
 
 If you see older references to those ideas in historic discussions, treat them as previous design stages, not the current product direction.
 
+## Known limitations
+
+These are deliberate boundaries of the current design. Read them before
+adopting FYLO in scenarios where they matter.
+
+- **Filesystem-only.** There is one engine, and it writes to a local
+  filesystem path. Replication to S3, GCS, or any remote target is the
+  consumer's responsibility — see "Syncing to external storage". FYLO
+  does not retry, queue, or reconcile remote writes.
+- **Advisory locking, not fencing.** Cross-process write coordination
+  uses lockfiles with a TTL (default 30s). Holders that exceed the TTL
+  can have their lock reclaimed by another process — long operations
+  on the same collection from two writers can race. Lockfiles also
+  assume the underlying filesystem honors atomic `link()`; networked
+  filesystems without that guarantee are not supported.
+- **Single-process index cache.** The collection index file is the
+  shared on-disk representation, but an in-memory cache lives per
+  process. External processes that mutate documents directly on disk
+  will not be visible to a running FYLO process until rebuild or
+  restart. Treat the FYLO API as the only writer.
+- **Logical, not physical, WORM.** WORM mode is enforced by FYLO's
+  write paths. Anyone with direct filesystem access to the root can
+  still rewrite or delete document files — pair WORM with OS-level
+  permissions or an immutable-storage mount when you need true
+  immutability.
+- **Frequency leaks on encrypted equality search.** Encrypted fields
+  are stored with AES-GCM, but `$eq` queries use deterministic HMAC
+  blind indexes. An attacker with read access to the index file can
+  count repetitions and infer that two documents share a value, even
+  without learning the value itself.
+- **Process-global cipher.** `ENCRYPTION_KEY` and `CIPHER_SALT` are
+  resolved from the environment once per process and shared across all
+  collections that declare `$encrypted` fields. There is no per-tenant
+  or per-collection key rotation built in; rotation is an external
+  rewrite operation.
+- **Bulk import is for trusted sources.** The default SSRF guard blocks
+  private and loopback addresses and caps response size at 50 MiB, but
+  it does not parse, sandbox, or rate-limit the source. Treat
+  `importBulkData` as administrative and call it from server-side code
+  with vetted inputs — never from a request handler that forwards
+  user-provided URLs.
+- **No multi-document or multi-collection transactions.** Writes are
+  serialized per collection. There is no atomic commit across
+  collections, no two-phase commit with a sync hook, and no rollback
+  semantics beyond the local filesystem write.
+- **TTID-derived timestamps.** `createdAt` and `updatedAt` come from
+  the document's TTID, not filesystem `mtime`. This is stable across
+  copies and rebuilds, but it also means external tools that rewrite
+  document files cannot change the timestamps FYLO reports.
+
 ## Recovery story
 
 This part is important:
@@ -502,6 +557,214 @@ fylo.query sql "SELECT * FROM posts" --page-size 25 --align left
 fylo.query sql "SELECT * FROM posts" --no-pager
 ```
 
+For non-JavaScript callers, FYLO also exposes a stable JSON machine interface:
+
+```bash
+fylo.exec exec --request '{"op":"inspectCollection","root":"/mnt/fylo","collection":"posts"}'
+cat request.json | fylo.exec exec --request -
+fylo.exec exec --request @request.json
+```
+
+Machine responses are always JSON and use a small protocol envelope:
+
+```json
+{
+    "protocolVersion": 1,
+    "ok": true,
+    "op": "inspectCollection",
+    "requestId": "optional-correlation-id",
+    "durationMs": 4,
+    "result": {
+        "collection": "posts",
+        "exists": true
+    }
+}
+```
+
+This is the recommended boundary when you want to compile FYLO into a Bun executable and call it from Python, Go, Rust, Java, or shell automation:
+
+```bash
+bun build --compile ./src/cli/index.js --outfile ./dist/bin/fylo
+./dist/bin/fylo exec --request @request.json
+```
+
+Example request payload:
+
+```json
+{
+    "requestId": "get-latest-1",
+    "op": "getLatest",
+    "root": "/mnt/fylo",
+    "collection": "posts",
+    "id": "4UUB32VGUDW"
+}
+```
+
+Language examples all use the same executable contract: write one JSON request to stdin and read one JSON response from stdout.
+
+Python:
+
+```python
+import json
+import subprocess
+
+request = {
+    "requestId": "inspect-posts-1",
+    "op": "inspectCollection",
+    "root": "/mnt/fylo",
+    "collection": "posts",
+}
+
+proc = subprocess.run(
+    ["./dist/bin/fylo", "exec", "--request", "-"],
+    input=json.dumps(request),
+    text=True,
+    capture_output=True,
+    check=False,
+)
+
+response = json.loads(proc.stdout)
+if proc.returncode != 0 or not response["ok"]:
+    raise RuntimeError(response["error"]["message"])
+
+print(response["result"])
+```
+
+Go:
+
+```go
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os/exec"
+)
+
+func main() {
+	request := map[string]any{
+		"requestId":  "inspect-posts-1",
+		"op":         "inspectCollection",
+		"root":       "/mnt/fylo",
+		"collection": "posts",
+	}
+
+	body, _ := json.Marshal(request)
+	cmd := exec.Command("./dist/bin/fylo", "exec", "--request", "-")
+	cmd.Stdin = bytes.NewReader(body)
+
+	output, err := cmd.Output()
+	if err != nil {
+		panic(err)
+	}
+
+	var response map[string]any
+	if err := json.Unmarshal(output, &response); err != nil {
+		panic(err)
+	}
+	if response["ok"] != true {
+		panic(response["error"])
+	}
+
+	fmt.Println(response["result"])
+}
+```
+
+Rust:
+
+```rust
+use serde_json::json;
+use std::io::Write;
+use std::process::{Command, Stdio};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let request = json!({
+        "requestId": "inspect-posts-1",
+        "op": "inspectCollection",
+        "root": "/mnt/fylo",
+        "collection": "posts"
+    });
+
+    let mut child = Command::new("./dist/bin/fylo")
+        .args(["exec", "--request", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin is configured")
+        .write_all(request.to_string().as_bytes())?;
+
+    let output = child.wait_with_output()?;
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    if !output.status.success() || response["ok"] != true {
+        return Err(response["error"]["message"].to_string().into());
+    }
+
+    println!("{}", response["result"]);
+    Ok(())
+}
+```
+
+Java:
+
+```java
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+
+public class FyloExample {
+    public static void main(String[] args) throws Exception {
+        String request = """
+            {
+              "requestId": "inspect-posts-1",
+              "op": "inspectCollection",
+              "root": "/mnt/fylo",
+              "collection": "posts"
+            }
+            """;
+
+        Process process = new ProcessBuilder("./dist/bin/fylo", "exec", "--request", "-")
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start();
+
+        try (OutputStream stdin = process.getOutputStream()) {
+            stdin.write(request.getBytes(StandardCharsets.UTF_8));
+        }
+
+        String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        int exitCode = process.waitFor();
+        if (exitCode != 0 || stdout.contains("\"ok\":false")) {
+            throw new RuntimeException(stdout);
+        }
+
+        System.out.println(stdout);
+    }
+}
+```
+
+Supported machine operations:
+
+- `executeSQL`
+- `createCollection`
+- `dropCollection`
+- `inspectCollection`
+- `rebuildCollection`
+- `getDoc`
+- `getLatest`
+- `getHistory`
+- `findDocs`
+- `joinDocs`
+- `putData`
+- `batchPutData`
+- `patchDoc`
+- `patchDocs`
+- `delDoc`
+- `delDocs`
+- `importBulkData`
+
 CLI WORM note:
 
 - pass `--worm` when operating on WORM-enabled collections for commands like `latest`, `history`, and `rebuild`
@@ -525,12 +788,21 @@ bun run build
 bun test
 ```
 
+Type packaging note:
+
+- FYLO uses JSDoc type modules in `src/` during source development
+- `jsconfig.json` is the shared JS/JSDoc source config, matching the pattern used by TACHYON
+- `tsconfig.json` extends `jsconfig.json` so `tsc --noEmit` can typecheck the project
+- `tsconfig.build.json` exists only for declaration emit into `dist/types`
+- published declaration output lives under `dist/types` and is emitted as declaration files only
+- type-only source helpers are not copied into the runtime `dist/` tree
+
 ## Performance testing
 
 FYLO includes an opt-in scale test for the filesystem engine:
 
 ```bash
-FYLO_RUN_PERF_TESTS=true bun test tests/integration/s3-files.performance.test.js
+FYLO_RUN_PERF_TESTS=true bun test tests/integration/filesystem.performance.test.js
 ```
 
 This is useful when you want to see how index size and query latency behave as collections grow.

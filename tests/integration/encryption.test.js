@@ -1,13 +1,13 @@
 import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
-import { readFile, rm, writeFile } from 'node:fs/promises'
+import { rm } from 'node:fs/promises'
 import path from 'node:path'
-import Fylo from '../../src'
-import { createTestRoot } from '../helpers/root'
-import { CipherMock } from '../mocks/cipher'
+import Fylo from '../../src/index.js'
+import { createTestRoot } from '../helpers/root.js'
+import { CipherMock } from '../mocks/cipher.js'
 const COLLECTION = 'encrypted-test'
 const root = await createTestRoot('fylo-encryption-')
 const fylo = new Fylo({ root })
-mock.module('../../src/adapters/cipher', () => ({ Cipher: CipherMock }))
+mock.module('../../src/security/cipher', () => ({ Cipher: CipherMock }))
 beforeAll(async () => {
     await fylo.createCollection(COLLECTION)
     await CipherMock.configure('test-secret-key')
@@ -38,22 +38,19 @@ describe('Encryption', () => {
         expect(doc.age).toBe(30)
     })
     test('encrypted values stored in the doc file are not plaintext', async () => {
-        const raw = await readFile(
-            path.join(root, COLLECTION, '.fylo', 'docs', docId.slice(0, 2), `${docId}.json`),
-            'utf8'
-        )
+        const raw = await Bun.file(
+            path.join(root, COLLECTION, '.fylo', 'docs', docId.slice(0, 2), `${docId}.json`)
+        ).text()
         expect(raw).not.toContain('alice@example.com')
         expect(raw).not.toContain('123-45-6789')
     })
     test('encrypted values are not plaintext in indexes or event journals', async () => {
-        const index = await readFile(
-            path.join(root, COLLECTION, '.fylo', 'indexes', `${COLLECTION}.idx.json`),
-            'utf8'
-        )
-        const events = await readFile(
-            path.join(root, COLLECTION, '.fylo', 'events', `${COLLECTION}.ndjson`),
-            'utf8'
-        )
+        const index = await Bun.file(
+            path.join(root, COLLECTION, '.fylo', 'indexes', `${COLLECTION}.idx.json`)
+        ).text()
+        const events = await Bun.file(
+            path.join(root, COLLECTION, '.fylo', 'events', `${COLLECTION}.ndjson`)
+        ).text()
 
         expect(index).not.toContain('alice@example.com')
         expect(index).not.toContain('123-45-6789')
@@ -167,7 +164,7 @@ describe('Encryption', () => {
         const collection = `fail-closed-${Date.now()}`
 
         CipherMock.reset()
-        await writeFile(
+        await Bun.write(
             path.join(schemaRoot, `${collection}.json`),
             JSON.stringify({ $encrypted: ['secret'] })
         )
