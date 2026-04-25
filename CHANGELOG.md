@@ -87,6 +87,14 @@ domain-driven structure. If you imported from internal paths, update:
 - **Stale-lock takeover is observable.** Reclaimed stale collection or
   document write locks emit a `lock.takeover` event with the previous
   owner.
+- **Heartbeat on collection write locks.** Long-running operations
+  (`rebuildCollection`, bulk writes) refresh the lock timestamp every
+  `ttlMs/3` while held, so legitimate work past the TTL is no longer
+  misclassified as stale and taken over by another process.
+- **Write-lane leak fixed.** `withCollectionWriteLock` now releases its
+  in-process write lane even if the underlying collection-lock
+  acquisition throws (e.g. on lock-wait timeout), preventing the lane
+  from getting permanently stuck pending.
 
 ### Performance
 

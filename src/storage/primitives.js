@@ -153,7 +153,10 @@ export class FilesystemLockManager {
      * @returns {Promise<void>}
      */
     async acquireCollectionWrite(collection, owner, options) {
-        await waitAcquireFileLock(this.collectionLockPath(collection), owner, options)
+        await waitAcquireFileLock(this.collectionLockPath(collection), owner, {
+            ...options,
+            heartbeat: true
+        })
     }
     /**
      * Releases the collection-level write lock if owner matches.

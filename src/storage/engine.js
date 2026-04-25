@@ -506,18 +506,18 @@ export class FilesystemEngine {
         this.writeLanes.set(collection, lane)
         await previous
         const owner = Bun.randomUUIDv7()
-        await this.storage.mkdir(this.metaRoot(collection))
-        await this.locks.acquireCollectionWrite(collection, owner, {
-            onTakeover: (info) => {
-                emitFyloEvent(this.onEvent, {
-                    type: 'lock.takeover',
-                    lockPath: info.lockPath,
-                    newOwner: info.newOwner,
-                    previousOwner: info.previousOwner
-                })
-            }
-        })
         try {
+            await this.storage.mkdir(this.metaRoot(collection))
+            await this.locks.acquireCollectionWrite(collection, owner, {
+                onTakeover: (info) => {
+                    emitFyloEvent(this.onEvent, {
+                        type: 'lock.takeover',
+                        lockPath: info.lockPath,
+                        newOwner: info.newOwner,
+                        previousOwner: info.previousOwner
+                    })
+                }
+            })
             return await action()
         } finally {
             await this.locks.releaseCollectionWrite(collection, owner)

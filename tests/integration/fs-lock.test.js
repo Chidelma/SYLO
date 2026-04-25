@@ -70,6 +70,15 @@ describe('tryAcquireFileLock / tryReleaseFileLock', () => {
         expect(await tryAcquireFileLock(lock, 'B', 60_000)).toBe(true)
         await tryReleaseFileLock(lock, 'B')
     })
+    test('heartbeat keeps a long-held lock from being taken over', async () => {
+        const lock = path.join(root, 'heartbeat.lock')
+        expect(await tryAcquireFileLock(lock, 'A', { ttlMs: 100, heartbeat: true })).toBe(true)
+        await Bun.sleep(350)
+        expect(await tryAcquireFileLock(lock, 'B', { ttlMs: 100 })).toBe(false)
+        await tryReleaseFileLock(lock, 'A')
+        expect(await tryAcquireFileLock(lock, 'C', { ttlMs: 100 })).toBe(true)
+        await tryReleaseFileLock(lock, 'C')
+    })
 })
 
 describe('FilesystemLockManager', () => {

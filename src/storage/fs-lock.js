@@ -1,5 +1,47 @@
-import { link, mkdir, unlink, writeFile } from 'node:fs/promises'
+import { link, mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+
+/** @type {Map<string, { interval: ReturnType<typeof setInterval>, owner: string }>} */
+const heartbeats = new Map()
+
+/**
+ * @param {string} lockPath
+ * @param {string} owner
+ * @param {number} ttlMs
+ */
+function startHeartbeat(lockPath, owner, ttlMs) {
+    stopHeartbeat(lockPath)
+    const intervalMs = Math.max(Math.floor(ttlMs / 3), 100)
+    const interval = setInterval(async () => {
+        try {
+            const meta = await readLockMeta(lockPath)
+            if (!meta || meta.owner !== owner) {
+                stopHeartbeat(lockPath)
+                return
+            }
+            const tmp = `${lockPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.heartbeat.tmp`
+            await writeFile(tmp, JSON.stringify({ owner, ts: Date.now() }))
+            try {
+                await rename(tmp, lockPath)
+            } catch (err) {
+                try {
+                    await unlink(tmp)
+                } catch {}
+                throw err
+            }
+        } catch {}
+    }, intervalMs)
+    if (typeof interval.unref === 'function') interval.unref()
+    heartbeats.set(lockPath, { interval, owner })
+}
+
+/** @param {string} lockPath */
+function stopHeartbeat(lockPath) {
+    const entry = heartbeats.get(lockPath)
+    if (!entry) return
+    clearInterval(entry.interval)
+    heartbeats.delete(lockPath)
+}
 
 /**
  * Reads and parses a lock file's JSON payload.
@@ -58,6 +100,11 @@ async function tryCreateExclusive(lockPath, payload) {
  * @property {(info: { lockPath: string, newOwner: string, previousOwner?: string }) => void=} onTakeover
  *   Invoked after a stale lock is successfully reclaimed. Not called for
  *   live-lock rejections or lost takeover races.
+ * @property {boolean=} heartbeat
+ *   When true, refresh the lock's timestamp every `ttlMs/3` while held so
+ *   long-running operations are not misclassified as stale. Stopped by
+ *   `tryReleaseFileLock`. Off by default; enable for collection-scope
+ *   locks held for the duration of bulk writes or rebuilds.
  */
 
 /**
@@ -87,7 +134,10 @@ export async function tryAcquireFileLock(lockPath, owner, ttlMsOrOptions = 30_00
     const ttlMs = options.ttlMs ?? 30_000
     await mkdir(path.dirname(lockPath), { recursive: true })
     const payload = JSON.stringify({ owner, ts: Date.now() })
-    if (await tryCreateExclusive(lockPath, payload)) return true
+    if (await tryCreateExclusive(lockPath, payload)) {
+        if (options.heartbeat) startHeartbeat(lockPath, owner, ttlMs)
+        return true
+    }
     const meta = await readLockMeta(lockPath)
     if (meta && typeof meta.ts === 'number' && Date.now() - meta.ts <= ttlMs) {
         return false
@@ -100,12 +150,15 @@ export async function tryAcquireFileLock(lockPath, owner, ttlMsOrOptions = 30_00
         if (error.code !== 'ENOENT') throw err
     }
     const acquired = await tryCreateExclusive(lockPath, payload)
-    if (acquired && options.onTakeover) {
-        try {
-            options.onTakeover({ lockPath, newOwner: owner, previousOwner })
-        } catch (err) {
-            console.error('FYLO onTakeover callback threw:', err)
+    if (acquired) {
+        if (options.onTakeover) {
+            try {
+                options.onTakeover({ lockPath, newOwner: owner, previousOwner })
+            } catch (err) {
+                console.error('FYLO onTakeover callback threw:', err)
+            }
         }
+        if (options.heartbeat) startHeartbeat(lockPath, owner, ttlMs)
     }
     return acquired
 }
@@ -120,6 +173,7 @@ export async function tryAcquireFileLock(lockPath, owner, ttlMsOrOptions = 30_00
  * @param {object} [options]
  * @param {number} [options.ttlMs]
  * @param {number} [options.waitTimeoutMs]
+ * @param {boolean} [options.heartbeat]
  * @param {(info: { lockPath: string, newOwner: string, previousOwner?: string }) => void} [options.onTakeover]
  * @returns {Promise<void>}
  */
@@ -127,10 +181,11 @@ export async function waitAcquireFileLock(lockPath, owner, options = {}) {
     const ttlMs = options.ttlMs ?? 30_000
     const waitTimeoutMs = options.waitTimeoutMs ?? 60_000
     const onTakeover = options.onTakeover
+    const heartbeat = options.heartbeat ?? false
     const deadline = Date.now() + waitTimeoutMs
     let delay = 2
     while (true) {
-        if (await tryAcquireFileLock(lockPath, owner, { ttlMs, onTakeover })) return
+        if (await tryAcquireFileLock(lockPath, owner, { ttlMs, onTakeover, heartbeat })) return
         if (Date.now() >= deadline) {
             throw new Error(`Timed out waiting for filesystem lock at ${lockPath}`)
         }
@@ -154,6 +209,7 @@ export async function waitAcquireFileLock(lockPath, owner, options = {}) {
  * @returns {Promise<void>}
  */
 export async function tryReleaseFileLock(lockPath, owner) {
+    stopHeartbeat(lockPath)
     const meta = await readLockMeta(lockPath)
     if (!meta || meta.owner !== owner) return
     try {
