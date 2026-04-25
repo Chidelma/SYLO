@@ -1,7 +1,15 @@
 import { link, mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
-/** @type {Map<string, { interval: ReturnType<typeof setInterval>, owner: string }>} */
+/**
+ * @typedef {object} HeartbeatEntry
+ * @property {ReturnType<typeof setInterval>} interval
+ * @property {string} owner
+ * @property {boolean} cancelled
+ * @property {Promise<void> | null} inFlight
+ */
+
+/** @type {Map<string, HeartbeatEntry>} */
 const heartbeats = new Map()
 
 /**
@@ -10,37 +18,69 @@ const heartbeats = new Map()
  * @param {number} ttlMs
  */
 function startHeartbeat(lockPath, owner, ttlMs) {
-    stopHeartbeat(lockPath)
+    void stopHeartbeat(lockPath)
     const intervalMs = Math.max(Math.floor(ttlMs / 3), 100)
-    const interval = setInterval(async () => {
+    /** @type {HeartbeatEntry} */
+    const entry = {
+        interval: /** @type {any} */ (null),
+        owner,
+        cancelled: false,
+        inFlight: null
+    }
+    const tick = async () => {
+        if (entry.cancelled) return
+        const tmp = `${lockPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.heartbeat.tmp`
         try {
             const meta = await readLockMeta(lockPath)
-            if (!meta || meta.owner !== owner) {
-                stopHeartbeat(lockPath)
-                return
-            }
-            const tmp = `${lockPath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.heartbeat.tmp`
+            if (entry.cancelled || !meta || meta.owner !== owner) return
             await writeFile(tmp, JSON.stringify({ owner, ts: Date.now() }))
+            if (entry.cancelled) return
+            const meta2 = await readLockMeta(lockPath)
+            if (entry.cancelled || !meta2 || meta2.owner !== owner) return
+            await rename(tmp, lockPath)
+            return
+        } catch {
+        } finally {
             try {
-                await rename(tmp, lockPath)
+                await unlink(tmp)
             } catch (err) {
-                try {
-                    await unlink(tmp)
-                } catch {}
-                throw err
+                const error = /** @type {NodeJS.ErrnoException} */ (err)
+                if (error && error.code !== 'ENOENT') {
+                    // swallow — tmp already consumed by rename or never created
+                }
             }
-        } catch {}
+        }
+    }
+    entry.interval = setInterval(() => {
+        if (entry.cancelled) return
+        if (entry.inFlight) return
+        entry.inFlight = tick().finally(() => {
+            entry.inFlight = null
+        })
     }, intervalMs)
-    if (typeof interval.unref === 'function') interval.unref()
-    heartbeats.set(lockPath, { interval, owner })
+    if (typeof entry.interval.unref === 'function') entry.interval.unref()
+    heartbeats.set(lockPath, entry)
 }
 
-/** @param {string} lockPath */
-function stopHeartbeat(lockPath) {
+/**
+ * Cancels and drains the heartbeat for `lockPath`. Awaits any tick that
+ * is already in flight so callers can safely `unlink` the lock file
+ * afterwards without racing with a stale rename.
+ *
+ * @param {string} lockPath
+ * @returns {Promise<void>}
+ */
+async function stopHeartbeat(lockPath) {
     const entry = heartbeats.get(lockPath)
     if (!entry) return
+    entry.cancelled = true
     clearInterval(entry.interval)
     heartbeats.delete(lockPath)
+    if (entry.inFlight) {
+        try {
+            await entry.inFlight
+        } catch {}
+    }
 }
 
 /**
@@ -209,7 +249,7 @@ export async function waitAcquireFileLock(lockPath, owner, options = {}) {
  * @returns {Promise<void>}
  */
 export async function tryReleaseFileLock(lockPath, owner) {
-    stopHeartbeat(lockPath)
+    await stopHeartbeat(lockPath)
     const meta = await readLockMeta(lockPath)
     if (!meta || meta.owner !== owner) return
     try {

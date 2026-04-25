@@ -79,6 +79,15 @@ describe('tryAcquireFileLock / tryReleaseFileLock', () => {
         expect(await tryAcquireFileLock(lock, 'C', { ttlMs: 100 })).toBe(true)
         await tryReleaseFileLock(lock, 'C')
     })
+    test('release drains heartbeat — no ghost lock after release', async () => {
+        const lock = path.join(root, 'heartbeat-release.lock')
+        for (let i = 0; i < 5; i++) {
+            expect(await tryAcquireFileLock(lock, 'A', { ttlMs: 300, heartbeat: true })).toBe(true)
+            await Bun.sleep(110)
+            await tryReleaseFileLock(lock, 'A')
+            expect(await Bun.file(lock).exists()).toBe(false)
+        }
+    })
 })
 
 describe('FilesystemLockManager', () => {

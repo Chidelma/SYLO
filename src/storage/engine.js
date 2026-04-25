@@ -520,9 +520,12 @@ export class FilesystemEngine {
             })
             return await action()
         } finally {
-            await this.locks.releaseCollectionWrite(collection, owner)
-            release()
-            if (this.writeLanes.get(collection) === lane) this.writeLanes.delete(collection)
+            try {
+                await this.locks.releaseCollectionWrite(collection, owner)
+            } finally {
+                release()
+                if (this.writeLanes.get(collection) === lane) this.writeLanes.delete(collection)
+            }
         }
     }
     /** @param {string} collection @returns {Promise<void>} */
