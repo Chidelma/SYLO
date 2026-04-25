@@ -78,6 +78,13 @@ domain-driven structure. If you imported from internal paths, update:
   refuses to configure the cipher rather than silently deriving a
   default. Deployments must set `CIPHER_SALT` explicitly before any
   encrypted write or read.
+- **Multi-address pinning.** When a host resolves to multiple addresses
+  (dual-stack, multi-A), `importBulkData` now tries them in order
+  rather than failing on the first unreachable IP. Each candidate is
+  still pinned and TLS-verified against the original hostname.
+- **Redacted import URLs in events.** `import.blocked` events emit a
+  redacted URL (no userinfo, query, or fragment) so observability
+  pipelines do not leak pre-signed URL params or basic-auth credentials.
 
 ### Durability
 
@@ -90,11 +97,18 @@ domain-driven structure. If you imported from internal paths, update:
 - **Heartbeat on collection write locks.** Long-running operations
   (`rebuildCollection`, bulk writes) refresh the lock timestamp every
   `ttlMs/3` while held, so legitimate work past the TTL is no longer
-  misclassified as stale and taken over by another process.
+  misclassified as stale and taken over by another process. The default
+  collection-write TTL is now 5 minutes, leaving generous margin for
+  GC pauses or slow filesystems before any takeover is considered.
+- **Stale-takeover revalidation.** Before unlinking a stale lock, the
+  takeover path re-reads its metadata immediately prior to the unlink
+  and aborts if another process has already updated the lock — closing
+  a window where two acquirers could race-unlink each other's freshly
+  created locks.
 - **Write-lane leak fixed.** `withCollectionWriteLock` now releases its
   in-process write lane even if the underlying collection-lock
-  acquisition throws (e.g. on lock-wait timeout), preventing the lane
-  from getting permanently stuck pending.
+  acquisition or release throws, preventing the lane from getting
+  permanently stuck pending under transient filesystem errors.
 
 ### Performance
 

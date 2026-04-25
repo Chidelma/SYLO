@@ -183,6 +183,11 @@ export async function tryAcquireFileLock(lockPath, owner, ttlMsOrOptions = 30_00
         return false
     }
     const previousOwner = meta && typeof meta.owner === 'string' ? meta.owner : undefined
+    const metaCheck = await readLockMeta(lockPath)
+    if (metaCheck) {
+        if (!meta) return false
+        if (metaCheck.owner !== meta.owner || metaCheck.ts !== meta.ts) return false
+    }
     try {
         await unlink(lockPath)
     } catch (err) {

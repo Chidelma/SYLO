@@ -103,9 +103,30 @@ export function hostAllowed(hostname, allowedHosts) {
 }
 
 /**
+ * Strips userinfo, query, and fragment from a URL so it can be emitted in
+ * observability events without leaking pre-signed URL params, basic-auth
+ * credentials, or query-string secrets.
+ *
+ * @param {URL | string} url
+ * @returns {string}
+ */
+export function redactImportUrl(url) {
+    try {
+        const u = new URL(url instanceof URL ? url.toString() : url)
+        u.username = ''
+        u.password = ''
+        u.search = ''
+        u.hash = ''
+        return u.toString()
+    } catch {
+        return '[unparseable-url]'
+    }
+}
+
+/**
  * @param {URL} url
  * @param {ReturnType<typeof normalizeImportOptions>} options
- * @returns {Promise<{ pinnedUrl: URL, serverName: string } | null>}
+ * @returns {Promise<{ pinnedUrls: URL[], serverName: string } | null>}
  */
 export async function assertImportUrlAllowed(url, options) {
     if (!options.allowedProtocols.includes(url.protocol))
@@ -125,11 +146,13 @@ export async function assertImportUrlAllowed(url, options) {
     if (!options.allowPrivateNetwork && addresses.some((address) => isPrivateAddress(address)))
         throw new Error(`Import URL resolves to a private address: ${url.hostname}`)
     if (options.allowPrivateNetwork) return null
-    const pinnedIp = addresses[0]
-    const pinnedHost = isIP(pinnedIp) === 6 ? `[${pinnedIp}]` : pinnedIp
-    const pinnedUrl = new URL(url.toString())
-    pinnedUrl.hostname = pinnedHost
-    return { pinnedUrl, serverName: hostname }
+    const pinnedUrls = addresses.map((ip) => {
+        const host = isIP(ip) === 6 ? `[${ip}]` : ip
+        const pinned = new URL(url.toString())
+        pinned.hostname = host
+        return pinned
+    })
+    return { pinnedUrls, serverName: hostname }
 }
 
 export { tlsCheckServerIdentity }

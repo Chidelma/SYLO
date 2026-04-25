@@ -3,7 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import Fylo from '../../src/index.js'
-import { normalizeImportOptions, assertImportUrlAllowed } from '../../src/security/import-guard.js'
+import {
+    normalizeImportOptions,
+    assertImportUrlAllowed,
+    redactImportUrl
+} from '../../src/security/import-guard.js'
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'fylo-import-sec-'))
 const fylo = new Fylo({ root })
@@ -117,12 +121,22 @@ describe('importBulkData SSRF/rebinding hardening', () => {
         const pin = await assertImportUrlAllowed(new URL('https://1.1.1.1/'), options)
         expect(pin).not.toBeNull()
         expect(pin?.serverName).toBe('1.1.1.1')
-        expect(pin?.pinnedUrl.hostname).toBe('1.1.1.1')
+        expect(pin?.pinnedUrls).toHaveLength(1)
+        expect(pin?.pinnedUrls[0].hostname).toBe('1.1.1.1')
     })
 
     test('assertImportUrlAllowed returns null for data: URLs (no pinning needed)', async () => {
         const options = normalizeImportOptions(undefined)
         const pin = await assertImportUrlAllowed(new URL('data:application/json,%5B%5D'), options)
         expect(pin).toBeNull()
+    })
+
+    test('redactImportUrl strips userinfo, query, and fragment', () => {
+        const u = new URL('https://user:secret@example.com/path?token=abc&x=1#frag')
+        expect(redactImportUrl(u)).toBe('https://example.com/path')
+    })
+
+    test('redactImportUrl returns sentinel for unparseable input', () => {
+        expect(redactImportUrl('not a url')).toBe('[unparseable-url]')
     })
 })

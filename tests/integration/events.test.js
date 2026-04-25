@@ -109,12 +109,12 @@ describe('FYLO onEvent hook', () => {
             const fylo = new Fylo({ root: lockRoot })
             await fylo.createCollection(collection)
             const lockPath = path.join(lockRoot, collection, '.fylo', 'collection.lock')
-            // Plant a lock file with a timestamp older than the default 30s TTL so
+            // Plant a lock file older than the collection-write TTL (5 min) so
             // the next acquirer treats it as stale and takes it over.
             await mkdir(path.dirname(lockPath), { recursive: true })
             await writeFile(
                 lockPath,
-                JSON.stringify({ owner: 'dead-owner', ts: Date.now() - 60_000 })
+                JSON.stringify({ owner: 'dead-owner', ts: Date.now() - 600_000 })
             )
             /** @type {import('../../src/observability/events.js').FyloEvent[]} */
             const events = []

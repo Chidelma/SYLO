@@ -154,6 +154,7 @@ export class FilesystemLockManager {
      */
     async acquireCollectionWrite(collection, owner, options) {
         await waitAcquireFileLock(this.collectionLockPath(collection), owner, {
+            ttlMs: 300_000,
             ...options,
             heartbeat: true
         })

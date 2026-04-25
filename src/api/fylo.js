@@ -10,6 +10,7 @@ import { validateDocId } from '../core/doc-id.js'
 import {
     normalizeImportOptions,
     assertImportUrlAllowed,
+    redactImportUrl,
     tlsCheckServerIdentity
 } from '../security/import-guard.js'
 import '../core/extensions.js'
@@ -292,17 +293,14 @@ export default class Fylo {
             emitFyloEvent(this.onEvent, {
                 type: 'import.blocked',
                 reason,
-                url: url.toString(),
+                url: redactImportUrl(url),
                 detail: message
             })
             throw err
         }
         /** @type {RequestInit & { tls?: { serverName?: string, checkServerIdentity?: Function } }} */
         const fetchInit = { redirect: 'manual' }
-        /** @type {URL} */
-        let fetchUrl = url
         if (pin) {
-            fetchUrl = pin.pinnedUrl
             fetchInit.headers = { Host: url.host }
             if (url.protocol === 'https:') {
                 fetchInit.tls = {
@@ -313,13 +311,28 @@ export default class Fylo {
                 }
             }
         }
-        const res = await fetch(fetchUrl, fetchInit)
+        /** @type {URL[]} */
+        const fetchTargets = pin ? pin.pinnedUrls : [url]
+        /** @type {Response | undefined} */
+        let res
+        /** @type {unknown} */
+        let lastErr
+        for (let i = 0; i < fetchTargets.length; i++) {
+            try {
+                res = await fetch(fetchTargets[i], fetchInit)
+                break
+            } catch (err) {
+                lastErr = err
+                if (i === fetchTargets.length - 1) throw err
+            }
+        }
+        if (!res) throw lastErr instanceof Error ? lastErr : new Error('Import request failed')
         if (res.status >= 300 && res.status < 400) {
             const location = res.headers.get('location') ?? 'unknown'
             emitFyloEvent(this.onEvent, {
                 type: 'import.blocked',
                 reason: 'redirect',
-                url: url.toString(),
+                url: redactImportUrl(url),
                 detail: `redirect to ${location}`
             })
             throw new Error(`Import request redirected to ${location}`)

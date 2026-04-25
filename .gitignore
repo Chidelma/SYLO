@@ -12,3 +12,6 @@ bin
 # Graphify
 .graphify_*
 graphify-out/
+CLAUDE.md
+AGENTS.md
+.github/copilot-instructions.md
