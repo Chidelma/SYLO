@@ -328,14 +328,15 @@ export default class Fylo {
         }
         if (!res) throw lastErr instanceof Error ? lastErr : new Error('Import request failed')
         if (res.status >= 300 && res.status < 400) {
-            const location = res.headers.get('location') ?? 'unknown'
+            const location = res.headers.get('location')
+            const redactedLocation = location ? redactImportUrl(location) : 'unknown'
             emitFyloEvent(this.onEvent, {
                 type: 'import.blocked',
                 reason: 'redirect',
                 url: redactImportUrl(url),
-                detail: `redirect to ${location}`
+                detail: `redirect to ${redactedLocation}`
             })
-            throw new Error(`Import request redirected to ${location}`)
+            throw new Error(`Import request redirected to ${redactedLocation}`)
         }
         if (!res.ok) throw new Error(`Import request failed with status ${res.status}`)
         if (!res.headers.get('content-type')?.includes('application/json'))

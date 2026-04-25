@@ -1,3 +1,40 @@
+/**
+ * Advisory file-based locking for FYLO collection and document writes.
+ *
+ * Correctness model — read this before changing anything in here.
+ *
+ * This module implements *advisory* locking on top of `node:fs/promises`
+ * primitives (`link`, `unlink`, `rename`). It is not built on POSIX
+ * `fcntl(F_SETLK)` or `flock` — those would give true OS-level mutual
+ * exclusion, but they are not available through `node:fs/promises` and
+ * they do not survive across `bun build --compile` targets uniformly.
+ *
+ * Without OS-level compare-and-swap, the takeover and heartbeat-refresh
+ * paths each contain a small residual race window: between any
+ * `readLockMeta(...)` (or other observation) and the subsequent `unlink`
+ * or `rename`, a different process can take over the lock and have its
+ * fresh write clobbered.
+ *
+ * The mitigations layered here:
+ * - `link()`-based atomic create on the happy path (only one acquirer
+ *   can win a contested fresh acquire).
+ * - 5-minute TTL on collection writes, with a heartbeat refresh every
+ *   `ttlMs/3`. The heartbeat keeps the trigger for takeover from
+ *   firing during normal operation, so the race window only opens when
+ *   a holder is genuinely dead (crashed) or paused for >5 minutes.
+ * - Re-validation of the stale metadata immediately before the takeover
+ *   `unlink`. This narrows the cross-process window to microseconds.
+ * - Heartbeat ticks re-check ownership and the cancellation flag right
+ *   before `rename`, and `tryReleaseFileLock` drains in-flight ticks
+ *   before unlinking so a stale tick cannot resurrect a released lock.
+ *
+ * For workloads requiring strictly strong cross-process exclusion under
+ * adversarial timing, consider switching this primitive to `fcntl`
+ * locking or a central coordinator (Redis/ZooKeeper). That is a 3.x
+ * follow-up; the 3.0 release ships with the advisory model documented
+ * here.
+ */
+
 import { link, mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 

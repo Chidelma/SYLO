@@ -14,19 +14,28 @@
  *   | { type: 'index.rebuilt', collection: string, docsScanned: number, indexedDocs: number, worm: boolean }
  *   | { type: 'lock.takeover', lockPath: string, newOwner: string, previousOwner?: string }
  * )} FyloEvent
- * @typedef {(event: FyloEvent) => void} FyloEventHandler
+ * @typedef {(event: FyloEvent) => void | Promise<void>} FyloEventHandler
  */
 
 /**
- * Invokes a user-supplied event handler, swallowing any thrown errors so that
- * a misbehaving consumer cannot break FYLO operations.
+ * Invokes a user-supplied event handler, swallowing any thrown errors and
+ * rejected promises so a misbehaving consumer cannot break FYLO operations.
+ * Returning a Promise from the handler is supported; the rejection is
+ * captured and logged but never propagated.
+ *
  * @param {FyloEventHandler | undefined} handler
  * @param {FyloEvent} event
  */
 export function emitFyloEvent(handler, event) {
     if (!handler) return
     try {
-        handler(event)
+        /** @type {any} */
+        const result = handler(event)
+        if (result && typeof result.then === 'function') {
+            result.catch((/** @type {unknown} */ err) => {
+                console.error('FYLO onEvent handler rejected:', err)
+            })
+        }
     } catch (err) {
         console.error('FYLO onEvent handler threw:', err)
     }

@@ -144,4 +144,29 @@ describe('FYLO onEvent hook', () => {
         const result = await fylo.rebuildCollection(collection)
         expect(result.indexedDocs).toBe(1)
     })
+
+    test('a rejecting async onEvent handler does not break the underlying operation', async () => {
+        let unhandled = false
+        const onUnhandled = () => {
+            unhandled = true
+        }
+        process.on('unhandledRejection', onUnhandled)
+        try {
+            const fylo = new Fylo({
+                root,
+                onEvent: async () => {
+                    throw new Error('handler async boom')
+                }
+            })
+            const collection = `evt-reject-${Date.now()}`
+            await fylo.createCollection(collection)
+            await fylo.putData(collection, { title: 'one' })
+            const result = await fylo.rebuildCollection(collection)
+            expect(result.indexedDocs).toBe(1)
+            await new Promise((r) => setTimeout(r, 50))
+            expect(unhandled).toBe(false)
+        } finally {
+            process.off('unhandledRejection', onUnhandled)
+        }
+    })
 })
