@@ -35,15 +35,10 @@ describe('rebuildCollection', () => {
             title: 'Rebuild me'
         })
 
-        const indexPath = path.join(
-            ROOT,
-            BASIC_COLLECTION,
-            '.fylo',
-            'indexes',
-            `${BASIC_COLLECTION}.idx.json`
-        )
-
-        await Bun.write(indexPath, JSON.stringify({ version: 1, docs: {} }))
+        await rm(path.join(ROOT, BASIC_COLLECTION, '.fylo', 'index'), {
+            recursive: true,
+            force: true
+        })
 
         const before = []
         for await (const doc of fylo
@@ -123,19 +118,15 @@ describe('rebuildCollection', () => {
             'heads',
             `${tombstoneFirst}.json`
         )
-        const indexPath = path.join(
-            ROOT,
-            WORM_COLLECTION,
-            '.fylo',
-            'indexes',
-            `${WORM_COLLECTION}.idx.json`
-        )
 
         await unlink(activeHeadPath)
         await unlink(activeFirstMetaPath)
         await unlink(activeSecondMetaPath)
         await unlink(tombstoneHeadPath)
-        await Bun.write(indexPath, JSON.stringify({ version: 1, docs: {} }))
+        await rm(path.join(ROOT, WORM_COLLECTION, '.fylo', 'index'), {
+            recursive: true,
+            force: true
+        })
 
         const rebuild = await wormFylo.rebuildCollection(WORM_COLLECTION)
         const activeLatest = await wormFylo.getLatest(WORM_COLLECTION, activeFirst)

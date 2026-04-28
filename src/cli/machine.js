@@ -1,5 +1,11 @@
 import path from 'node:path'
 import Fylo from '../index.js'
+import {
+    doctorSchema,
+    inspectSchema,
+    materializeSchemaDocument,
+    validateSchemaDocument
+} from '../schema/admin.js'
 
 const MACHINE_PROTOCOL_VERSION = 1
 
@@ -8,7 +14,7 @@ const MACHINE_PROTOCOL_VERSION = 1
  */
 
 /**
- * @typedef {'executeSQL' | 'createCollection' | 'dropCollection' | 'inspectCollection' | 'rebuildCollection' | 'getDoc' | 'getLatest' | 'getHistory' | 'findDocs' | 'joinDocs' | 'putData' | 'batchPutData' | 'patchDoc' | 'patchDocs' | 'delDoc' | 'delDocs' | 'importBulkData'} MachineOperation
+ * @typedef {'executeSQL' | 'createCollection' | 'dropCollection' | 'inspectCollection' | 'rebuildCollection' | 'getDoc' | 'getLatest' | 'getHistory' | 'findDocs' | 'joinDocs' | 'putData' | 'batchPutData' | 'patchDoc' | 'patchDocs' | 'delDoc' | 'delDocs' | 'importBulkData' | 'schemaInspect' | 'schemaCurrent' | 'schemaHistory' | 'schemaDoctor' | 'schemaValidate' | 'schemaMaterialize'} MachineOperation
  */
 
 /**
@@ -16,6 +22,7 @@ const MACHINE_PROTOCOL_VERSION = 1
  * @property {MachineOperation} op
  * @property {string=} requestId
  * @property {string=} root
+ * @property {string=} schemaDir
  * @property {boolean | FyloWormOptions=} worm
  * @property {string=} collection
  * @property {string=} id
@@ -23,6 +30,7 @@ const MACHINE_PROTOCOL_VERSION = 1
  * @property {string=} sql
  * @property {Record<string, any>=} query
  * @property {Record<string, any>=} join
+ * @property {Record<string, any>=} document
  * @property {Record<string, any>=} data
  * @property {Record<string, any>[]=} batch
  * @property {Record<string, any>=} newDoc
@@ -260,6 +268,44 @@ export async function executeMachineOperation(request, overrides = {}) {
                 requireString(request, 'collection'),
                 new URL(requireString(request, 'url')),
                 request.limitOrOptions
+            )
+        case 'schemaInspect':
+            return await inspectSchema(requireString(request, 'collection'), request.schemaDir)
+        case 'schemaCurrent': {
+            const inspect = await inspectSchema(
+                requireString(request, 'collection'),
+                request.schemaDir
+            )
+            return {
+                collection: inspect.collection,
+                schemaDir: inspect.schemaDir,
+                current: inspect.current
+            }
+        }
+        case 'schemaHistory': {
+            const inspect = await inspectSchema(
+                requireString(request, 'collection'),
+                request.schemaDir
+            )
+            return {
+                collection: inspect.collection,
+                schemaDir: inspect.schemaDir,
+                versions: inspect.versions
+            }
+        }
+        case 'schemaDoctor':
+            return await doctorSchema(requireString(request, 'collection'), request.schemaDir)
+        case 'schemaValidate':
+            return await validateSchemaDocument(
+                requireString(request, 'collection'),
+                requireObject(request, 'document'),
+                request.schemaDir
+            )
+        case 'schemaMaterialize':
+            return await materializeSchemaDocument(
+                requireString(request, 'collection'),
+                requireObject(request, 'document'),
+                request.schemaDir
             )
         default:
             throw new Error(`Unsupported machine operation: ${request.op}`)

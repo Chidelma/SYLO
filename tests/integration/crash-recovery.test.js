@@ -36,15 +36,14 @@ describe('crash recovery and concurrency', () => {
         expect(titles).toEqual(expected)
     })
 
-    test('stale .tmp files in indexes dir are ignored by reads and subsequent writes', async () => {
+    test('stale files in the prefix index root are ignored by reads and subsequent writes', async () => {
         const collection = `stale-tmp-${Date.now()}`
         const fylo = new Fylo({ root })
         await fylo.createCollection(collection)
         await fylo.putData(collection, { title: 'before' })
 
-        const indexesDir = path.join(root, collection, '.fylo', 'indexes')
-        await writeFile(path.join(indexesDir, `${collection}.idx.json.tmp`), 'not json {]{}')
-        await writeFile(path.join(indexesDir, `leftover.tmp`), 'garbage')
+        const indexDir = path.join(root, collection, '.fylo', 'index')
+        await writeFile(path.join(indexDir, `leftover.tmp`), 'garbage')
 
         // Read works:
         /** @type {string[]} */
@@ -68,23 +67,26 @@ describe('crash recovery and concurrency', () => {
         expect(allTitles.sort()).toEqual(['after', 'before'])
     })
 
-    test('corrupt index file surfaces a clear error; removing it unblocks recovery', async () => {
-        const collection = `corrupt-idx-${Date.now()}`
+    test('rebuildCollection recovers deleted prefix index entries from documents', async () => {
+        const collection = `recover-index-${Date.now()}`
         const fylo = new Fylo({ root })
         await fylo.createCollection(collection)
         await fylo.putData(collection, { title: 'original' })
 
-        const idxPath = path.join(root, collection, '.fylo', 'indexes', `${collection}.idx.json`)
-        await writeFile(idxPath, '{not valid json')
+        await rm(path.join(root, collection, '.fylo', 'index'), {
+            recursive: true,
+            force: true
+        })
+        const before = []
+        for await (const data of fylo
+            .findDocs(collection, {
+                $ops: [{ title: { $eq: 'original' } }]
+            })
+            .collect()) {
+            before.push(data)
+        }
+        expect(before).toHaveLength(0)
 
-        // Fresh engine instance to bypass in-memory cache.
-        const freshFylo = new Fylo({ root })
-        await expect(freshFylo.putData(collection, { title: 'second' })).rejects.toThrow(
-            /Invalid FYLO index file/
-        )
-
-        // Operator recovery: delete the corrupt index, then rebuild from docs on disk.
-        await rm(idxPath, { force: true })
         const recovered = new Fylo({ root })
         const result = await recovered.rebuildCollection(collection)
         expect(result.indexedDocs).toBe(1)

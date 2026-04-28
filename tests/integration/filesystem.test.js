@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import Fylo from '../../src/index.js'
@@ -91,32 +91,23 @@ describe('filesystem engine', () => {
         expect(raw.createdAt).toBeUndefined()
         expect(raw.updatedAt).toBeUndefined()
     })
-    test('stores indexes in a single collection file instead of SQLite or per-entry files', async () => {
-        const indexStat = await stat(
-            path.join(root, POSTS, '.fylo', 'indexes', `${POSTS}.idx.json`)
+    test('stores query indexes as zero-payload prefix entries', async () => {
+        const id = await fylo.putData(POSTS, {
+            title: 'Prefix doc',
+            tags: ['bun', 'prefix']
+        })
+        const titleIndexStat = await stat(
+            path.join(root, POSTS, '.fylo', 'index', 'title', 'eq', 'Prefix%20doc', id)
         )
-        expect(indexStat.isFile()).toBe(true)
+        const tagIndexStat = await stat(
+            path.join(root, POSTS, '.fylo', 'index', 'tags', 'eq', 'prefix', id)
+        )
+        expect(titleIndexStat.isFile()).toBe(true)
+        expect(titleIndexStat.size).toBe(0)
+        expect(tagIndexStat.isFile()).toBe(true)
         await expect(stat(path.join(root, POSTS, '.fylo', 'index.db'))).rejects.toThrow()
     })
-    test('corrupted index files report sanitized errors', async () => {
-        const corruptCollection = 'filesystem-corrupt-index'
-        await fylo.createCollection(corruptCollection)
-        await Bun.write(
-            path.join(root, corruptCollection, '.fylo', 'indexes', `${corruptCollection}.idx.json`),
-            '{not-json'
-        )
-
-        const iter = fylo
-            .findDocs(corruptCollection, {
-                $ops: [{ title: { $eq: 'anything' } }]
-            })
-            .collect()
-
-        await expect(iter.next()).rejects.toThrow(
-            `Invalid FYLO index file for collection: ${corruptCollection}`
-        )
-    })
-    test('uses the collection index file to support exact, range, and contains queries', async () => {
+    test('uses prefix indexes to support exact, range, like, and contains queries', async () => {
         const queryCollection = 'filesystem-query'
         await fylo.createCollection(queryCollection)
 
@@ -162,33 +153,75 @@ describe('filesystem engine', () => {
         expect(Object.keys(containsResults)).toEqual([bunId])
         expect(containsResults[nodeId]).toBeUndefined()
 
-        const index = await Bun.file(
-            path.join(root, queryCollection, '.fylo', 'indexes', `${queryCollection}.idx.json`)
-        ).json()
-        const rows = index.docs[bunId]
+        let prefixResults = {}
+        for await (const data of fylo
+            .findDocs(queryCollection, {
+                $ops: [{ title: { $like: 'Bun%' } }]
+            })
+            .collect()) {
+            prefixResults = { ...prefixResults, ...data }
+        }
+        expect(Object.keys(prefixResults)).toEqual([bunId])
 
-        expect(rows).toEqual(
-            expect.arrayContaining([
-                expect.objectContaining({
-                    fieldPath: 'title',
-                    rawValue: 'Bun launch',
-                    valueType: 'string',
-                    numericValue: null
-                }),
-                expect.objectContaining({
-                    fieldPath: 'meta/score',
-                    rawValue: '10',
-                    valueType: 'number',
-                    numericValue: 10
-                }),
-                expect.objectContaining({
-                    fieldPath: 'tags/1',
-                    rawValue: 'storage',
-                    valueType: 'string',
-                    numericValue: null
-                })
-            ])
+        let suffixResults = {}
+        for await (const data of fylo
+            .findDocs(queryCollection, {
+                $ops: [{ title: { $like: '%launch' } }]
+            })
+            .collect()) {
+            suffixResults = { ...suffixResults, ...data }
+        }
+        expect(Object.keys(suffixResults).sort()).toEqual([bunId, nodeId].sort())
+
+        let containsLikeResults = {}
+        for await (const data of fylo
+            .findDocs(queryCollection, {
+                $ops: [{ title: { $like: '%un l%' } }]
+            })
+            .collect()) {
+            containsLikeResults = { ...containsLikeResults, ...data }
+        }
+        expect(Object.keys(containsLikeResults)).toEqual([bunId])
+
+        const titleEntry = await stat(
+            path.join(root, queryCollection, '.fylo', 'index', 'title', 'eq', 'Bun%20launch', bunId)
         )
+        const arrayEntry = await stat(
+            path.join(root, queryCollection, '.fylo', 'index', 'tags', 'eq', 'storage', bunId)
+        )
+        const numericEntries = await readdir(
+            path.join(root, queryCollection, '.fylo', 'index', 'meta', 'score', 'n')
+        )
+        expect(titleEntry.size).toBe(0)
+        expect(arrayEntry.size).toBe(0)
+        expect(numericEntries).toHaveLength(2)
+    })
+    test('array index entries shrink and expand with document changes', async () => {
+        const collection = 'filesystem-array-index'
+        await fylo.createCollection(collection)
+        const firstId = await fylo.putData(collection, { tags: ['alpha', 'beta'] })
+        const secondId = await fylo.patchDoc(collection, { [firstId]: { tags: ['beta', 'gamma'] } })
+
+        let oldResults = {}
+        for await (const data of fylo
+            .findDocs(collection, {
+                $ops: [{ tags: { $contains: 'alpha' } }]
+            })
+            .collect()) {
+            oldResults = { ...oldResults, ...data }
+        }
+
+        let newResults = {}
+        for await (const data of fylo
+            .findDocs(collection, {
+                $ops: [{ tags: { $contains: 'gamma' } }]
+            })
+            .collect()) {
+            newResults = { ...newResults, ...data }
+        }
+
+        expect(oldResults).toEqual({})
+        expect(Object.keys(newResults)).toEqual([secondId])
     })
     test('joins work in filesystem mode', async () => {
         const userId = await fylo.putData(USERS, { id: 42, name: 'Ada' })

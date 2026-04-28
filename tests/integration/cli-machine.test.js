@@ -67,6 +67,7 @@ describe('CLI machine interface', () => {
     test('exec handles JSON requests from inline payloads and stdin', async () => {
         const repo = process.cwd()
         const root = await createRoot('fylo-machine-')
+        const schemaDir = path.join(repo, 'tests', 'schemas')
 
         const build = await run(['run', 'build'], repo)
         expect(build.exitCode).toBe(0)
@@ -145,6 +146,51 @@ describe('CLI machine interface', () => {
         const queryPayload = JSON.parse(queryResponse.stdout)
         expect(queryPayload.ok).toBe(true)
         expect(queryPayload.result[docId].title).toBe('Interop')
+
+        const schemaInspectResponse = await run(
+            [
+                'dist/cli/index.js',
+                'exec',
+                '--request',
+                JSON.stringify({
+                    op: 'schemaInspect',
+                    schemaDir,
+                    collection: 'article'
+                })
+            ],
+            repo
+        )
+        expect(schemaInspectResponse.exitCode).toBe(0)
+        const schemaInspectPayload = JSON.parse(schemaInspectResponse.stdout)
+        expect(schemaInspectPayload.ok).toBe(true)
+        expect(schemaInspectPayload.result.current).toBe('v2')
+        expect(schemaInspectPayload.result.versions).toHaveLength(2)
+
+        const schemaMaterializeResponse = await run(
+            [
+                'dist/cli/index.js',
+                'exec',
+                '--request',
+                JSON.stringify({
+                    op: 'schemaMaterialize',
+                    schemaDir,
+                    collection: 'article',
+                    document: {
+                        id: 9,
+                        title: 'Machine Article',
+                        body: 'body',
+                        _v: 'v1'
+                    }
+                })
+            ],
+            repo
+        )
+        expect(schemaMaterializeResponse.exitCode).toBe(0)
+        const schemaMaterializePayload = JSON.parse(schemaMaterializeResponse.stdout)
+        expect(schemaMaterializePayload.ok).toBe(true)
+        expect(schemaMaterializePayload.result.current).toBe('v2')
+        expect(schemaMaterializePayload.result.document.slug).toBe('machine-article')
+        expect(schemaMaterializePayload.result.document._v).toBe('v2')
     })
 
     test('exec returns structured JSON errors with non-zero exits', async () => {

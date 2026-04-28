@@ -1,17 +1,30 @@
 {
   "name": "@d31ma/fylo",
-  "version": "3.0.0",
+  "version": "26.18.28",
   "main": "./dist/index.js",
   "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "fylo.query": "./dist/cli/index.js",
     "fylo.admin": "./dist/cli/index.js",
     "fylo.exec": "./dist/cli/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "node ./scripts/build.mjs",
     "build:exe": "mkdir -p ./dist/bin && bun build --compile ./src/cli/index.js --outfile ./dist/bin/fylo",
-    "test": "bun test",
+    "test": "bun --env-file=.env.test test --timeout 120000 --parallel=1",
     "typecheck": "tsc --noEmit",
     "lint": "prettier --check \"src/**/*.js\" \"tests/**/*.js\" README.md",
     "format": "prettier --write src tests"
@@ -27,16 +40,13 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@d31ma/chex": "0.4.1",
-    "@d31ma/ttid": "1.3.7"
+    "@d31ma/chex": "26.18.27-2",
+    "@d31ma/ttid": "26.18.27-2"
   },
   "type": "module",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/d31ma/Fylo.git"
-  },
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
   },
   "homepage": "https://fylo.del.ma",
   "license": "MIT",

@@ -11,20 +11,11 @@
  */
 
 /**
- * @typedef {object} FyloAuthorizeInput
+ * @typedef {object} FyloAuthErrorInput
  * @property {FyloAuthContext} auth
  * @property {FyloAuthAction} action
  * @property {string=} collection
- * @property {string[]=} collections
  * @property {string=} docId
- * @property {unknown=} data
- * @property {unknown=} query
- * @property {string=} sql
- */
-
-/**
- * @typedef {object} FyloAuthPolicy
- * @property {(input: FyloAuthorizeInput) => boolean | Promise<boolean>} authorize
  */
 
 export class FyloAuthError extends Error {
@@ -36,7 +27,7 @@ export class FyloAuthError extends Error {
     docId
 
     /**
-     * @param {FyloAuthorizeInput} input
+     * @param {FyloAuthErrorInput} input
      */
     constructor(input) {
         super(

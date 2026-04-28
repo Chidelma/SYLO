@@ -8,9 +8,9 @@
  */
 
 /**
- * @typedef {import('../security/auth.js').FyloAuthPolicy} FyloAuthPolicy
  * @typedef {import('../types/vendor.js').TTID} TTID
  * @typedef {import('../observability/events.js').FyloEventHandler} FyloEventHandler
+ * @typedef {import('../storage/types.js').FyloIndexOptions} FyloIndexOptions
  */
 
 /** @typedef {'await-sync' | 'fire-and-forget'} FyloSyncMode */
@@ -72,10 +72,11 @@
  * @template {Record<string, any>} [T=Record<string, any>]
  * @typedef {object} FyloOptions
  * @property {string=} root
- * @property {FyloAuthPolicy=} auth
+ * @property {boolean=} rls
  * @property {FyloSyncHooks<T>=} sync
  * @property {FyloSyncMode=} syncMode
  * @property {FyloWormOptions=} worm
+ * @property {FyloIndexOptions=} index
  * @property {FyloEventHandler=} onEvent
  */
 

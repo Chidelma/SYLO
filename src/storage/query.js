@@ -6,10 +6,8 @@ import { Cipher } from '../security/cipher.js'
  * @typedef {import('../query/types.js').Operand} Operand
  * @typedef {import('../query/types.js').QueryOperation<Record<string, any>>} QueryOperation
  * @typedef {import('../query/types.js').StoreQuery<Record<string, any>>} StoreQuery
- * @typedef {import('./types.js').CollectionIndexCache} CollectionIndexCache
- * @typedef {import('./types.js').StoredIndexEntry} StoredIndexEntry
- * @typedef {Omit<StoredIndexEntry, 'fieldPath'>} NormalizedIndexValue
- * @typedef {{ loadIndexCache(collection: string): Promise<CollectionIndexCache>, normalizeIndexValue(rawValue: string): NormalizedIndexValue }} FilesystemQueryContext
+ * @typedef {import('./types.js').PrefixIndexStore} PrefixIndexStore
+ * @typedef {{ index: PrefixIndexStore }} FilesystemQueryContext
  */
 
 export class FilesystemQueryEngine {
@@ -102,19 +100,6 @@ export class FilesystemQueryEngine {
         return true
     }
     /**
-     * Normalizes one query value to the same hash/index representation used at write time.
-     * @param {string} collection
-     * @param {string} fieldPath
-     * @param {unknown} value
-     * @returns {Promise<NormalizedIndexValue>}
-     */
-    async normalizeQueryValue(collection, fieldPath, value) {
-        let rawValue = String(value).replaceAll('/', '%2F')
-        if (Cipher.isConfigured() && Cipher.isEncryptedField(collection, fieldPath))
-            rawValue = await Cipher.blindIndex(rawValue)
-        return this.context.normalizeIndexValue(rawValue)
-    }
-    /**
      * @param {Set<TTIDValue> | null} current
      * @param {Iterable<TTIDValue>} next
      * @returns {Set<TTIDValue>}
@@ -149,13 +134,13 @@ export class FilesystemQueryEngine {
                 throw new Error(`Operator is not supported on encrypted field: ${fieldPath}`)
             }
         }
-        const cache = await this.context.loadIndexCache(collection)
         let candidateIds = null
         if (operand.$eq !== undefined) {
-            const normalized = await this.normalizeQueryValue(collection, fieldPath, operand.$eq)
             candidateIds = this.intersectDocIds(
                 candidateIds,
-                cache.fieldHash.get(fieldPath)?.get(normalized.valueHash) ?? new Set()
+                (await this.context.index.candidateDocIds(collection, fieldPath, {
+                    $eq: operand.$eq
+                })) ?? new Set()
             )
         }
         if (
@@ -164,41 +149,31 @@ export class FilesystemQueryEngine {
             operand.$lt !== undefined ||
             operand.$lte !== undefined
         ) {
-            const numericMatches = new Set()
-            for (const entry of cache.fieldNumeric.get(fieldPath) ?? []) {
-                if (operand.$gt !== undefined && !(entry.numericValue > operand.$gt)) continue
-                if (operand.$gte !== undefined && !(entry.numericValue >= operand.$gte)) continue
-                if (operand.$lt !== undefined && !(entry.numericValue < operand.$lt)) continue
-                if (operand.$lte !== undefined && !(entry.numericValue <= operand.$lte)) continue
-                numericMatches.add(entry.docId)
+            for (const key of /** @type {const} */ (['$gt', '$gte', '$lt', '$lte'])) {
+                if (operand[key] === undefined) continue
+                const rangeCandidates = await this.context.index.candidateDocIds(
+                    collection,
+                    fieldPath,
+                    { [key]: operand[key] }
+                )
+                if (rangeCandidates === null) return null
+                candidateIds = this.intersectDocIds(candidateIds, rangeCandidates)
             }
-            candidateIds = this.intersectDocIds(candidateIds, numericMatches)
         }
         if (operand.$like !== undefined) {
-            const regex = this.likeToRegex(operand.$like.replaceAll('/', '%2F'))
-            const stringMatches = new Set()
-            for (const entry of cache.fieldString.get(fieldPath) ?? []) {
-                if (regex.test(entry.rawValue)) stringMatches.add(entry.docId)
-            }
-            candidateIds = this.intersectDocIds(candidateIds, stringMatches)
+            const likeCandidates = await this.context.index.candidateDocIds(collection, fieldPath, {
+                $like: operand.$like
+            })
+            if (likeCandidates === null) return null
+            candidateIds = this.intersectDocIds(candidateIds, likeCandidates)
         }
         if (operand.$contains !== undefined) {
-            const normalized = await this.normalizeQueryValue(
+            const containsCandidates = await this.context.index.candidateDocIds(
                 collection,
                 fieldPath,
-                operand.$contains
+                { $contains: operand.$contains }
             )
-            const containsMatches = new Set()
-            for (const [candidateFieldPath, hashes] of cache.fieldHash.entries()) {
-                if (
-                    candidateFieldPath !== fieldPath &&
-                    !candidateFieldPath.startsWith(`${fieldPath}/`)
-                )
-                    continue
-                for (const docId of hashes.get(normalized.valueHash) ?? [])
-                    containsMatches.add(docId)
-            }
-            candidateIds = this.intersectDocIds(candidateIds, containsMatches)
+            candidateIds = this.intersectDocIds(candidateIds, containsCandidates ?? new Set())
         }
         return candidateIds
     }

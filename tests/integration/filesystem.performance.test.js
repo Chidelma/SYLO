@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import Fylo from '../../src/index.js'
@@ -21,7 +21,7 @@ describe.skipIf(!runPerf)('filesystem engine performance', () => {
         await rm(root, { recursive: true, force: true })
     })
 
-    test('keeps a single durable index file while querying a large dataset', async () => {
+    test('keeps prefix index queries fast as collections grow', async () => {
         const totalDocs = 2000
         const insertStart = performance.now()
 
@@ -58,17 +58,17 @@ describe.skipIf(!runPerf)('filesystem engine performance', () => {
         }
         const rangeMs = performance.now() - rangeStart
 
-        const indexFile = path.join(root, collection, '.fylo', 'indexes', `${collection}.idx.json`)
-        const indexStats = await stat(indexFile)
+        const indexRoot = path.join(root, collection, '.fylo', 'index')
+        const topLevelEntries = await readdir(indexRoot)
 
         expect(Object.keys(exactResults)).toHaveLength(1)
         expect(rangeCount).toBe(100)
-        expect(indexStats.isFile()).toBe(true)
+        expect(topLevelEntries.length).toBeGreaterThan(0)
 
         console.log(
             `[FYLO perf] docs=${totalDocs} insertMs=${insertMs.toFixed(1)} exactMs=${exactMs.toFixed(
                 1
-            )} rangeMs=${rangeMs.toFixed(1)} indexBytes=${indexStats.size}`
+            )} rangeMs=${rangeMs.toFixed(1)} indexPrefixes=${topLevelEntries.length}`
         )
     }, 120_000)
 })

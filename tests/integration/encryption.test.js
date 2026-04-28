@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeAll, afterAll, mock } from 'bun:test'
-import { rm } from 'node:fs/promises'
+import { readdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import Fylo from '../../src/index.js'
 import { createTestRoot } from '../helpers/root.js'
@@ -8,6 +8,22 @@ const COLLECTION = 'encrypted-test'
 const root = await createTestRoot('fylo-encryption-')
 const fylo = new Fylo({ root })
 mock.module('../../src/security/cipher', () => ({ Cipher: CipherMock }))
+
+async function readTree(target) {
+    let text = ''
+    let entries = []
+    try {
+        entries = await readdir(target, { withFileTypes: true })
+    } catch {
+        return text
+    }
+    for (const entry of entries) {
+        const child = path.join(target, entry.name)
+        if (entry.isDirectory()) text += await readTree(child)
+        else text += `${child}\n${await Bun.file(child).text()}\n`
+    }
+    return text
+}
 beforeAll(async () => {
     await fylo.createCollection(COLLECTION)
     await CipherMock.configure('test-secret-key')
@@ -45,9 +61,7 @@ describe('Encryption', () => {
         expect(raw).not.toContain('123-45-6789')
     })
     test('encrypted values are not plaintext in indexes or event journals', async () => {
-        const index = await Bun.file(
-            path.join(root, COLLECTION, '.fylo', 'indexes', `${COLLECTION}.idx.json`)
-        ).text()
+        const index = await readTree(path.join(root, COLLECTION, '.fylo', 'index'))
         const events = await Bun.file(
             path.join(root, COLLECTION, '.fylo', 'events', `${COLLECTION}.ndjson`)
         ).text()
@@ -157,31 +171,38 @@ describe('Encryption', () => {
         }
         expect(found).toBe(true)
     })
-    test('schema encrypted fields fail closed when ENCRYPTION_KEY is absent', async () => {
-        const previousSchemaDir = process.env.SCHEMA_DIR
-        const previousEncryptionKey = process.env.ENCRYPTION_KEY
+    test('schema encrypted fields fail closed when FYLO_ENCRYPTION_KEY is absent', async () => {
+        const previousSchemaDir = process.env.FYLO_SCHEMA_DIR
+        const previousEncryptionKey = process.env.FYLO_ENCRYPTION_KEY
         const schemaRoot = await createTestRoot('fylo-schema-')
         const collection = `fail-closed-${Date.now()}`
 
         CipherMock.reset()
         await Bun.write(
-            path.join(schemaRoot, `${collection}.json`),
+            path.join(schemaRoot, collection, 'history', 'v1.json'),
             JSON.stringify({ $encrypted: ['secret'] })
         )
-        process.env.SCHEMA_DIR = schemaRoot
-        delete process.env.ENCRYPTION_KEY
+        await Bun.write(
+            path.join(schemaRoot, collection, 'manifest.json'),
+            JSON.stringify({
+                current: 'v1',
+                versions: [{ v: 'v1', addedAt: '2026-04-01T00:00:00Z' }]
+            })
+        )
+        process.env.FYLO_SCHEMA_DIR = schemaRoot
+        delete process.env.FYLO_ENCRYPTION_KEY
 
         try {
             const guardedFylo = new Fylo({ root })
             await guardedFylo.createCollection(collection)
             await expect(
                 guardedFylo.putData(collection, { secret: 'do not store' })
-            ).rejects.toThrow('ENCRYPTION_KEY')
+            ).rejects.toThrow('FYLO_ENCRYPTION_KEY')
         } finally {
-            if (previousSchemaDir === undefined) delete process.env.SCHEMA_DIR
-            else process.env.SCHEMA_DIR = previousSchemaDir
-            if (previousEncryptionKey === undefined) delete process.env.ENCRYPTION_KEY
-            else process.env.ENCRYPTION_KEY = previousEncryptionKey
+            if (previousSchemaDir === undefined) delete process.env.FYLO_SCHEMA_DIR
+            else process.env.FYLO_SCHEMA_DIR = previousSchemaDir
+            if (previousEncryptionKey === undefined) delete process.env.FYLO_ENCRYPTION_KEY
+            else process.env.FYLO_ENCRYPTION_KEY = previousEncryptionKey
             await rm(schemaRoot, { recursive: true, force: true })
         }
     })

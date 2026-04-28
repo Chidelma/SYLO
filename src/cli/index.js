@@ -3,6 +3,12 @@ import path from 'node:path'
 import Fylo from '../index.js'
 import { runMachineRequestSource } from './machine.js'
 import { renderTableOutput, writeCliText } from './output.js'
+import {
+    doctorSchema,
+    inspectSchema,
+    materializeSchemaDocument,
+    validateSchemaDocument
+} from '../schema/admin.js'
 
 /**
  * @typedef {import('../types/vendor.js').TTID} TTID
@@ -17,6 +23,7 @@ import { renderTableOutput, writeCliText } from './output.js'
  * @property {boolean} worm
  * @property {boolean} json
  * @property {boolean} idOnly
+ * @property {string | undefined} schemaDir
  * @property {number | undefined} pageSize
  * @property {'left' | 'center' | 'right' | 'auto'} align
  * @property {PagerMode} pager
@@ -34,14 +41,27 @@ function usage() {
         '  fylo.query latest <collection> <doc-or-lineage-id> [--root <path>] [--worm] [--json] [--id-only]',
         '  fylo.query history <collection> <doc-or-lineage-id> [--root <path>] [--worm] [--json]',
         '  fylo.query rebuild <collection> [--root <path>] [--worm] [--json]',
+        '  fylo.query schema inspect <collection> [--schema-dir <path>] [--json]',
+        '  fylo.query schema current <collection> [--schema-dir <path>] [--json]',
+        '  fylo.query schema history <collection> [--schema-dir <path>] [--json]',
+        '  fylo.query schema doctor <collection> [--schema-dir <path>] [--json]',
+        '  fylo.query schema validate <collection> <json|@path|-> [--schema-dir <path>] [--json]',
+        '  fylo.query schema materialize <collection> <json|@path|-> [--schema-dir <path>] [--json]',
         '  fylo.admin inspect <collection> [--root <path>] [--worm] [--json]',
         '  fylo.admin get <collection> <doc-id> [--root <path>] [--worm] [--json]',
         '  fylo.admin latest <collection> <doc-or-lineage-id> [--root <path>] [--worm] [--json] [--id-only]',
         '  fylo.admin history <collection> <doc-or-lineage-id> [--root <path>] [--worm] [--json]',
         '  fylo.admin rebuild <collection> [--root <path>] [--worm] [--json]',
+        '  fylo.admin schema inspect <collection> [--schema-dir <path>] [--json]',
+        '  fylo.admin schema current <collection> [--schema-dir <path>] [--json]',
+        '  fylo.admin schema history <collection> [--schema-dir <path>] [--json]',
+        '  fylo.admin schema doctor <collection> [--schema-dir <path>] [--json]',
+        '  fylo.admin schema validate <collection> <json|@path|-> [--schema-dir <path>] [--json]',
+        '  fylo.admin schema materialize <collection> <json|@path|-> [--schema-dir <path>] [--json]',
         '',
         'Options:',
         '  --root <path>   Override FYLO_ROOT for this command',
+        '  --schema-dir <path> Override FYLO_SCHEMA_DIR for schema admin commands',
         '  --worm          Enable WORM-aware admin behavior for this command',
         '  --json          Emit machine-readable JSON output',
         '  --id-only       Return only the resolved document id for latest',
@@ -63,6 +83,7 @@ function parseArgs(argv) {
     let worm = false
     let json = false
     let idOnly = false
+    let schemaDir
     let pageSize
     /** @type {'left' | 'center' | 'right' | 'auto'} */
     let align = 'auto'
@@ -76,6 +97,13 @@ function parseArgs(argv) {
             const value = argv[index + 1]
             if (!value) throw new Error('Missing value for --root')
             root = path.resolve(value)
+            index++
+            continue
+        }
+        if (arg === '--schema-dir') {
+            const value = argv[index + 1]
+            if (!value) throw new Error('Missing value for --schema-dir')
+            schemaDir = path.resolve(value)
             index++
             continue
         }
@@ -124,7 +152,19 @@ function parseArgs(argv) {
         }
         positionals.push(arg)
     }
-    return { positionals, root, worm, json, idOnly, pageSize, align, pager, request, help }
+    return {
+        positionals,
+        root,
+        worm,
+        json,
+        idOnly,
+        schemaDir,
+        pageSize,
+        align,
+        pager,
+        request,
+        help
+    }
 }
 
 /**
@@ -206,6 +246,32 @@ function createFylo(root, worm = false) {
  */
 function printJson(value) {
     console.log(JSON.stringify(value, null, 2))
+}
+
+/**
+ * @param {string | undefined} source
+ * @returns {Promise<Record<string, any>>}
+ */
+async function loadJsonObject(source) {
+    if (!source) throw new Error('Missing JSON document input')
+    let text
+    if (source === '-') {
+        if (process.stdin.isTTY) throw new Error('JSON document requires <json|@path|-> input')
+        const chunks = []
+        for await (const chunk of process.stdin) {
+            chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : Buffer.from(chunk))
+        }
+        text = Buffer.concat(chunks).toString('utf8')
+    } else if (source.startsWith('@')) {
+        text = await Bun.file(path.resolve(source.slice(1))).text()
+    } else {
+        text = source
+    }
+    const value = JSON.parse(text)
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error('JSON document input must be an object')
+    }
+    return /** @type {Record<string, any>} */ (value)
 }
 
 /**
@@ -351,6 +417,101 @@ async function runRebuild(collection, root, worm = false, json = false) {
         .filter(Boolean)
         .join('\n')
 }
+
+/**
+ * @param {'inspect' | 'current' | 'history' | 'doctor' | 'validate' | 'materialize'} action
+ * @param {string} collection
+ * @param {string | undefined} input
+ * @param {string | undefined} schemaDir
+ * @param {boolean=} json
+ * @returns {Promise<string | undefined>}
+ */
+async function runSchema(action, collection, input, schemaDir, json = false) {
+    if (action === 'inspect') {
+        const result = await inspectSchema(collection, schemaDir)
+        if (json) {
+            printJson(result)
+            return undefined
+        }
+        return [
+            `Schema ${result.collection}`,
+            `Schema dir: ${result.schemaDir}`,
+            `Versioned: ${result.versioned ? 'yes' : 'no'}`,
+            `Current: ${result.current ?? 'none'}`,
+            `Manifest: ${result.manifestPath}`,
+            `Versions: ${result.versions.length}`
+        ].join('\n')
+    }
+    if (action === 'current') {
+        const result = await inspectSchema(collection, schemaDir)
+        const current = result.current ?? ''
+        if (json) {
+            printJson({ collection: result.collection, schemaDir: result.schemaDir, current })
+            return undefined
+        }
+        return current || `No current schema version for ${collection}`
+    }
+    if (action === 'history') {
+        const result = await inspectSchema(collection, schemaDir)
+        if (json) {
+            printJson(result.versions)
+            return undefined
+        }
+        if (result.versions.length === 0) return `No schema history found for ${collection}`
+        return result.versions
+            .map((version) =>
+                [
+                    `${version.version}${version.current ? ' [current]' : ''}`,
+                    `  addedAt: ${version.addedAt ?? 'unknown'}`,
+                    `  file: ${version.path}`,
+                    `  exists: ${version.exists ? 'yes' : 'no'}`,
+                    version.nextVersion
+                        ? `  upgrader to ${version.nextVersion}: ${
+                              version.upgraderExists ? 'yes' : 'missing'
+                          }`
+                        : undefined
+                ]
+                    .filter(Boolean)
+                    .join('\n')
+            )
+            .join('\n\n')
+    }
+    if (action === 'doctor') {
+        const result = await doctorSchema(collection, schemaDir)
+        if (json) {
+            printJson(result)
+            return undefined
+        }
+        const lines = [
+            `Schema doctor ${result.collection}: ${result.ok ? 'ok' : 'failed'}`,
+            `Schema dir: ${result.schemaDir}`
+        ]
+        if (result.issues.length) {
+            lines.push('Issues:')
+            for (const issue of result.issues) lines.push(`  - ${issue}`)
+        }
+        if (result.warnings.length) {
+            lines.push('Warnings:')
+            for (const warning of result.warnings) lines.push(`  - ${warning}`)
+        }
+        return lines.join('\n')
+    }
+    const document = await loadJsonObject(input)
+    if (action === 'validate') {
+        const result = await validateSchemaDocument(collection, document, schemaDir)
+        if (json) {
+            printJson(result)
+            return undefined
+        }
+        return `Schema validation passed for ${collection} at ${result.current ?? 'unversioned'}`
+    }
+    const result = await materializeSchemaDocument(collection, document, schemaDir)
+    if (json) {
+        printJson(result)
+        return undefined
+    }
+    return renderTableOutput({ document: result.document }, currentTableOptions)
+}
 /**
  * @param {ParsedArgs} args
  * @returns {Promise<void>}
@@ -407,6 +568,30 @@ async function main(args) {
         const collection = rest[0]
         if (!collection) throw new Error('Missing collection name for rebuild')
         const output = await runRebuild(collection, args.root, args.worm, args.json)
+        if (output) await writeCliText(output, { pagerMode: currentPagerMode })
+        return
+    }
+    if (command === 'schema') {
+        const action = rest[0]
+        const collection = rest[1]
+        const input = rest[2]
+        if (
+            !['inspect', 'current', 'history', 'doctor', 'validate', 'materialize'].includes(
+                action ?? ''
+            )
+        ) {
+            throw new Error('Missing or invalid schema command')
+        }
+        if (!collection) throw new Error('Missing collection name for schema command')
+        const output = await runSchema(
+            /** @type {'inspect' | 'current' | 'history' | 'doctor' | 'validate' | 'materialize'} */ (
+                action
+            ),
+            collection,
+            input,
+            args.schemaDir,
+            args.json
+        )
         if (output) await writeCliText(output, { pagerMode: currentPagerMode })
         return
     }

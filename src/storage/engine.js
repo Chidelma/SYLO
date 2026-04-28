@@ -1,6 +1,4 @@
 import path from 'node:path'
-import { Dir } from './index-keys.js'
-import { writeDurable } from './durable.js'
 import { validateCollectionName } from '../core/collection.js'
 import { assertPathInside, validateDocId } from '../core/doc-id.js'
 import { Cipher } from '../security/cipher.js'
@@ -9,6 +7,9 @@ import { emitFyloEvent } from '../observability/events.js'
 import { FilesystemEventBus, FilesystemLockManager, FilesystemStorage } from './primitives.js'
 import { FilesystemDocuments } from './documents.js'
 import { FilesystemQueryEngine } from './query.js'
+import { materializeDoc } from '../schema/migrate.js'
+import { BunS3PrefixIndexStore, FilesystemPrefixIndexStore } from './prefix-index.js'
+import { parseStoredValue, stringifyStoredValue } from './value-codec.js'
 
 /**
  * @typedef {import('../types/vendor.js').TTID} TTID
@@ -23,14 +24,12 @@ import { FilesystemQueryEngine } from './query.js'
  * @typedef {import('./types.js').StorageEngine} StorageEngine
  * @typedef {import('./types.js').LockManager} LockManager
  * @typedef {import('./types.js').EventBus<Record<string, any>>} EventBus
- * @typedef {import('./types.js').CollectionIndexCache} CollectionIndexCache
  * @typedef {import('./types.js').CollectionInspectResult} CollectionInspectResult
  * @typedef {import('./types.js').CollectionRebuildResult} CollectionRebuildResult
  * @typedef {import('./types.js').StoredDoc<Record<string, any>>} StoredDoc
  * @typedef {import('./types.js').StoredHead} StoredHead
- * @typedef {import('./types.js').StoredIndexEntry} StoredIndexEntry
  * @typedef {import('./types.js').StoredVersionMeta} StoredVersionMeta
- * @typedef {Omit<StoredIndexEntry, 'fieldPath'>} NormalizedIndexValue
+ * @typedef {import('./types.js').PrefixIndexStore} PrefixIndexStore
  * @typedef {import('../query/types.js').StoreJoin<Record<string, any>, Record<string, any>>} StoreJoin
  * @typedef {import('../query/types.js').StoreQuery<Record<string, any>>} StoreQuery
  */
@@ -40,8 +39,6 @@ export class FilesystemEngine {
     root
     /** @type {'filesystem'} */
     kind = 'filesystem'
-    /** @type {Map<string, CollectionIndexCache>} */
-    indexes = new Map()
     /** @type {Map<string, Promise<void>>} */
     writeLanes = new Map()
     /** @type {StorageEngine} */
@@ -54,6 +51,8 @@ export class FilesystemEngine {
     documents
     /** @type {FilesystemQueryEngine} */
     queryEngine
+    /** @type {PrefixIndexStore} */
+    index
     /** @type {FyloSyncHooks | undefined} */
     sync
     /** @type {FyloSyncMode} */
@@ -65,7 +64,7 @@ export class FilesystemEngine {
     /**
      * Creates the filesystem-backed FYLO engine and its persistence collaborators.
      * @param {string} [root]
-     * @param {{ sync?: FyloSyncHooks, syncMode?: FyloSyncMode, worm?: FyloWormOptions, onEvent?: FyloEventHandler }} [options]
+     * @param {{ sync?: FyloSyncHooks, syncMode?: FyloSyncMode, worm?: FyloWormOptions, onEvent?: FyloEventHandler, index?: import('./types.js').FyloIndexOptions }} [options]
      */
     constructor(
         root = process.env.FYLO_ROOT ?? path.join(process.cwd(), '.fylo-data'),
@@ -82,6 +81,10 @@ export class FilesystemEngine {
         this.storage = new FilesystemStorage()
         this.locks = new FilesystemLockManager(this.root, this.storage)
         this.events = new FilesystemEventBus(this.root, this.storage)
+        this.index =
+            options.index?.backend === 's3-prefix'
+                ? new BunS3PrefixIndexStore(options.index.s3)
+                : new FilesystemPrefixIndexStore(this.collectionRoot.bind(this))
         this.documents = new FilesystemDocuments(
             this.storage,
             this.docsRoot.bind(this),
@@ -95,8 +98,7 @@ export class FilesystemEngine {
             this.decodeEncrypted.bind(this)
         )
         this.queryEngine = new FilesystemQueryEngine({
-            loadIndexCache: this.loadIndexCache.bind(this),
-            normalizeIndexValue: this.normalizeIndexValue.bind(this)
+            index: this.index
         })
     }
     /** @param {string} collection @returns {string} */
@@ -113,20 +115,12 @@ export class FilesystemEngine {
         return path.join(this.collectionRoot(collection), '.fylo')
     }
     /** @param {string} collection @returns {string} */
-    indexesRoot(collection) {
-        return path.join(this.metaRoot(collection), 'indexes')
-    }
-    /** @param {string} collection @returns {string} */
     headsRoot(collection) {
         return path.join(this.metaRoot(collection), 'heads')
     }
     /** @param {string} collection @returns {string} */
     versionsRoot(collection) {
         return path.join(this.metaRoot(collection), 'versions')
-    }
-    /** @param {string} collection @returns {string} */
-    indexFilePath(collection) {
-        return path.join(this.indexesRoot(collection), `${collection}.idx.json`)
     }
     /** @param {string} collection @param {string} lineageId @returns {string} */
     headPath(collection, lineageId) {
@@ -198,129 +192,16 @@ export class FilesystemEngine {
         if (!this.sync?.onDelete) return
         await this.sync.onDelete(event)
     }
-    /** @param {string} value @returns {string} */
-    hash(value) {
-        return new Bun.CryptoHasher('sha256').update(value).digest('hex')
-    }
-    /** @returns {CollectionIndexCache} */
-    createEmptyIndexCache() {
-        return {
-            docs: new Map(),
-            fieldHash: new Map(),
-            fieldNumeric: new Map(),
-            fieldString: new Map()
-        }
-    }
-    /** @param {CollectionIndexCache} cache @param {TTID} docId @param {StoredIndexEntry} entry @returns {void} */
-    addEntryToCache(cache, docId, entry) {
-        let valueHashBucket = cache.fieldHash.get(entry.fieldPath)
-        if (!valueHashBucket) {
-            valueHashBucket = new Map()
-            cache.fieldHash.set(entry.fieldPath, valueHashBucket)
-        }
-        let docsForValue = valueHashBucket.get(entry.valueHash)
-        if (!docsForValue) {
-            docsForValue = new Set()
-            valueHashBucket.set(entry.valueHash, docsForValue)
-        }
-        docsForValue.add(docId)
-        if (entry.numericValue !== null) {
-            const numericEntries = cache.fieldNumeric.get(entry.fieldPath) ?? []
-            numericEntries.push({ docId, numericValue: entry.numericValue })
-            cache.fieldNumeric.set(entry.fieldPath, numericEntries)
-        }
-        if (entry.valueType === 'string') {
-            const stringEntries = cache.fieldString.get(entry.fieldPath) ?? []
-            stringEntries.push({ docId, rawValue: entry.rawValue })
-            cache.fieldString.set(entry.fieldPath, stringEntries)
-        }
-    }
-    /** @param {CollectionIndexCache} cache @param {TTID} docId @param {StoredIndexEntry} entry @returns {void} */
-    deleteEntryFromCache(cache, docId, entry) {
-        const valueHashBucket = cache.fieldHash.get(entry.fieldPath)
-        const docsForValue = valueHashBucket?.get(entry.valueHash)
-        docsForValue?.delete(docId)
-        if (docsForValue?.size === 0) valueHashBucket?.delete(entry.valueHash)
-        if (valueHashBucket?.size === 0) cache.fieldHash.delete(entry.fieldPath)
-        if (entry.numericValue !== null) {
-            const numericEntries = cache.fieldNumeric
-                .get(entry.fieldPath)
-                ?.filter(
-                    (candidate) =>
-                        !(
-                            candidate.docId === docId &&
-                            candidate.numericValue === entry.numericValue
-                        )
-                )
-            if (!numericEntries?.length) cache.fieldNumeric.delete(entry.fieldPath)
-            else cache.fieldNumeric.set(entry.fieldPath, numericEntries)
-        }
-        if (entry.valueType === 'string') {
-            const stringEntries = cache.fieldString
-                .get(entry.fieldPath)
-                ?.filter(
-                    (candidate) =>
-                        !(candidate.docId === docId && candidate.rawValue === entry.rawValue)
-                )
-            if (!stringEntries?.length) cache.fieldString.delete(entry.fieldPath)
-            else cache.fieldString.set(entry.fieldPath, stringEntries)
-        }
-    }
-    /** @param {string} collection @param {CollectionIndexCache} cache @returns {Promise<void>} */
-    async writeIndexFile(collection, cache) {
-        await this.storage.mkdir(this.indexesRoot(collection))
-        const target = this.indexFilePath(collection)
-        const payload = {
-            version: 1,
-            docs: Object.fromEntries(cache.docs)
-        }
-        await writeDurable(target, JSON.stringify(payload))
-    }
-    /** @param {string} collection @returns {Promise<CollectionIndexCache>} */
-    async loadIndexCache(collection) {
-        const cache = this.createEmptyIndexCache()
-        try {
-            const indexPayload = await this.storage.read(this.indexFilePath(collection))
-            let raw
-            try {
-                raw = JSON.parse(indexPayload)
-            } catch {
-                throw new Error(`Invalid FYLO index file for collection: ${collection}`)
-            }
-            if (raw?.version === 1 && raw.docs) {
-                for (const [docId, entries] of Object.entries(raw.docs)) {
-                    cache.docs.set(docId, entries)
-                    for (const entry of entries) this.addEntryToCache(cache, docId, entry)
-                }
-            }
-        } catch (err) {
-            const error = /** @type {NodeJS.ErrnoException} */ (err)
-            if (error.code !== 'ENOENT') throw err
-        }
-        return cache
-    }
-    /** @param {string} rawValue @returns {NormalizedIndexValue} */
-    normalizeIndexValue(rawValue) {
-        const parsed = Dir.parseValue(rawValue.replaceAll('%2F', '/'))
-        const numeric = typeof parsed === 'number' ? parsed : Number(parsed)
-        return {
-            rawValue,
-            valueHash: this.hash(rawValue),
-            valueType: typeof parsed,
-            numericValue: Number.isNaN(numeric) ? null : numeric
-        }
-    }
     /** @param {string} collection @returns {Promise<void>} */
     async ensureCollection(collection) {
         await this.storage.mkdir(this.collectionRoot(collection))
         await this.storage.mkdir(this.metaRoot(collection))
         await this.storage.mkdir(this.docsRoot(collection))
-        await this.storage.mkdir(this.indexesRoot(collection))
+        await this.index.ensureCollection(collection)
         if (this.wormEnabled()) {
             await this.storage.mkdir(this.headsRoot(collection))
             await this.storage.mkdir(this.versionsRoot(collection))
         }
-        await this.loadIndexCache(collection)
     }
     /** @returns {boolean} */
     wormEnabled() {
@@ -330,12 +211,9 @@ export class FilesystemEngine {
     inferredLineageBucket(docId) {
         return docId.split('-')[0] ?? docId
     }
-    /** @param {string} collection @returns {Promise<CollectionIndexCache>} */
+    /** @param {string} collection @returns {Promise<void>} */
     async resetIndex(collection) {
-        const cache = this.createEmptyIndexCache()
-        this.indexes.set(collection, cache)
-        await this.writeIndexFile(collection, cache)
-        return cache
+        await this.index.resetCollection(collection)
     }
     /** @param {string} collection @returns {Promise<TTID[]>} */
     async listQueryableDocIds(collection) {
@@ -534,7 +412,6 @@ export class FilesystemEngine {
     }
     /** @param {string} collection @returns {Promise<void>} */
     async dropCollection(collection) {
-        this.indexes.delete(collection)
         await this.storage.rmdir(this.collectionRoot(collection))
     }
     /** @param {string} collection @returns {Promise<boolean>} */
@@ -557,9 +434,9 @@ export class FilesystemEngine {
                 versionMetas: 0
             }
         }
-        const [docIds, cache, headFiles, versionFiles] = await Promise.all([
+        const [docIds, indexedDocs, headFiles, versionFiles] = await Promise.all([
             this.documents.listDocIds(collection),
-            this.loadIndexCache(collection),
+            this.index.countDocuments(collection),
             this.storage.list(this.headsRoot(collection)),
             this.storage.list(this.versionsRoot(collection))
         ])
@@ -579,7 +456,7 @@ export class FilesystemEngine {
             exists: true,
             worm: this.wormEnabled() || headCount > 0 || versionMetas > 0,
             docsStored: docIds.length,
-            indexedDocs: cache.docs.size,
+            indexedDocs,
             headFiles: headCount,
             activeHeads,
             deletedHeads,
@@ -598,7 +475,7 @@ export class FilesystemEngine {
                         Cipher.isConfigured() &&
                         Cipher.isEncryptedField(collection, parentField)
                     ) {
-                        return await Cipher.encrypt(String(item).replaceAll('/', '%2F'))
+                        return await Cipher.encrypt(stringifyStoredValue(item))
                     }
                     return item
                 })
@@ -614,7 +491,7 @@ export class FilesystemEngine {
                 if (fieldValue && typeof fieldValue === 'object')
                     copy[field] = await this.encodeEncrypted(collection, fieldValue, nextField)
                 else if (Cipher.isConfigured() && Cipher.isEncryptedField(collection, nextField)) {
-                    copy[field] = await Cipher.encrypt(String(fieldValue).replaceAll('/', '%2F'))
+                    copy[field] = await Cipher.encrypt(stringifyStoredValue(fieldValue))
                 } else copy[field] = fieldValue
             }
             return copy
@@ -634,7 +511,7 @@ export class FilesystemEngine {
                         Cipher.isEncryptedField(collection, parentField) &&
                         typeof item === 'string'
                     ) {
-                        return Dir.parseValue((await Cipher.decrypt(item)).replaceAll('%2F', '/'))
+                        return parseStoredValue((await Cipher.decrypt(item)).replaceAll('%2F', '/'))
                     }
                     return item
                 })
@@ -654,7 +531,7 @@ export class FilesystemEngine {
                     Cipher.isEncryptedField(collection, nextField) &&
                     typeof fieldValue === 'string'
                 ) {
-                    copy[field] = Dir.parseValue(
+                    copy[field] = parseStoredValue(
                         (await Cipher.decrypt(fieldValue)).replaceAll('%2F', '/')
                     )
                 } else copy[field] = fieldValue
@@ -675,52 +552,26 @@ export class FilesystemEngine {
         for (const id of ids) {
             const stored = await this.documents.readStoredDoc(collection, id)
             if (!stored) continue
-            if (!this.queryEngine.matchesQuery(id, stored.data, query)) continue
-            results.push({ [id]: stored.data })
+            // Upgrade pre-match so queries against fields added in newer schema
+            // versions can still hit older docs in storage. Note: indexes are
+            // built from on-disk shape, so index-eligible queries on new-only
+            // fields still require a rebuild after a schema bump.
+            const data = /** @type {Record<string, any>} */ (
+                await materializeDoc(collection, stored.data)
+            )
+            if (!this.queryEngine.matchesQuery(id, data, query)) continue
+            results.push({ [id]: data })
             if (limit && results.length >= limit) break
         }
         return results
     }
-    /** @param {CollectionIndexCache} cache @param {string} collection @param {TTID} docId @param {Record<string, any>} doc @returns {Promise<void>} */
-    async applyIndexEntries(cache, collection, docId, doc) {
-        const keys = await Dir.extractKeys(collection, docId, doc)
-        const entries = keys.indexes.map((logicalKey) => {
-            const segments = logicalKey.split('/')
-            const fieldPath = segments.slice(0, -2).join('/')
-            const rawValue = segments.at(-2) ?? ''
-            const normalized = this.normalizeIndexValue(rawValue)
-            return {
-                fieldPath,
-                rawValue: normalized.rawValue,
-                valueHash: normalized.valueHash,
-                valueType: normalized.valueType,
-                numericValue: normalized.numericValue
-            }
-        })
-        const existingEntries = cache.docs.get(docId)
-        if (existingEntries) {
-            for (const entry of existingEntries) this.deleteEntryFromCache(cache, docId, entry)
-        }
-        cache.docs.set(docId, entries)
-        for (const entry of entries) this.addEntryToCache(cache, docId, entry)
-    }
-    /** @param {CollectionIndexCache} cache @param {TTID} docId @returns {void} */
-    removeIndexEntries(cache, docId) {
-        const existingEntries = cache.docs.get(docId) ?? []
-        for (const entry of existingEntries) this.deleteEntryFromCache(cache, docId, entry)
-        cache.docs.delete(docId)
-    }
     /** @param {string} collection @param {TTID} docId @param {Record<string, any>} doc @returns {Promise<void>} */
     async rebuildIndexes(collection, docId, doc) {
-        const cache = await this.loadIndexCache(collection)
-        await this.applyIndexEntries(cache, collection, docId, doc)
-        await this.writeIndexFile(collection, cache)
+        await this.index.putDocument(collection, docId, doc)
     }
-    /** @param {string} collection @param {TTID} docId @param {Record<string, any>} _doc @returns {Promise<void>} */
-    async removeIndexes(collection, docId, _doc) {
-        const cache = await this.loadIndexCache(collection)
-        this.removeIndexEntries(cache, docId)
-        await this.writeIndexFile(collection, cache)
+    /** @param {string} collection @param {TTID} docId @param {Record<string, any>} doc @returns {Promise<void>} */
+    async removeIndexes(collection, docId, doc) {
+        await this.index.removeDocument(collection, docId, doc)
     }
     /** @param {string} collection @returns {Promise<CollectionRebuildResult>} */
     async rebuildCollection(collection) {
@@ -737,13 +588,12 @@ export class FilesystemEngine {
             let versionMetasRebuilt = 0
             let staleHeadsRemoved = 0
             let staleVersionMetasRemoved = 0
-            const indexCache = await this.resetIndex(collection)
+            await this.resetIndex(collection)
             if (!this.wormEnabled()) {
                 for (const [docId, stored] of docs) {
-                    await this.applyIndexEntries(indexCache, collection, docId, stored.data)
+                    await this.index.putDocument(collection, docId, stored.data)
                     indexedDocs++
                 }
-                await this.writeIndexFile(collection, indexCache)
                 emitFyloEvent(this.onEvent, {
                     type: 'index.rebuilt',
                     collection,
@@ -836,10 +686,9 @@ export class FilesystemEngine {
             for (const docId of activeDocIds) {
                 const stored = docs.get(docId)
                 if (!stored) continue
-                await this.applyIndexEntries(indexCache, collection, docId, stored.data)
+                await this.index.putDocument(collection, docId, stored.data)
                 indexedDocs++
             }
-            await this.writeIndexFile(collection, indexCache)
             emitFyloEvent(this.onEvent, {
                 type: 'index.rebuilt',
                 collection,
@@ -870,6 +719,8 @@ export class FilesystemEngine {
             /** @type {{ lineageId: string, headPath: string } | undefined} */
             let wormInfo
             try {
+                const existing = await this.documents.readStoredDoc(collection, docId)
+                if (existing) await this.removeIndexes(collection, docId, existing.data)
                 await this.documents.writeStoredDoc(collection, docId, doc)
                 if (this.wormEnabled()) {
                     const initialized = await this.initializeWormVersion(collection, docId, doc)
@@ -916,7 +767,10 @@ export class FilesystemEngine {
     }
     /** @param {string} collection @param {TTID} oldId @param {TTID} newId @param {Record<string, any>} doc @param {Record<string, any>} [oldDoc] @returns {Promise<TTID>} */
     async replaceDocumentVersion(collection, oldId, newId, doc, oldDoc) {
-        return await this.advanceDocumentVersion(collection, oldId, newId, doc, oldDoc ?? {})
+        if (oldDoc) return await this.advanceDocumentVersion(collection, oldId, newId, doc, oldDoc)
+        const stored = await this.documents.readStoredDoc(collection, oldId)
+        if (!stored) return oldId
+        return await this.advanceDocumentVersion(collection, oldId, newId, doc, stored.data)
     }
     /** @param {string} collection @param {TTID} docId @returns {Promise<void>} */
     async deleteDocument(collection, docId) {
@@ -1013,7 +867,9 @@ export class FilesystemEngine {
             },
             async once() {
                 const stored = await engine.documents.readStoredDoc(collection, docId)
-                return stored ? { [docId]: stored.data } : {}
+                if (!stored) return {}
+                const data = await materializeDoc(collection, stored.data)
+                return { [docId]: data }
             },
             async *onDelete() {
                 for await (const event of engine.events.listen(collection)) {
@@ -1029,7 +885,11 @@ export class FilesystemEngine {
         if (!head || head.deleted) return onlyId ? null : {}
         const stored = await this.documents.readStoredDoc(collection, head.currentVersionId)
         if (!stored) return onlyId ? null : {}
-        return onlyId ? stored.id : { [stored.id]: stored.data }
+        if (onlyId) return stored.id
+        const data = /** @type {Record<string, any>} */ (
+            await materializeDoc(collection, stored.data)
+        )
+        return { [stored.id]: data }
     }
     /** @param {string} collection @param {TTID} docId @returns {Promise<any[]>} */
     async getHistory(collection, docId) {
@@ -1101,7 +961,8 @@ export class FilesystemEngine {
         const ids = await this.listQueryableDocIds(collection)
         for (const id of ids) {
             const stored = await this.documents.readStoredDoc(collection, id)
-            if (stored) yield stored.data
+            if (!stored) continue
+            yield /** @type {Record<string, any>} */ (await materializeDoc(collection, stored.data))
         }
     }
     /** @param {StoreJoin} join @returns {Promise<any>} */

@@ -80,26 +80,27 @@
  */
 
 /**
- * @typedef {object} StoredIndexEntry
- * @property {string} fieldPath
- * @property {string} rawValue
- * @property {string} valueHash
- * @property {string} valueType
- * @property {number | null} numericValue
+ * @typedef {object} PrefixIndexStore
+ * @property {(collection: string) => Promise<void>} ensureCollection
+ * @property {(collection: string) => Promise<void>} resetCollection
+ * @property {(collection: string, docId: TTID, doc: Record<string, any>) => Promise<void>} putDocument
+ * @property {(collection: string, docId: TTID, doc: Record<string, any>) => Promise<void>} removeDocument
+ * @property {(collection: string) => Promise<number>} countDocuments
+ * @property {(collection: string, fieldPath: string, operand: import('../query/types.js').Operand) => Promise<Set<TTID> | null>} candidateDocIds
  */
 
 /**
- * @typedef {object} StoredCollectionIndex
- * @property {1} version
- * @property {Record<TTID, StoredIndexEntry[]>} docs
+ * @typedef {object} FyloS3IndexOptions
+ * @property {string=} accessKeyId
+ * @property {string=} secretAccessKey
+ * @property {string=} sessionToken
+ * @property {string=} endpoint
+ * @property {string=} region
+ * @property {string=} bucketPrefix
  */
 
 /**
- * @typedef {object} CollectionIndexCache
- * @property {Map<TTID, StoredIndexEntry[]>} docs
- * @property {Map<string, Map<string, Set<TTID>>>} fieldHash
- * @property {Map<string, Array<{ docId: TTID; numericValue: number }>>} fieldNumeric
- * @property {Map<string, Array<{ docId: TTID; rawValue: string }>>} fieldString
+ * @typedef {{ backend?: 'filesystem-prefix' } | { backend: 's3-prefix', s3?: FyloS3IndexOptions }} FyloIndexOptions
  */
 
 /**

@@ -1,11 +1,11 @@
 # FYLO
 
-FYLO is a Bun-native document store that keeps **one canonical file per document** and builds a **collection index file** to make queries fast.
+FYLO is a Bun-native document store that keeps **one canonical file per document** and builds **key-only prefix indexes** to make queries fast.
 
 The important mental model is simple:
 
 - document files are the source of truth
-- the index file is just an accelerator
+- index entries are zero-payload accelerators
 - if the index ever gets out of date, FYLO can rebuild it from the documents
 
 FYLO now ships with **one engine**: a filesystem storage model. Cloud replication, object-store syncing, and mounted storage are deployment concerns around that engine, not separate FYLO engines.
@@ -18,7 +18,7 @@ We wanted three things:
 - fast application queries
 - a system that is still understandable by normal engineers
 
-That is why FYLO does **not** create one tiny durable file per indexed field and does **not** depend on Redis-backed queued writes anymore.
+That is why FYLO does **not** keep a monolithic JSON index cache and does **not** depend on Redis-backed queued writes anymore.
 
 Instead, each collection looks like this:
 
@@ -28,8 +28,14 @@ Instead, each collection looks like this:
     docs/
       4U/
         4UUB32VGUDW.json
-    indexes/
-      <collection>.idx.json
+    index/
+      name/
+        f/
+          alice/
+            4UUB32VGUDW
+        r/
+          ecila/
+            4UUB32VGUDW
     events/
       <collection>.ndjson
 ```
@@ -44,8 +50,7 @@ When WORM mode is enabled, FYLO also keeps lineage metadata:
       <version-id>.meta.json
     heads/
       <lineage-id>.json
-    indexes/
-      <collection>.idx.json
+    index/
     events/
       <collection>.ndjson
 ```
@@ -115,29 +120,91 @@ If you do not configure a root, FYLO uses a project-local default:
 Use the `root` constructor option or `FYLO_ROOT` environment variable to
 configure where collections are stored. The legacy `filesystemRoot`,
 `s3FilesRoot`, `FYLO_FILESYSTEM_ROOT`, and `FYLO_S3FILES_ROOT` options
-and environment variables were removed in v3.0.0.
+and environment variables were removed in v26.18.28.
 
 ### Environment variables
 
-| Variable         | Purpose                                                          |
-| ---------------- | ---------------------------------------------------------------- |
-| `FYLO_ROOT`      | Filesystem root for collections                                  |
-| `SCHEMA_DIR`     | Directory containing JSON validation schemas                     |
-| `STRICT`         | When truthy, validate documents with `@d31ma/chex` before writes |
-| `ENCRYPTION_KEY` | Required when schemas declare `$encrypted` fields                |
-| `CIPHER_SALT`    | Recommended unique salt for field encryption key derivation      |
+| Variable              | Purpose                                                          |
+| --------------------- | ---------------------------------------------------------------- |
+| `FYLO_ROOT`           | Filesystem root for collections                                  |
+| `FYLO_SCHEMA_DIR`     | Directory containing JSON validation schemas                     |
+| `FYLO_STRICT`         | When truthy, validate documents with `@d31ma/chex` before writes |
+| `FYLO_ENCRYPTION_KEY` | Required when schemas declare `$encrypted` fields                |
+| `FYLO_CIPHER_SALT`    | Recommended unique salt for field encryption key derivation      |
 
 ## Security-sensitive behavior
 
 ### Encrypted fields
 
-Schemas can declare encrypted fields with a `$encrypted` array. When a collection schema declares encrypted fields, FYLO fails closed unless `ENCRYPTION_KEY` is set and at least 32 characters long.
+Schemas can declare encrypted fields with a `$encrypted` array. When a collection schema declares encrypted fields, FYLO fails closed unless `FYLO_ENCRYPTION_KEY` is set and at least 32 characters long.
 
-Encrypted document values are stored with AES-GCM. Exact-match queries on encrypted fields use keyed HMAC blind indexes, so equality and frequency can still be inferred from index tokens, but plaintext field values are not written to document files, index files, or event journals.
+Encrypted document values are stored with AES-GCM. Exact-match queries on encrypted fields use keyed HMAC blind indexes, so equality and frequency can still be inferred from index tokens, but plaintext field values are not written to document files, index keys, or event journals.
 
 Documents encrypted with AES-GCM (v2.1.1 and later) are fully
-supported. The legacy AES-CBC read path was removed in v3.0.0; documents
+supported. The legacy AES-CBC read path was removed in v26.18.28; documents
 written before v2.1.1 cannot be decrypted by this release.
+
+### Schema Versioning
+
+When `FYLO_SCHEMA_DIR` is set, FYLO looks for schemas using a per-collection layout:
+
+```text
+<FYLO_SCHEMA_DIR>/
+  <collection>/
+    manifest.json
+    history/
+      v1.json
+      v2.json
+    upgraders/
+      v1-to-v2.js
+    rules.json
+```
+
+`manifest.json` chooses the current schema and records the version chain:
+
+```json
+{
+    "current": "v2",
+    "versions": [
+        { "v": "v1", "addedAt": "2026-04-01T00:00:00Z" },
+        { "v": "v2", "addedAt": "2026-04-27T00:00:00Z" }
+    ]
+}
+```
+
+All schema versions, including the current head, live under `history/`. FYLO does not sort version names; `manifest.versions` is the source of truth for ordering, so labels can be simple names like `v1` or release-style names like `v26.18.27-2`.
+
+Documents carry their schema version in `_v`. Reads materialize older documents to the current head in memory, and strict writes validate against the current head schema before persisting `_v`. Documents with no `_v` are treated as the oldest version in the manifest, which lets legacy data be upgraded on read.
+
+Upgraders are optional until a document actually needs to move between versions. Each upgrader file should default-export a function:
+
+```js
+export default function upgrade(doc) {
+    return {
+        ...doc,
+        slug: String(doc.title ?? '')
+            .toLowerCase()
+            .trim()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')
+    }
+}
+```
+
+`rules.json` is optional and belongs beside the manifest. FYLO also supports a shared root `rules.json`; for example, collection `auth-allowed` can use `rules.auth.allowed` when no collection-local rules file exists. Rules are used by FYLO's row-level security loader, not by the schema version chain itself.
+
+Schema admin commands are available through both `fylo.admin` and `fylo.query`:
+
+```bash
+fylo.admin schema inspect article --schema-dir ./schemas --json
+fylo.admin schema current article --schema-dir ./schemas
+fylo.admin schema history article --schema-dir ./schemas --json
+fylo.admin schema doctor article --schema-dir ./schemas
+fylo.admin schema validate article @article.json --schema-dir ./schemas --json
+fylo.admin schema materialize article '{"id":1,"title":"Hello","body":"Body","_v":"v1"}' --schema-dir ./schemas --json
+```
+
+Use `schema doctor` in release checks to catch missing version files, missing adjacent upgraders, duplicate manifest entries, and optional SHA-256 mismatches before application code starts writing against a new head schema.
 
 ### Bulk imports
 
@@ -391,18 +458,60 @@ const posts = await fylo.executeSQL(`
 
 ## Query behavior
 
-FYLO queries use the collection index file first when they can, then hydrate only the matching documents.
+FYLO queries use prefix index entries first when they can, then hydrate only the matching documents.
 
 That means:
 
 - exact matches are fast
-- range queries are narrowed before document reads
-- contains-style queries can use indexed candidates
+- range queries use sortable numeric keys before document reads
+- prefix `LIKE 'ali%'` queries use forward string keys
+- suffix `LIKE '%ice'` queries use reversed string keys
+- contains `LIKE '%lic%'` queries use bounded trigram keys, then hydrate and verify
+- array `$contains` queries index each primitive array member on the array field
 - final document validation still happens before returning results
 
 For timestamp filters such as `$created` and `$updated`, FYLO derives the values from the TTID rather than the underlying file metadata.
 
 This is why FYLO behaves more like an application document store than a data warehouse.
+
+### S3 prefix indexing
+
+The local filesystem index uses the same key shape as FYLO's Bun S3 index backend. In S3 mode, each collection maps to its own bucket and FYLO writes zero-byte objects such as:
+
+```text
+name/f/alice/4UUB32VGUDW
+name/r/ecila/4UUB32VGUDW
+age/n/c03e000000000000/4UUB32VGUDW
+age/nr/3fc1ffffffffffff/4UUB32VGUDW
+```
+
+Configure it with:
+
+```ts
+const fylo = new Fylo({
+    root: '/mnt/fylo',
+    index: {
+        backend: 's3-prefix',
+        s3: {
+            bucketPrefix: 'fylo-',
+            region: 'us-east-1'
+        }
+    }
+})
+```
+
+`bucketPrefix` is optional. With the example above, collection `users` indexes into bucket `fylo-users`. Documents still live in the configured filesystem root; S3 stores only index keys.
+
+S3 prefix-index credentials can be passed through `index.s3`, or resolved from environment variables. Explicit options win over environment values. FYLO checks AWS-compatible names first, then FYLO-prefixed aliases:
+
+```text
+AWS_ACCESS_KEY_ID / FYLO_S3_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY / FYLO_S3_SECRET_ACCESS_KEY
+AWS_SESSION_TOKEN / FYLO_S3_SESSION_TOKEN
+AWS_ENDPOINT_URL_S3 / AWS_ENDPOINT_URL / FYLO_S3_ENDPOINT
+AWS_REGION / AWS_DEFAULT_REGION / FYLO_S3_REGION
+FYLO_S3_BUCKET_PREFIX
+```
 
 ## Realtime behavior
 
@@ -424,7 +533,7 @@ FYLO no longer centers:
 
 - Redis-backed queued writes
 - worker-based write draining
-- legacy bucket-per-collection S3 storage
+- legacy S3 document-storage engines
 - built-in migration commands between old and new engines
 
 If you see older references to those ideas in historic discussions, treat them as previous design stages, not the current product direction.
@@ -444,11 +553,11 @@ adopting FYLO in scenarios where they matter.
   on the same collection from two writers can race. Lockfiles also
   assume the underlying filesystem honors atomic `link()`; networked
   filesystems without that guarantee are not supported.
-- **Single-process index cache.** The collection index file is the
-  shared on-disk representation, but an in-memory cache lives per
-  process. External processes that mutate documents directly on disk
-  will not be visible to a running FYLO process until rebuild or
-  restart. Treat the FYLO API as the only writer.
+- **Index entries are derived state.** Prefix index entries are
+  maintained by FYLO write paths. External processes that mutate
+  documents directly on disk will not update those entries. Treat the
+  FYLO API as the only writer, or run `rebuildCollection()` after
+  operator-level recovery.
 - **Logical, not physical, WORM.** WORM mode is enforced by FYLO's
   write paths. Anyone with direct filesystem access to the root can
   still rewrite or delete document files — pair WORM with OS-level
@@ -456,10 +565,10 @@ adopting FYLO in scenarios where they matter.
   immutability.
 - **Frequency leaks on encrypted equality search.** Encrypted fields
   are stored with AES-GCM, but `$eq` queries use deterministic HMAC
-  blind indexes. An attacker with read access to the index file can
+  blind indexes. An attacker with read access to index keys can
   count repetitions and infer that two documents share a value, even
   without learning the value itself.
-- **Process-global cipher.** `ENCRYPTION_KEY` and `CIPHER_SALT` are
+- **Process-global cipher.** `FYLO_ENCRYPTION_KEY` and `FYLO_CIPHER_SALT` are
   resolved from the environment once per process and shared across all
   collections that declare `$encrypted` fields. There is no per-tenant
   or per-collection key rotation built in; rotation is an external
@@ -484,13 +593,13 @@ adopting FYLO in scenarios where they matter.
 This part is important:
 
 - document files are the truth
-- index files can be rebuilt
+- prefix index entries can be rebuilt
 
 That means FYLO is designed so that the system can recover from index drift without treating the index as a sacred durable database.
 
 Use `rebuildCollection()` when:
 
-- the index file drifts from document reality
+- prefix index entries drift from document reality
 - WORM head files or version metadata need to be normalized
 - you want to repair retained lineage metadata after a manual filesystem recovery
 
@@ -507,7 +616,7 @@ console.log(result)
 `rebuildCollection()`:
 
 - scans retained document files
-- rebuilds the collection index from scratch
+- rebuilds prefix index entries from scratch
 - in WORM mode, rewrites head files and version metadata
 - preserves tombstoned lineages by carrying forward retained `deletedAt` metadata
 
@@ -555,6 +664,15 @@ fylo.admin latest posts 4UUB32VGUDW --root /mnt/fylo --worm --id-only
 fylo.admin history posts 4UUB32VGUDW --root /mnt/fylo --worm --json
 fylo.query sql "SELECT * FROM posts" --page-size 25 --align left
 fylo.query sql "SELECT * FROM posts" --no-pager
+```
+
+Schema operations are also first-class admin commands:
+
+```bash
+fylo.admin schema inspect article --schema-dir /mnt/fylo-schemas --json
+fylo.admin schema doctor article --schema-dir /mnt/fylo-schemas
+fylo.admin schema validate article @article.json --schema-dir /mnt/fylo-schemas --json
+fylo.admin schema materialize article @legacy-article.json --schema-dir /mnt/fylo-schemas --json
 ```
 
 For non-JavaScript callers, FYLO also exposes a stable JSON machine interface:
@@ -764,6 +882,12 @@ Supported machine operations:
 - `delDoc`
 - `delDocs`
 - `importBulkData`
+- `schemaInspect`
+- `schemaCurrent`
+- `schemaHistory`
+- `schemaDoctor`
+- `schemaValidate`
+- `schemaMaterialize`
 
 CLI WORM note:
 
@@ -785,7 +909,7 @@ CLI formatting note:
 ```bash
 bun run typecheck
 bun run build
-bun test
+bun run test
 ```
 
 Type packaging note:

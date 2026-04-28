@@ -8,7 +8,7 @@ import { Cipher } from '../security/cipher.js'
 const ENCRYPTED_FIELD_OPS = ['$ne', '$gt', '$gte', '$lt', '$lte', '$like', '$contains']
 export class Query {
     /**
-     * Builds the filesystem index globs that can satisfy a structured FYLO query.
+     * Builds diagnostic prefix-index expressions that can satisfy a structured FYLO query.
      * @param {string} collection
      * @param {StoreQuery} query
      * @returns {Promise<string[]>}
@@ -36,20 +36,19 @@ export class Query {
                     }
                     if (col.$eq) {
                         const val = encrypted
-                            ? await Cipher.encrypt(String(col.$eq).replaceAll('/', '%2F'))
+                            ? await Cipher.blindIndex(String(col.$eq).replaceAll('/', '%2F'))
                             : col.$eq
-                        exprs.add(`${column}/${val}/**/*`)
+                        exprs.add(`${fieldPath}/eq/${val}/**/*`)
                     }
-                    if (col.$ne) exprs.add(`${column}/**/*`)
-                    if (col.$gt) exprs.add(`${column}/**/*`)
-                    if (col.$gte) exprs.add(`${column}/**/*`)
-                    if (col.$lt) exprs.add(`${column}/**/*`)
-                    if (col.$lte) exprs.add(`${column}/**/*`)
-                    if (col.$like) exprs.add(`${column}/${col.$like.replaceAll('%', '*')}/**/*`)
+                    if (col.$ne) exprs.add(`${fieldPath}/**/*`)
+                    if (col.$gt) exprs.add(`${fieldPath}/n/**/*`)
+                    if (col.$gte) exprs.add(`${fieldPath}/n/**/*`)
+                    if (col.$lt) exprs.add(`${fieldPath}/nr/**/*`)
+                    if (col.$lte) exprs.add(`${fieldPath}/nr/**/*`)
+                    if (col.$like)
+                        exprs.add(`${fieldPath}/f/${col.$like.replaceAll('%', '*')}/**/*`)
                     if (col.$contains !== undefined)
-                        exprs.add(
-                            `${column}/*/${String(col.$contains).split('/').join('%2F')}/**/*`
-                        )
+                        exprs.add(`${fieldPath}/eq/${String(col.$contains)}/**/*`)
                 }
             }
         } else exprs = new Set([`**/*`])

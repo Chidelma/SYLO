@@ -15,3 +15,7 @@ graphify-out/
 CLAUDE.md
 AGENTS.md
 .github/copilot-instructions.md
+
+# Untrack markdown except README
+*.md
+!README.md
