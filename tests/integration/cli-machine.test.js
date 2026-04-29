@@ -1,9 +1,10 @@
-import { afterAll, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
 const roots = []
+let buildResult
 
 async function createRoot(prefix) {
     const root = await mkdtemp(path.join(os.tmpdir(), prefix))
@@ -56,10 +57,13 @@ afterAll(async () => {
 })
 
 describe('CLI machine interface', () => {
+    beforeAll(async () => {
+        buildResult = await run(['run', 'build'], process.cwd())
+    })
+
     test('build publishes declaration output without stray JS helpers', async () => {
         const repo = process.cwd()
-        const build = await run(['run', 'build'], repo)
-        expect(build.exitCode).toBe(0)
+        expect(buildResult.exitCode).toBe(0)
         const jsFiles = await listJsFiles(path.join(repo, 'dist', 'types'))
         expect(jsFiles).toEqual([])
     })
@@ -69,8 +73,7 @@ describe('CLI machine interface', () => {
         const root = await createRoot('fylo-machine-')
         const schemaDir = path.join(repo, 'tests', 'schemas')
 
-        const build = await run(['run', 'build'], repo)
-        expect(build.exitCode).toBe(0)
+        expect(buildResult.exitCode).toBe(0)
 
         const createResponse = await run(
             [
@@ -196,8 +199,7 @@ describe('CLI machine interface', () => {
     test('exec returns structured JSON errors with non-zero exits', async () => {
         const repo = process.cwd()
 
-        const build = await run(['run', 'build'], repo)
-        expect(build.exitCode).toBe(0)
+        expect(buildResult.exitCode).toBe(0)
 
         const response = await run(
             ['dist/cli/index.js', 'exec', '--request', JSON.stringify({ op: 'unknownOperation' })],

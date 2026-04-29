@@ -2,6 +2,21 @@ import { mkdir, open, rename } from 'node:fs/promises'
 import path from 'node:path'
 
 /**
+ * Detects platforms/filesystems that do not support fsync on directory handles.
+ *
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+function isUnsupportedDirectorySync(error) {
+    return (
+        process.platform === 'win32' &&
+        error instanceof Error &&
+        'code' in error &&
+        ['EPERM', 'EINVAL', 'ENOTSUP'].includes(String(error.code))
+    )
+}
+
+/**
  * Writes `data` to `target` with crash-safe durability guarantees.
  *
  * Pattern: write to `<target>.tmp`, fsync the file, rename into place,
@@ -31,6 +46,8 @@ export async function writeDurable(target, data) {
     const dirHandle = await open(dir, 'r')
     try {
         await dirHandle.sync()
+    } catch (error) {
+        if (!isUnsupportedDirectorySync(error)) throw error
     } finally {
         await dirHandle.close()
     }
