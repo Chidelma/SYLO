@@ -22,7 +22,6 @@ const SIGN_MASK = 1n << 63n
  * @property {string=} sessionToken
  * @property {string=} endpoint
  * @property {string=} region
- * @property {string=} bucketPrefix
  */
 
 /**
@@ -129,8 +128,7 @@ function resolveS3Options(options) {
         endpoint:
             options.endpoint ??
             envValue(['AWS_ENDPOINT_URL_S3', 'AWS_ENDPOINT_URL', 'FYLO_S3_ENDPOINT']),
-        region: options.region ?? envValue(['AWS_REGION', 'AWS_DEFAULT_REGION', 'FYLO_S3_REGION']),
-        bucketPrefix: options.bucketPrefix ?? envValue(['FYLO_S3_BUCKET_PREFIX'])
+        region: options.region ?? envValue(['AWS_REGION', 'AWS_DEFAULT_REGION', 'FYLO_S3_REGION'])
     }
 }
 
@@ -519,7 +517,7 @@ export class BunS3PrefixIndexStore {
     client(collection) {
         return new Bun.S3Client({
             ...this.options,
-            bucket: `${this.options.bucketPrefix ?? ''}${collection}`
+            bucket: collection
         })
     }
 
