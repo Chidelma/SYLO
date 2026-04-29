@@ -61,11 +61,15 @@ When WORM mode is enabled, FYLO also keeps lineage metadata:
 bun add @d31ma/fylo
 ```
 
-If you install the package from GitHub Packages, configure your `.npmrc` first:
+That installs the public stable release from npm by default.
 
-```text
+If you are a `d31ma` member and want the private beta channel from GitHub Packages instead, configure a user-level `.npmrc`:
+
+```ini
+# ~/.npmrc
 @d31ma:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
+//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
+always-auth=true
 ```
 
 FYLO publishes three CLI entrypoints:
@@ -493,14 +497,15 @@ const fylo = new Fylo({
     index: {
         backend: 's3-prefix',
         s3: {
-            bucketPrefix: 'fylo-',
             region: 'us-east-1'
         }
     }
 })
 ```
 
-`bucketPrefix` is optional. With the example above, collection `users` indexes into bucket `fylo-users`. Documents still live in the configured filesystem root; S3 stores only index keys.
+Collection names map directly to S3 bucket names. With the example above, collection `users` indexes into bucket `users`. Documents still live in the configured filesystem root; S3 stores only index keys.
+
+The prefix-index key format is intentionally independent from schema version labels such as `_v: "v2"`. Schema versions describe document shape and upgrader order; index keys describe lookup layout. Changing a schema version should not force every S3 index object to move.
 
 S3 prefix-index credentials can be passed through `index.s3`, or resolved from environment variables. Explicit options win over environment values. FYLO checks AWS-compatible names first, then FYLO-prefixed aliases:
 
@@ -510,7 +515,6 @@ AWS_SECRET_ACCESS_KEY / FYLO_S3_SECRET_ACCESS_KEY
 AWS_SESSION_TOKEN / FYLO_S3_SESSION_TOKEN
 AWS_ENDPOINT_URL_S3 / AWS_ENDPOINT_URL / FYLO_S3_ENDPOINT
 AWS_REGION / AWS_DEFAULT_REGION / FYLO_S3_REGION
-FYLO_S3_BUCKET_PREFIX
 ```
 
 ## Realtime behavior
@@ -702,8 +706,8 @@ Machine responses are always JSON and use a small protocol envelope:
 This is the recommended boundary when you want to compile FYLO into a Bun executable and call it from Python, Go, Rust, Java, or shell automation:
 
 ```bash
-bun build --compile ./src/cli/index.js --outfile ./dist/bin/fylo
-./dist/bin/fylo exec --request @request.json
+bun run build:exe
+./dist-bin/fylo exec --request @request.json
 ```
 
 Example request payload:
@@ -734,7 +738,7 @@ request = {
 }
 
 proc = subprocess.run(
-    ["./dist/bin/fylo", "exec", "--request", "-"],
+    ["./dist-bin/fylo", "exec", "--request", "-"],
     input=json.dumps(request),
     text=True,
     capture_output=True,
@@ -769,7 +773,7 @@ func main() {
 	}
 
 	body, _ := json.Marshal(request)
-	cmd := exec.Command("./dist/bin/fylo", "exec", "--request", "-")
+	cmd := exec.Command("./dist-bin/fylo", "exec", "--request", "-")
 	cmd.Stdin = bytes.NewReader(body)
 
 	output, err := cmd.Output()
@@ -804,7 +808,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "collection": "posts"
     });
 
-    let mut child = Command::new("./dist/bin/fylo")
+    let mut child = Command::new("./dist-bin/fylo")
         .args(["exec", "--request", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -844,7 +848,7 @@ public class FyloExample {
             }
             """;
 
-        Process process = new ProcessBuilder("./dist/bin/fylo", "exec", "--request", "-")
+        Process process = new ProcessBuilder("./dist-bin/fylo", "exec", "--request", "-")
             .redirectError(ProcessBuilder.Redirect.INHERIT)
             .start();
 

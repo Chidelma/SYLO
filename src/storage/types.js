@@ -96,7 +96,6 @@
  * @property {string=} sessionToken
  * @property {string=} endpoint
  * @property {string=} region
- * @property {string=} bucketPrefix
  */
 
 /**
