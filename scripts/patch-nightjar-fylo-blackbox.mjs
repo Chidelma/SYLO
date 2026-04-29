@@ -51,9 +51,11 @@ function patchHelper() {
     let source = fs.readFileSync(helperPath, 'utf8')
     const marker = "  const install = run('bun', ['add', tarball], { cwd: root })\n"
     const injected =
+        '  const token = process.env.NODE_AUTH_TOKEN\n' +
+        "  if (!token) throw new Error('NODE_AUTH_TOKEN is required to install private d31ma packages')\n" +
         '  await writeFile(\n' +
         "    path.join(root, '.npmrc'),\n" +
-        "    '@d31ma:registry=https://npm.pkg.github.com\\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\\n'\n" +
+        '    `@d31ma:registry=https://npm.pkg.github.com\\n//npm.pkg.github.com/:_authToken=${token}\\nalways-auth=true\\n`\n' +
         '  )\n\n' +
         marker
     source = replaceRequired(source, marker, injected, helperPath)
