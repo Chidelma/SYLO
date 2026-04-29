@@ -8,3 +8,14 @@ Dockerfile
 bin
 .DS_Store
 .fylo-data
+
+# Graphify
+.graphify_*
+graphify-out/
+CLAUDE.md
+AGENTS.md
+.github/copilot-instructions.md
+
+# Untrack markdown except README
+*.md
+!README.md

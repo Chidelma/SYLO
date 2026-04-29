@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import Fylo, { FyloSyncError } from '../../src'
+import Fylo, { FyloSyncError } from '../../src/index.js'
 
 const roots = []
 

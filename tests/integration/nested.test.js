@@ -1,8 +1,8 @@
 import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import { rm } from 'node:fs/promises'
-import Fylo from '../../src'
-import { usersURL } from '../data'
-import { createTestRoot } from '../helpers/root'
+import Fylo from '../../src/index.js'
+import { usersURL } from '../data.js'
+import { createTestRoot } from '../helpers/root.js'
 const USERS = 'nst-user'
 let insertedCount = 0
 let sampleId
@@ -12,9 +12,7 @@ beforeAll(async () => {
     await fylo.createCollection(USERS)
     try {
         insertedCount = await fylo.importBulkData(USERS, new URL(usersURL))
-    } catch {
-        await fylo.rollback()
-    }
+    } catch {}
     for await (const data of fylo.findDocs(USERS, { $limit: 1, $onlyIds: true }).collect()) {
         sampleId = data
     }

@@ -5,8 +5,8 @@
     "": {
       "name": "@d31ma/fylo",
       "dependencies": {
-        "@d31ma/chex": "0.4.1",
-        "@d31ma/ttid": "1.3.7",
+        "@d31ma/chex": "26.18.27-2",
+        "@d31ma/ttid": "26.18.27-2",
       },
       "devDependencies": {
         "@types/bun": "^1.2.19",
@@ -18,15 +18,12 @@
         "prettier": "^3.0.0",
         "typescript": "^5.9.3",
       },
-      "peerDependencies": {
-        "typescript": "^5.0.0",
-      },
     },
   },
   "packages": {
-    "@d31ma/chex": ["@d31ma/chex@0.4.1", "https://npm.pkg.github.com/download/@d31ma/chex/0.4.1/fc164a1b6365c6415068a5ed783f0fde1f5bc742", { "peerDependencies": { "typescript": "^5.0.0" }, "bin": { "chex.generate": "src/generator" } }, "sha512-yv64h5TlR0wmOTnxT0olQU+1ym1bfVU2r5CJ9113ClhlSNOwm+4NC92Bf4RAIKzqDgYBFgIFN5o4yCvB+3SEqg=="],
+    "@d31ma/chex": ["@d31ma/chex@26.18.27-2", "", { "bin": { "chex.generate": "src/cli/generate-declarations.js" } }, "sha512-5FVxxrbmF6ToQ5eeGkDofOFAmJpA/VjACER270bqGPJd2yYZv21G3vsgId/v3AUblRAvZvlDfovGNGzb/1XcoA=="],
 
-    "@d31ma/ttid": ["@d31ma/ttid@1.3.7", "https://npm.pkg.github.com/download/@d31ma/ttid/1.3.7/7c8ecad6245c2ed5e4fbecb9e40b9072fbcf61d8", { "peerDependencies": { "typescript": "^5.0.0" } }, "sha512-j7+3MZlAg9oKe5RDVCPbF3jLu6YeMlq/ajgiqB2rzakmIo4fyPfxXd0KhymtpQc3NlLAFz00q+EWnYaFl1BsRQ=="],
+    "@d31ma/ttid": ["@d31ma/ttid@26.18.27-2", "", {}, "sha512-n4kxGaLTqdeaUYwfzLx6Co7hwTeJjlEkEDTGb+d6IiMFy6SMqk8KljohlRzyBtgDWmNAaZ4JmnnWt3PtZ4Sgkw=="],
 
     "@eslint-community/eslint-utils": ["@eslint-community/eslint-utils@4.9.1", "", { "dependencies": { "eslint-visitor-keys": "^3.4.3" }, "peerDependencies": { "eslint": "^6.0.0 || ^7.0.0 || >=8.0.0" } }, "sha512-phrYmNiYppR7znFEdqgfWHXR6NCkZEK7hwWDHZUjit/2/U0r6XvkDl0SYnoM51Hq7FhCGdLDT6zxCCOY1hexsQ=="],
 

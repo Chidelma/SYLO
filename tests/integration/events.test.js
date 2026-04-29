@@ -1,0 +1,179 @@
+import { afterAll, describe, expect, test } from 'bun:test'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import Fylo from '../../src/index.js'
+import { Cipher } from '../../src/security/cipher.js'
+
+const root = await mkdtemp(path.join(os.tmpdir(), 'fylo-events-'))
+
+describe('FYLO onEvent hook', () => {
+    afterAll(async () => {
+        await rm(root, { recursive: true, force: true })
+    })
+
+    test('emits import.blocked when SSRF guard rejects a private address', async () => {
+        /** @type {import('../../src/observability/events.js').FyloEvent[]} */
+        const events = []
+        const fylo = new Fylo({ root, onEvent: (e) => events.push(e) })
+        const collection = `evt-import-${Date.now()}`
+        await fylo.createCollection(collection)
+        await expect(
+            fylo.importBulkData(collection, new URL('http://127.0.0.1/x.json'))
+        ).rejects.toThrow('private address')
+        const blocked = events.find((e) => e.type === 'import.blocked')
+        expect(blocked).toBeDefined()
+        if (blocked && blocked.type === 'import.blocked') {
+            expect(blocked.reason).toBe('private-network')
+            expect(blocked.url).toBe('http://127.0.0.1/x.json')
+        }
+    })
+
+    test('emits import.blocked with reason=protocol for unsupported scheme', async () => {
+        /** @type {import('../../src/observability/events.js').FyloEvent[]} */
+        const events = []
+        const fylo = new Fylo({ root, onEvent: (e) => events.push(e) })
+        const collection = `evt-proto-${Date.now()}`
+        await fylo.createCollection(collection)
+        await expect(
+            fylo.importBulkData(collection, new URL('ftp://example.com/x.json'))
+        ).rejects.toThrow('protocol is not allowed')
+        const blocked = events.find((e) => e.type === 'import.blocked')
+        expect(blocked).toBeDefined()
+        if (blocked && blocked.type === 'import.blocked') {
+            expect(blocked.reason).toBe('protocol')
+        }
+    })
+
+    test('emits cipher.configured when schema-driven config flips Cipher state', async () => {
+        const previousSchemaDir = process.env.FYLO_SCHEMA_DIR
+        const previousEncryptionKey = process.env.FYLO_ENCRYPTION_KEY
+        const previousSalt = process.env.FYLO_CIPHER_SALT
+        const schemaRoot = await mkdtemp(path.join(os.tmpdir(), 'fylo-events-schema-'))
+        const collection = `evt-cipher-${Date.now()}`
+        Cipher.reset()
+        Fylo.loadedEncryption.delete(collection)
+        await Bun.write(
+            path.join(schemaRoot, collection, 'history', 'v1.json'),
+            JSON.stringify({ $encrypted: ['secret'] })
+        )
+        await Bun.write(
+            path.join(schemaRoot, collection, 'manifest.json'),
+            JSON.stringify({
+                current: 'v1',
+                versions: [{ v: 'v1', addedAt: '2026-04-01T00:00:00Z' }]
+            })
+        )
+        process.env.FYLO_SCHEMA_DIR = schemaRoot
+        process.env.FYLO_ENCRYPTION_KEY = 'k'.repeat(48)
+        process.env.FYLO_CIPHER_SALT = 'deadbeef'.repeat(8)
+        /** @type {import('../../src/observability/events.js').FyloEvent[]} */
+        const events = []
+        try {
+            const fylo = new Fylo({ root, onEvent: (e) => events.push(e) })
+            await fylo.createCollection(collection)
+            await fylo.putData(collection, { secret: 'shh' })
+            const cipherEvent = events.find((e) => e.type === 'cipher.configured')
+            expect(cipherEvent).toBeDefined()
+            if (cipherEvent && cipherEvent.type === 'cipher.configured') {
+                expect(cipherEvent.collection).toBe(collection)
+            }
+        } finally {
+            if (previousSchemaDir === undefined) delete process.env.FYLO_SCHEMA_DIR
+            else process.env.FYLO_SCHEMA_DIR = previousSchemaDir
+            if (previousEncryptionKey === undefined) delete process.env.FYLO_ENCRYPTION_KEY
+            else process.env.FYLO_ENCRYPTION_KEY = previousEncryptionKey
+            if (previousSalt === undefined) delete process.env.FYLO_CIPHER_SALT
+            else process.env.FYLO_CIPHER_SALT = previousSalt
+            Cipher.reset()
+            await rm(schemaRoot, { recursive: true, force: true })
+        }
+    })
+
+    test('emits index.rebuilt at the end of rebuildCollection', async () => {
+        /** @type {import('../../src/observability/events.js').FyloEvent[]} */
+        const events = []
+        const fylo = new Fylo({ root, onEvent: (e) => events.push(e) })
+        const collection = `evt-rebuild-${Date.now()}`
+        await fylo.createCollection(collection)
+        await fylo.putData(collection, { title: 'one' })
+        await fylo.putData(collection, { title: 'two' })
+        await fylo.rebuildCollection(collection)
+        const rebuilt = events.find((e) => e.type === 'index.rebuilt')
+        expect(rebuilt).toBeDefined()
+        if (rebuilt && rebuilt.type === 'index.rebuilt') {
+            expect(rebuilt.collection).toBe(collection)
+            expect(rebuilt.docsScanned).toBe(2)
+            expect(rebuilt.indexedDocs).toBe(2)
+            expect(rebuilt.worm).toBe(false)
+        }
+    })
+
+    test('emits lock.takeover when a stale collection write-lock is reclaimed', async () => {
+        const lockRoot = await mkdtemp(path.join(os.tmpdir(), 'fylo-events-lock-'))
+        const collection = `evt-takeover-${Date.now()}`
+        try {
+            const fylo = new Fylo({ root: lockRoot })
+            await fylo.createCollection(collection)
+            const lockPath = path.join(lockRoot, collection, '.fylo', 'collection.lock')
+            // Plant a lock file older than the collection-write TTL (5 min) so
+            // the next acquirer treats it as stale and takes it over.
+            await mkdir(path.dirname(lockPath), { recursive: true })
+            await writeFile(
+                lockPath,
+                JSON.stringify({ owner: 'dead-owner', ts: Date.now() - 600_000 })
+            )
+            /** @type {import('../../src/observability/events.js').FyloEvent[]} */
+            const events = []
+            const observer = new Fylo({ root: lockRoot, onEvent: (e) => events.push(e) })
+            await observer.putData(collection, { title: 'after-takeover' })
+            const takeover = events.find((e) => e.type === 'lock.takeover')
+            expect(takeover).toBeDefined()
+            if (takeover && takeover.type === 'lock.takeover') {
+                expect(takeover.lockPath).toBe(lockPath)
+                expect(takeover.previousOwner).toBe('dead-owner')
+            }
+        } finally {
+            await rm(lockRoot, { recursive: true, force: true })
+        }
+    })
+
+    test('a throwing onEvent handler does not break the underlying operation', async () => {
+        const fylo = new Fylo({
+            root,
+            onEvent: () => {
+                throw new Error('handler boom')
+            }
+        })
+        const collection = `evt-throw-${Date.now()}`
+        await fylo.createCollection(collection)
+        await fylo.putData(collection, { title: 'one' })
+        const result = await fylo.rebuildCollection(collection)
+        expect(result.indexedDocs).toBe(1)
+    })
+
+    test('a rejecting async onEvent handler does not break the underlying operation', async () => {
+        let unhandled = false
+        const onUnhandled = () => {
+            unhandled = true
+        }
+        process.on('unhandledRejection', onUnhandled)
+        try {
+            const fylo = new Fylo({
+                root,
+                onEvent: async () => {
+                    throw new Error('handler async boom')
+                }
+            })
+            const collection = `evt-reject-${Date.now()}`
+            await fylo.createCollection(collection)
+            await fylo.putData(collection, { title: 'one' })
+            const result = await fylo.rebuildCollection(collection)
+            expect(result.indexedDocs).toBe(1)
+            await new Promise((r) => setTimeout(r, 50))
+            expect(unhandled).toBe(false)
+        } finally {
+            process.off('unhandledRejection', onUnhandled)
+        }
+    })
+})

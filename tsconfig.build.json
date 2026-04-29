@@ -1,0 +1,10 @@
+{
+  "extends": "./jsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationDir": "dist/types",
+    "noEmit": false
+  },
+  "exclude": ["dist", "dist-bin", "node_modules"]
+}

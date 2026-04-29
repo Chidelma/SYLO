@@ -1,8 +1,8 @@
 import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import { rm } from 'node:fs/promises'
-import Fylo from '../../src'
-import { albumURL, postsURL } from '../data'
-import { createTestRoot } from '../helpers/root'
+import Fylo from '../../src/index.js'
+import { albumURL, postsURL } from '../data.js'
+import { createTestRoot } from '../helpers/root.js'
 const POSTS = `post`
 const ALBUMS = `album`
 let count = 0
@@ -13,9 +13,7 @@ beforeAll(async () => {
     try {
         count = await fylo.importBulkData(ALBUMS, new URL(albumURL), 100)
         await fylo.importBulkData(POSTS, new URL(postsURL), 100)
-    } catch {
-        await fylo.rollback()
-    }
+    } catch {}
 })
 afterAll(async () => {
     await Promise.all([fylo.dropCollection(ALBUMS), fylo.dropCollection(POSTS)])

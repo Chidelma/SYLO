@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { rm, unlink, writeFile } from 'node:fs/promises'
+import { rm, unlink } from 'node:fs/promises'
 import path from 'node:path'
-import Fylo from '../../src'
-import { createTestRoot } from '../helpers/root'
+import Fylo from '../../src/index.js'
+import { createTestRoot } from '../helpers/root.js'
 
 const ROOT = await createTestRoot('fylo-rebuild-')
 const BASIC_COLLECTION = 'rebuild-posts'
@@ -35,15 +35,10 @@ describe('rebuildCollection', () => {
             title: 'Rebuild me'
         })
 
-        const indexPath = path.join(
-            ROOT,
-            BASIC_COLLECTION,
-            '.fylo',
-            'indexes',
-            `${BASIC_COLLECTION}.idx.json`
-        )
-
-        await writeFile(indexPath, JSON.stringify({ version: 1, docs: {} }), 'utf8')
+        await rm(path.join(ROOT, BASIC_COLLECTION, '.fylo', 'index'), {
+            recursive: true,
+            force: true
+        })
 
         const before = []
         for await (const doc of fylo
@@ -123,19 +118,15 @@ describe('rebuildCollection', () => {
             'heads',
             `${tombstoneFirst}.json`
         )
-        const indexPath = path.join(
-            ROOT,
-            WORM_COLLECTION,
-            '.fylo',
-            'indexes',
-            `${WORM_COLLECTION}.idx.json`
-        )
 
         await unlink(activeHeadPath)
         await unlink(activeFirstMetaPath)
         await unlink(activeSecondMetaPath)
         await unlink(tombstoneHeadPath)
-        await writeFile(indexPath, JSON.stringify({ version: 1, docs: {} }), 'utf8')
+        await rm(path.join(ROOT, WORM_COLLECTION, '.fylo', 'index'), {
+            recursive: true,
+            force: true
+        })
 
         const rebuild = await wormFylo.rebuildCollection(WORM_COLLECTION)
         const activeLatest = await wormFylo.getLatest(WORM_COLLECTION, activeFirst)

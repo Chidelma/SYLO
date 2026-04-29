@@ -1,8 +1,8 @@
 import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import { rm } from 'node:fs/promises'
-import Fylo from '../../src'
-import { photosURL, todosURL } from '../data'
-import { createTestRoot } from '../helpers/root'
+import Fylo from '../../src/index.js'
+import { photosURL, todosURL } from '../data.js'
+import { createTestRoot } from '../helpers/root.js'
 const PHOTOS = `photo`
 const TODOS = `todo`
 const root = await createTestRoot('fylo-update-')
@@ -12,9 +12,7 @@ beforeAll(async () => {
     try {
         await fylo.importBulkData(PHOTOS, new URL(photosURL), 100)
         await fylo.importBulkData(TODOS, new URL(todosURL), 100)
-    } catch {
-        await fylo.rollback()
-    }
+    } catch {}
 })
 afterAll(async () => {
     await Promise.all([fylo.dropCollection(PHOTOS), fylo.executeSQL(`DROP TABLE ${TODOS}`)])
@@ -28,9 +26,7 @@ describe('NO-SQL', async () => {
         }
         try {
             await fylo.patchDoc(PHOTOS, { [ids.shift()]: { title: 'All Mighty' } })
-        } catch {
-            await fylo.rollback()
-        }
+        } catch {}
         let results = {}
         for await (const data of fylo
             .findDocs(PHOTOS, {
@@ -48,9 +44,7 @@ describe('NO-SQL', async () => {
                 $set: { title: 'All Mighti' },
                 $where: { $ops: [{ title: { $like: '%est%' } }] }
             })
-        } catch {
-            await fylo.rollback()
-        }
+        } catch {}
         let results = {}
         for await (const data of fylo
             .findDocs(PHOTOS, {
@@ -65,9 +59,7 @@ describe('NO-SQL', async () => {
         let count = -1
         try {
             count = await fylo.patchDocs(PHOTOS, { $set: { title: 'All Mighter' } })
-        } catch {
-            await fylo.rollback()
-        }
+        } catch {}
         let results = {}
         for await (const data of fylo
             .findDocs(PHOTOS, {
@@ -86,9 +78,7 @@ describe('SQL', async () => {
             count = await fylo.executeSQL(
                 `UPDATE ${TODOS} SET title = 'All Mighty' WHERE title LIKE '%est%'`
             )
-        } catch {
-            await fylo.rollback()
-        }
+        } catch {}
         const results = await fylo.executeSQL(`SELECT * FROM ${TODOS} WHERE title = 'All Mighty'`)
         expect(Object.keys(results).length).toBe(count)
     })
@@ -96,9 +86,7 @@ describe('SQL', async () => {
         let count = -1
         try {
             count = await fylo.executeSQL(`UPDATE ${TODOS} SET title = 'All Mightier'`)
-        } catch {
-            await fylo.rollback()
-        }
+        } catch {}
         const results = await fylo.executeSQL(`SELECT * FROM ${TODOS} WHERE title = 'All Mightier'`)
         expect(Object.keys(results).length).toBe(count)
     }, 20000)

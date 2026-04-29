@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import Fylo from '../../src'
+import Fylo from '../../src/index.js'
 
 const roots = []
 
@@ -36,6 +36,7 @@ describe('CLI', () => {
     test('build emits a working CLI with SQL and richer admin commands', async () => {
         const repo = process.cwd()
         const root = await createRoot('fylo-cli-')
+        const schemaDir = path.join(repo, 'tests', 'schemas')
 
         const build = await run(['run', 'build'], repo)
         expect(build.exitCode).toBe(0)
@@ -190,5 +191,95 @@ describe('CLI', () => {
         expect(historyResult).toHaveLength(2)
         expect(historyResult[0].id).toBe(updatedId)
         expect(historyResult[1].id).toBe(originalId)
+
+        const schemaCurrent = await run(
+            ['dist/cli/index.js', 'schema', 'current', 'article', '--schema-dir', schemaDir],
+            repo
+        )
+        expect(schemaCurrent.exitCode).toBe(0)
+        expect(schemaCurrent.stdout.trim()).toBe('v2')
+
+        const schemaHistory = await run(
+            [
+                'dist/cli/index.js',
+                'schema',
+                'history',
+                'article',
+                '--schema-dir',
+                schemaDir,
+                '--json'
+            ],
+            repo
+        )
+        expect(schemaHistory.exitCode).toBe(0)
+        const schemaHistoryResult = JSON.parse(schemaHistory.stdout)
+        expect(schemaHistoryResult).toHaveLength(2)
+        expect(schemaHistoryResult[0].version).toBe('v1')
+        expect(schemaHistoryResult[1].version).toBe('v2')
+        expect(schemaHistoryResult[1].current).toBe(true)
+
+        const schemaDoctor = await run(
+            [
+                'dist/cli/index.js',
+                'schema',
+                'doctor',
+                'article',
+                '--schema-dir',
+                schemaDir,
+                '--json'
+            ],
+            repo
+        )
+        expect(schemaDoctor.exitCode).toBe(0)
+        const schemaDoctorResult = JSON.parse(schemaDoctor.stdout)
+        expect(schemaDoctorResult.ok).toBe(true)
+        expect(schemaDoctorResult.issues).toEqual([])
+
+        const schemaValidate = await run(
+            [
+                'dist/cli/index.js',
+                'schema',
+                'validate',
+                'article',
+                JSON.stringify({
+                    id: 7,
+                    title: 'Strict Insert',
+                    body: 'body',
+                    slug: 'strict-insert'
+                }),
+                '--schema-dir',
+                schemaDir,
+                '--json'
+            ],
+            repo
+        )
+        expect(schemaValidate.exitCode).toBe(0)
+        const schemaValidateResult = JSON.parse(schemaValidate.stdout)
+        expect(schemaValidateResult.valid).toBe(true)
+        expect(schemaValidateResult.document._v).toBe('v2')
+
+        const schemaMaterialize = await run(
+            [
+                'dist/cli/index.js',
+                'schema',
+                'materialize',
+                'article',
+                JSON.stringify({
+                    id: 8,
+                    title: 'Hello World',
+                    body: 'body',
+                    _v: 'v1'
+                }),
+                '--schema-dir',
+                schemaDir,
+                '--json'
+            ],
+            repo
+        )
+        expect(schemaMaterialize.exitCode).toBe(0)
+        const schemaMaterializeResult = JSON.parse(schemaMaterialize.stdout)
+        expect(schemaMaterializeResult.current).toBe('v2')
+        expect(schemaMaterializeResult.document.slug).toBe('hello-world')
+        expect(schemaMaterializeResult.document._v).toBe('v2')
     })
 })

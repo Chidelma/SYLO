@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { resolvePagerCommand, shouldUsePager, splitCommandLine } from '../../src/cli/output'
+import { resolvePagerCommand, shouldUsePager, splitCommandLine } from '../../src/cli/output.js'
 
 describe('CLI pager helpers', () => {
     test('splitCommandLine preserves quoted arguments', () => {

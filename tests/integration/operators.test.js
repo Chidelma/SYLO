@@ -1,8 +1,8 @@
 import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
 import { rm } from 'node:fs/promises'
-import Fylo from '../../src'
-import { albumURL } from '../data'
-import { createTestRoot } from '../helpers/root'
+import Fylo from '../../src/index.js'
+import { albumURL } from '../data.js'
+import { createTestRoot } from '../helpers/root.js'
 const ALBUMS = 'ops-album'
 const root = await createTestRoot('fylo-operators-')
 const fylo = new Fylo({ root })
@@ -11,7 +11,7 @@ beforeAll(async () => {
     try {
         await fylo.importBulkData(ALBUMS, new URL(albumURL), 100)
     } catch {
-        await fylo.rollback()
+        // network-dependent import; tolerate offline runs
     }
 })
 afterAll(async () => {

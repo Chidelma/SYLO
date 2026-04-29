@@ -1,8 +1,8 @@
 import { test, expect, describe, afterAll } from 'bun:test'
 import { rm } from 'node:fs/promises'
-import Fylo from '../../src'
-import { postsURL, albumURL } from '../data'
-import { createTestRoot } from '../helpers/root'
+import Fylo from '../../src/index.js'
+import { postsURL, albumURL } from '../data.js'
+import { createTestRoot } from '../helpers/root.js'
 const POSTS = `post`
 const ALBUMS = `album`
 const root = await createTestRoot('fylo-truncate-')

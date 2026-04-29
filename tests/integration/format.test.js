@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { formatTable } from '../../src/core/format'
+import { formatTable } from '../../src/cli/format.js'
 
 describe('formatTable', () => {
     test('returns a safe empty-state message for empty objects', () => {

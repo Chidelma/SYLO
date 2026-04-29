@@ -1,8 +1,8 @@
 import { test, expect, describe, beforeAll, afterAll } from 'bun:test'
-import { access, readFile, rm } from 'node:fs/promises'
+import { access, rm } from 'node:fs/promises'
 import path from 'node:path'
-import Fylo from '../../src'
-import { createTestRoot } from '../helpers/root'
+import Fylo from '../../src/index.js'
+import { createTestRoot } from '../helpers/root.js'
 
 const COLLECTION = 'worm-posts'
 const TOMBSTONE_COLLECTION = 'worm-posts-tombstone'
@@ -75,8 +75,8 @@ describe('WORM mode', () => {
         await access(headPath)
         await access(versionPath)
 
-        const head = JSON.parse(await readFile(headPath, 'utf8'))
-        const version = JSON.parse(await readFile(versionPath, 'utf8'))
+        const head = await Bun.file(headPath).json()
+        const version = await Bun.file(versionPath).json()
 
         expect(head.currentVersionId).toBe(secondId)
         expect(version.previousVersionId).toBe(firstId)
@@ -196,7 +196,7 @@ describe('WORM mode', () => {
         expect(results).toHaveLength(0)
 
         const headPath = path.join(root, TOMBSTONE_COLLECTION, '.fylo', 'heads', `${firstId}.json`)
-        const head = JSON.parse(await readFile(headPath, 'utf8'))
+        const head = await Bun.file(headPath).json()
 
         expect(head.currentVersionId).toBe(secondId)
         expect(head.deleted).toBe(true)

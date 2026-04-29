@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from 'bun:test'
 import { rm } from 'node:fs/promises'
-import Fylo, { FyloAuthError } from '../../src'
-import { createTestRoot } from '../helpers/root'
+import Fylo, { FyloAuthError } from '../../src/index.js'
+import { createTestRoot } from '../helpers/root.js'
 
 const root = await createTestRoot('fylo-auth-')
 
@@ -10,23 +10,14 @@ afterAll(async () => {
 })
 
 describe('auth policy wrapper', () => {
-    test('as() fails closed when no policy is configured', () => {
+    test('as() fails closed when RLS is not enabled', () => {
         const fylo = new Fylo({ root })
-
-        expect(() => fylo.as({ subjectId: 'user-1' })).toThrow('auth policy is not configured')
+        expect(() => fylo.as({ subjectId: 'user-1' })).toThrow('FYLO RLS is not enabled')
     })
 
     test('authorized scoped client delegates public document operations', async () => {
         const calls = []
-        const fylo = new Fylo({
-            root,
-            auth: {
-                authorize(input) {
-                    calls.push(input)
-                    return input.auth.subjectId === 'user-1' && input.action !== 'doc:delete'
-                }
-            }
-        })
+        const fylo = new Fylo({ root, rls: true })
         const scoped = fylo.as({ subjectId: 'user-1', tenantId: 'tenant-a', roles: ['writer'] })
         const collection = 'auth-allowed'
 
@@ -58,31 +49,11 @@ describe('auth policy wrapper', () => {
 
         await expect(scoped.delDoc(collection, nextId)).rejects.toBeInstanceOf(FyloAuthError)
 
-        expect(calls.map((call) => call.action)).toEqual(
-            expect.arrayContaining([
-                'collection:create',
-                'doc:create',
-                'doc:read',
-                'doc:find',
-                'doc:update',
-                'bulk:export',
-                'doc:delete'
-            ])
-        )
-        expect(calls.every((call) => call.auth.subjectId === 'user-1')).toBe(true)
-
         await fylo.dropCollection(collection)
     })
 
     test('denied reads do not touch storage', async () => {
-        const fylo = new Fylo({
-            root,
-            auth: {
-                authorize(input) {
-                    return input.action !== 'doc:read'
-                }
-            }
-        })
+        const fylo = new Fylo({ root, rls: true })
         const collection = 'auth-denied'
         await fylo.createCollection(collection)
         const id = await fylo.putData(collection, { title: 'Private' })
