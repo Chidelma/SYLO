@@ -42,7 +42,7 @@ function replaceRequired(source, search, replacement, filePath) {
 }
 
 /**
- * Configures generated consumers to resolve scoped d31ma packages.
+ * Configures generated consumers to install FYLO's public dependencies from npm.
  *
  * @returns {void}
  */
@@ -53,7 +53,7 @@ function patchHelper() {
     const injected =
         '  await writeFile(\n' +
         "    path.join(root, '.npmrc'),\n" +
-        "    '@d31ma:registry=https://npm.pkg.github.com\\n//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}\\n'\n" +
+        "    '@d31ma:registry=https://registry.npmjs.org/\\n'\n" +
         '  )\n\n' +
         marker
     source = replaceRequired(source, marker, injected, helperPath)
