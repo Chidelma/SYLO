@@ -77,6 +77,7 @@
  * @property {FyloSyncMode=} syncMode
  * @property {FyloWormOptions=} worm
  * @property {FyloIndexOptions=} index
+ * @property {boolean=} queue
  * @property {FyloEventHandler=} onEvent
  */
 

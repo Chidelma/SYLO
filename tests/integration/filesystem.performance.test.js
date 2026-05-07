@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import Fylo from '../../src/index.js'
@@ -58,17 +58,17 @@ describe.skipIf(!runPerf)('filesystem engine performance', () => {
         }
         const rangeMs = performance.now() - rangeStart
 
-        const indexRoot = path.join(root, collection, '.fylo', 'index')
-        const topLevelEntries = await readdir(indexRoot)
+        const indexRoot = path.join(root, collection, '.fylo', 'local-fs')
+        const indexBytes = (await Bun.file(path.join(indexRoot, 'keys.wal')).text()).length
 
         expect(Object.keys(exactResults)).toHaveLength(1)
         expect(rangeCount).toBe(100)
-        expect(topLevelEntries.length).toBeGreaterThan(0)
+        expect(indexBytes).toBeGreaterThan(0)
 
         console.log(
             `[FYLO perf] docs=${totalDocs} insertMs=${insertMs.toFixed(1)} exactMs=${exactMs.toFixed(
                 1
-            )} rangeMs=${rangeMs.toFixed(1)} indexPrefixes=${topLevelEntries.length}`
+            )} rangeMs=${rangeMs.toFixed(1)} indexBytes=${indexBytes}`
         )
     }, 120_000)
 })

@@ -1,6 +1,6 @@
 {
     "name": "@d31ma/fylo",
-    "version": "26.18.29",
+    "version": "26.19.07",
     "main": "./dist/index.js",
     "types": "./dist/types/index.d.ts",
     "exports": {

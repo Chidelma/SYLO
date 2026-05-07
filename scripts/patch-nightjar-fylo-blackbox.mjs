@@ -243,7 +243,7 @@ function patchSecurityContract() {
         'utf8'
       )
 `,
-            "      const indexFile = await readTree(path.join(root, collection, '.fylo', 'index'))\n",
+            "      const indexFile = await readTree(path.join(root, collection, '.fylo', 'local-fs'))\n",
             filePath
         )
         source = replaceRequired(
@@ -266,9 +266,9 @@ function patchSecurityContract() {
       }
       if (!badIndex) throw new Error('corrupted index did not return sanitized error')
 `,
-            `      const staleIndexDir = path.join(root, collection, '.fylo', 'index', 'title', 'f', 'anything')
+            `      const staleIndexDir = path.join(root, collection, '.fylo', 'local-fs')
       await mkdir(staleIndexDir, { recursive: true })
-      await writeFile(path.join(staleIndexDir, 'not-a-ttid'), '', 'utf8')
+      await writeFile(path.join(staleIndexDir, 'leftover.tmp'), 'not-a-catalog-file', 'utf8')
 
       const rows = []
       for await (const doc of fylo.findDocs(collection, {
@@ -276,7 +276,7 @@ function patchSecurityContract() {
       }).collect()) {
         rows.push(doc)
       }
-      if (rows.length !== 0) throw new Error('stale malformed prefix index entry was not ignored')
+      if (rows.length !== 0) throw new Error('stale local-fs index file was not ignored')
 `,
             filePath
         )

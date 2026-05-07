@@ -99,7 +99,7 @@
  */
 
 /**
- * @typedef {{ backend?: 'filesystem-prefix' } | { backend: 's3-prefix', s3?: FyloS3IndexOptions }} FyloIndexOptions
+ * @typedef {{ backend?: 'local-fs' } | { backend: 's3-client', s3?: FyloS3IndexOptions }} FyloIndexOptions
  */
 
 /**

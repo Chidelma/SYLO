@@ -61,7 +61,7 @@ describe('Encryption', () => {
         expect(raw).not.toContain('123-45-6789')
     })
     test('encrypted values are not plaintext in indexes or event journals', async () => {
-        const index = await readTree(path.join(root, COLLECTION, '.fylo', 'index'))
+        const index = await readTree(path.join(root, COLLECTION, '.fylo', 'local-fs'))
         const events = await Bun.file(
             path.join(root, COLLECTION, '.fylo', 'events', `${COLLECTION}.ndjson`)
         ).text()
