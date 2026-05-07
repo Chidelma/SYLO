@@ -8,7 +8,7 @@ import { FilesystemEventBus, FilesystemLockManager, FilesystemStorage } from './
 import { FilesystemDocuments } from './documents.js'
 import { FilesystemQueryEngine } from './query.js'
 import { materializeDoc } from '../schema/migrate.js'
-import { BunS3PrefixIndexStore, FilesystemPrefixIndexStore } from './prefix-index.js'
+import { BunS3ClientIndexStore, LocalFsPrefixIndexStore } from './prefix-index.js'
 import { parseStoredValue, stringifyStoredValue } from './value-codec.js'
 
 /**
@@ -26,10 +26,12 @@ import { parseStoredValue, stringifyStoredValue } from './value-codec.js'
  * @typedef {import('./types.js').EventBus<Record<string, any>>} EventBus
  * @typedef {import('./types.js').CollectionInspectResult} CollectionInspectResult
  * @typedef {import('./types.js').CollectionRebuildResult} CollectionRebuildResult
+ * @typedef {import('./types.js').FilesystemEvent<Record<string, any>>} FilesystemEvent
  * @typedef {import('./types.js').StoredDoc<Record<string, any>>} StoredDoc
  * @typedef {import('./types.js').StoredHead} StoredHead
  * @typedef {import('./types.js').StoredVersionMeta} StoredVersionMeta
  * @typedef {import('./types.js').PrefixIndexStore} PrefixIndexStore
+ * @typedef {import('../queue/local.js').LocalQueue} LocalQueue
  * @typedef {import('../query/types.js').StoreJoin<Record<string, any>, Record<string, any>>} StoreJoin
  * @typedef {import('../query/types.js').StoreQuery<Record<string, any>>} StoreQuery
  */
@@ -47,6 +49,8 @@ export class FilesystemEngine {
     locks
     /** @type {EventBus} */
     events
+    /** @type {LocalQueue | undefined} */
+    queue
     /** @type {FilesystemDocuments} */
     documents
     /** @type {FilesystemQueryEngine} */
@@ -64,7 +68,7 @@ export class FilesystemEngine {
     /**
      * Creates the filesystem-backed FYLO engine and its persistence collaborators.
      * @param {string} [root]
-     * @param {{ sync?: FyloSyncHooks, syncMode?: FyloSyncMode, worm?: FyloWormOptions, onEvent?: FyloEventHandler, index?: import('./types.js').FyloIndexOptions }} [options]
+     * @param {{ sync?: FyloSyncHooks, syncMode?: FyloSyncMode, worm?: FyloWormOptions, onEvent?: FyloEventHandler, index?: import('./types.js').FyloIndexOptions, queue?: LocalQueue }} [options]
      */
     constructor(
         root = process.env.FYLO_ROOT ?? path.join(process.cwd(), '.fylo-data'),
@@ -81,10 +85,11 @@ export class FilesystemEngine {
         this.storage = new FilesystemStorage()
         this.locks = new FilesystemLockManager(this.root, this.storage)
         this.events = new FilesystemEventBus(this.root, this.storage)
+        this.queue = options.queue
         this.index =
-            options.index?.backend === 's3-prefix'
-                ? new BunS3PrefixIndexStore(options.index.s3)
-                : new FilesystemPrefixIndexStore(this.collectionRoot.bind(this))
+            options.index?.backend === 's3-client'
+                ? new BunS3ClientIndexStore(options.index.s3)
+                : new LocalFsPrefixIndexStore(this.collectionRoot.bind(this))
         this.documents = new FilesystemDocuments(
             this.storage,
             this.docsRoot.bind(this),
@@ -100,6 +105,15 @@ export class FilesystemEngine {
         this.queryEngine = new FilesystemQueryEngine({
             index: this.index
         })
+    }
+    /**
+     * @param {string} collection
+     * @param {FilesystemEvent} event
+     * @returns {Promise<void>}
+     */
+    async publishDocumentEvent(collection, event) {
+        await this.events.publish(collection, event)
+        await this.queue?.publishCollectionEvent(collection, event)
     }
     /** @param {string} collection @returns {string} */
     collectionRoot(collection) {
@@ -300,7 +314,7 @@ export class FilesystemEngine {
                 if (!this.wormEnabled()) {
                     await this.documents.removeStoredDoc(collection, oldId)
                 }
-                await this.events.publish(collection, {
+                await this.publishDocumentEvent(collection, {
                     ts: Date.now(),
                     action: 'delete',
                     id: oldId,
@@ -340,7 +354,7 @@ export class FilesystemEngine {
                         'advance'
                     )
                 }
-                await this.events.publish(collection, {
+                await this.publishDocumentEvent(collection, {
                     ts: Date.now(),
                     action: 'insert',
                     id: newId,
@@ -730,7 +744,7 @@ export class FilesystemEngine {
                     }
                 }
                 await this.rebuildIndexes(collection, docId, doc)
-                await this.events.publish(collection, {
+                await this.publishDocumentEvent(collection, {
                     ts: Date.now(),
                     action: 'insert',
                     id: docId,
@@ -807,7 +821,7 @@ export class FilesystemEngine {
                         deleted: true,
                         deletedAt
                     })
-                    await this.events.publish(collection, {
+                    await this.publishDocumentEvent(collection, {
                         ts: Date.now(),
                         action: 'delete',
                         id: docId,
@@ -832,7 +846,7 @@ export class FilesystemEngine {
                 }
                 await this.removeIndexes(collection, docId, existing.data)
                 await this.documents.removeStoredDoc(collection, docId)
-                await this.events.publish(collection, {
+                await this.publishDocumentEvent(collection, {
                     ts: Date.now(),
                     action: 'delete',
                     id: docId,

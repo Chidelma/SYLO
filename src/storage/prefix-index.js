@@ -1,7 +1,8 @@
 import path from 'node:path'
-import { readdir, rm } from 'node:fs/promises'
+import { mkdir, open, rm, stat } from 'node:fs/promises'
 import { Cipher } from '../security/cipher.js'
-import { assertPathInside, validateDocId } from '../core/doc-id.js'
+import { validateDocId } from '../core/doc-id.js'
+import { writeDurable } from './durable.js'
 import { stringifyStoredValue } from './value-codec.js'
 
 /**
@@ -16,13 +17,19 @@ const UINT64_MAX = (1n << 64n) - 1n
 const SIGN_MASK = 1n << 63n
 
 /**
- * @typedef {object} S3PrefixIndexOptions
+ * @typedef {object} S3ClientIndexOptions
  * @property {string=} accessKeyId
  * @property {string=} secretAccessKey
  * @property {string=} sessionToken
  * @property {string=} endpoint
  * @property {string=} region
  */
+
+const LOCAL_FS_FORMAT = 'fylo.local-fs.index.v1'
+const LOCAL_FS_MANIFEST = 'manifest.json'
+const LOCAL_FS_SNAPSHOT = 'keys.snapshot'
+const LOCAL_FS_WAL = 'keys.wal'
+const LOCAL_FS_WAL_COMPACT_BYTES = 1_048_576
 
 /**
  * @param {string} value
@@ -113,8 +120,8 @@ function envValue(names) {
 }
 
 /**
- * @param {S3PrefixIndexOptions} options
- * @returns {S3PrefixIndexOptions}
+ * @param {S3ClientIndexOptions} options
+ * @returns {S3ClientIndexOptions}
  */
 function resolveS3Options(options) {
     return {
@@ -361,7 +368,86 @@ export class PrefixIndexCodec {
     }
 }
 
-export class FilesystemPrefixIndexStore {
+/**
+ * @param {string} text
+ * @returns {string[]}
+ */
+function lines(text) {
+    if (!text) return []
+    const complete = text.endsWith('\n') ? text : text.slice(0, text.lastIndexOf('\n') + 1)
+    return complete.split('\n').filter(Boolean)
+}
+
+/**
+ * @param {string} target
+ * @returns {Promise<string>}
+ */
+async function readTextIfExists(target) {
+    try {
+        return await Bun.file(target).text()
+    } catch (err) {
+        const error = /** @type {NodeJS.ErrnoException} */ (err)
+        if (error.code === 'ENOENT') return ''
+        throw err
+    }
+}
+
+/**
+ * @param {string} target
+ * @param {string} data
+ * @returns {Promise<void>}
+ */
+async function appendDurable(target, data) {
+    await mkdir(path.dirname(target), { recursive: true })
+    const handle = await open(target, 'a')
+    try {
+        await handle.writeFile(data)
+        await handle.sync()
+    } finally {
+        await handle.close()
+    }
+}
+
+/**
+ * @param {string} target
+ * @param {string} data
+ * @returns {Promise<void>}
+ */
+async function writeIfMissingDurable(target, data) {
+    await mkdir(path.dirname(target), { recursive: true })
+    let handle
+    try {
+        handle = await open(target, 'wx')
+    } catch (err) {
+        const error = /** @type {NodeJS.ErrnoException} */ (err)
+        if (error.code === 'EEXIST') return
+        throw err
+    }
+    try {
+        await handle.writeFile(data)
+        await handle.sync()
+    } finally {
+        await handle.close()
+    }
+}
+
+/**
+ * @param {string[]} keys
+ * @returns {string}
+ */
+function serializeSnapshot(keys) {
+    return keys.length ? `${keys.join('\n')}\n` : ''
+}
+
+/**
+ * @param {{ op: '+' | '-', key: string }[]} mutations
+ * @returns {string}
+ */
+function serializeWal(mutations) {
+    return mutations.map((mutation) => `${mutation.op}\t${mutation.key}\n`).join('')
+}
+
+export class LocalFsPrefixIndexStore {
     /** @type {(collection: string) => string} */
     rootForCollection
 
@@ -377,24 +463,43 @@ export class FilesystemPrefixIndexStore {
      * @returns {string}
      */
     root(collection) {
-        return path.join(this.rootForCollection(collection), '.fylo', 'index')
+        return path.join(this.rootForCollection(collection), '.fylo', 'local-fs')
     }
 
     /**
      * @param {string} collection
-     * @param {string} key
      * @returns {string}
      */
-    keyPath(collection, key) {
-        const root = this.root(collection)
-        const target = path.join(root, key)
-        assertPathInside(root, target)
-        return target
+    manifestPath(collection) {
+        return path.join(this.root(collection), LOCAL_FS_MANIFEST)
+    }
+
+    /**
+     * @param {string} collection
+     * @returns {string}
+     */
+    snapshotPath(collection) {
+        return path.join(this.root(collection), LOCAL_FS_SNAPSHOT)
+    }
+
+    /**
+     * @param {string} collection
+     * @returns {string}
+     */
+    walPath(collection) {
+        return path.join(this.root(collection), LOCAL_FS_WAL)
     }
 
     /** @param {string} collection @returns {Promise<void>} */
     async ensureCollection(collection) {
-        await Bun.write(path.join(this.root(collection), '.keep'), '')
+        const root = this.root(collection)
+        await mkdir(root, { recursive: true })
+        await writeIfMissingDurable(
+            this.manifestPath(collection),
+            `${JSON.stringify({ format: LOCAL_FS_FORMAT, createdAt: Date.now() })}\n`
+        )
+        await writeIfMissingDurable(this.snapshotPath(collection), '')
+        await writeIfMissingDurable(this.walPath(collection), '')
     }
 
     /** @param {string} collection @returns {Promise<void>} */
@@ -405,57 +510,90 @@ export class FilesystemPrefixIndexStore {
 
     /** @param {string} collection @param {string} key @returns {Promise<void>} */
     async putKey(collection, key) {
-        await Bun.write(this.keyPath(collection, key), '')
+        await this.appendMutations(collection, [{ op: '+', key }])
     }
 
     /** @param {string} collection @param {string} key @returns {Promise<void>} */
     async deleteKey(collection, key) {
-        await rm(this.keyPath(collection, key), { force: true })
+        await this.appendMutations(collection, [{ op: '-', key }])
+    }
+
+    /**
+     * @param {string} collection
+     * @returns {Promise<Set<string>>}
+     */
+    async loadKeySet(collection) {
+        await this.ensureCollection(collection)
+        const keys = new Set(lines(await readTextIfExists(this.snapshotPath(collection))))
+        for (const line of lines(await readTextIfExists(this.walPath(collection)))) {
+            const op = line[0]
+            if (line[1] !== '\t') continue
+            const key = line.slice(2)
+            if (!key) continue
+            if (op === '+') keys.add(key)
+            else if (op === '-') keys.delete(key)
+        }
+        return keys
+    }
+
+    /**
+     * @param {string} collection
+     * @param {{ op: '+' | '-', key: string }[]} mutations
+     * @returns {Promise<void>}
+     */
+    async appendMutations(collection, mutations) {
+        if (!mutations.length) return
+        await this.ensureCollection(collection)
+        await appendDurable(this.walPath(collection), serializeWal(mutations))
+        await this.compactIfNeeded(collection)
+    }
+
+    /**
+     * @param {string} collection
+     * @returns {Promise<void>}
+     */
+    async compactIfNeeded(collection) {
+        try {
+            const info = await stat(this.walPath(collection))
+            if (info.size < LOCAL_FS_WAL_COMPACT_BYTES) return
+        } catch {
+            return
+        }
+        await this.compact(collection)
+    }
+
+    /**
+     * @param {string} collection
+     * @returns {Promise<void>}
+     */
+    async compact(collection) {
+        const keys = Array.from(await this.loadKeySet(collection)).sort()
+        await writeDurable(this.snapshotPath(collection), serializeSnapshot(keys))
+        await writeDurable(this.walPath(collection), '')
     }
 
     /** @param {string} collection @param {string} prefix @returns {Promise<string[]>} */
     async listKeys(collection, prefix = '') {
-        const root = this.root(collection)
-        const searchablePrefix =
-            prefix && !prefix.endsWith('/') ? prefix.slice(0, prefix.lastIndexOf('/') + 1) : prefix
-        const target = searchablePrefix ? this.keyPath(collection, searchablePrefix) : root
-        /** @type {string[]} */
-        const results = []
-        /**
-         * @param {string} dir
-         * @returns {Promise<void>}
-         */
-        const walk = async (dir) => {
-            /** @type {import('node:fs').Dirent[]} */
-            let entries = []
-            try {
-                entries = await readdir(dir, { withFileTypes: true })
-            } catch {
-                return
-            }
-            for (const entry of entries) {
-                const child = path.join(dir, entry.name)
-                if (entry.isDirectory()) {
-                    await walk(child)
-                } else if (entry.name !== '.keep') {
-                    results.push(path.relative(root, child).split(path.sep).join('/'))
-                }
-            }
-        }
-        await walk(target)
-        return results.filter((key) => key.startsWith(prefix)).sort()
+        const keys = Array.from(await this.loadKeySet(collection)).sort()
+        return keys.filter((key) => key.startsWith(prefix))
     }
 
     /** @param {string} collection @param {TTID} docId @param {Record<string, any>} doc @returns {Promise<void>} */
     async putDocument(collection, docId, doc) {
         const keys = await PrefixIndexCodec.entriesForDocument(collection, docId, doc)
-        await Promise.all(keys.map((key) => this.putKey(collection, key)))
+        await this.appendMutations(
+            collection,
+            keys.map((key) => ({ op: '+', key }))
+        )
     }
 
     /** @param {string} collection @param {TTID} docId @param {Record<string, any>} doc @returns {Promise<void>} */
     async removeDocument(collection, docId, doc) {
         const keys = await PrefixIndexCodec.entriesForDocument(collection, docId, doc)
-        await Promise.all(keys.map((key) => this.deleteKey(collection, key)))
+        await this.appendMutations(
+            collection,
+            keys.map((key) => ({ op: '-', key }))
+        )
     }
 
     /** @param {string} collection @returns {Promise<number>} */
@@ -503,11 +641,11 @@ export class FilesystemPrefixIndexStore {
     }
 }
 
-export class BunS3PrefixIndexStore {
-    /** @type {S3PrefixIndexOptions} */
+export class BunS3ClientIndexStore {
+    /** @type {S3ClientIndexOptions} */
     options
     /**
-     * @param {S3PrefixIndexOptions} [options]
+     * @param {S3ClientIndexOptions} [options]
      */
     constructor(options = {}) {
         this.options = resolveS3Options(options)

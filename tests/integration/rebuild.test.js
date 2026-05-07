@@ -35,7 +35,7 @@ describe('rebuildCollection', () => {
             title: 'Rebuild me'
         })
 
-        await rm(path.join(ROOT, BASIC_COLLECTION, '.fylo', 'index'), {
+        await rm(path.join(ROOT, BASIC_COLLECTION, '.fylo', 'local-fs'), {
             recursive: true,
             force: true
         })
@@ -123,7 +123,7 @@ describe('rebuildCollection', () => {
         await unlink(activeFirstMetaPath)
         await unlink(activeSecondMetaPath)
         await unlink(tombstoneHeadPath)
-        await rm(path.join(ROOT, WORM_COLLECTION, '.fylo', 'index'), {
+        await rm(path.join(ROOT, WORM_COLLECTION, '.fylo', 'local-fs'), {
             recursive: true,
             force: true
         })

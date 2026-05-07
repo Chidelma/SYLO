@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import Fylo from '../../src/index.js'
@@ -36,14 +36,15 @@ describe('crash recovery and concurrency', () => {
         expect(titles).toEqual(expected)
     })
 
-    test('stale files in the prefix index root are ignored by reads and subsequent writes', async () => {
+    test('stale files in the local-fs index root are ignored by reads and subsequent writes', async () => {
         const collection = `stale-tmp-${Date.now()}`
         const fylo = new Fylo({ root })
         await fylo.createCollection(collection)
         await fylo.putData(collection, { title: 'before' })
 
-        const indexDir = path.join(root, collection, '.fylo', 'index')
+        const indexDir = path.join(root, collection, '.fylo', 'local-fs')
         await writeFile(path.join(indexDir, `leftover.tmp`), 'garbage')
+        await appendFile(path.join(indexDir, 'keys.wal'), '+\ttitle/eq/anything')
 
         // Read works:
         /** @type {string[]} */
@@ -73,7 +74,7 @@ describe('crash recovery and concurrency', () => {
         await fylo.createCollection(collection)
         await fylo.putData(collection, { title: 'original' })
 
-        await rm(path.join(root, collection, '.fylo', 'index'), {
+        await rm(path.join(root, collection, '.fylo', 'local-fs'), {
             recursive: true,
             force: true
         })

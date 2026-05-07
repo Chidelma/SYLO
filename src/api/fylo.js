@@ -5,6 +5,7 @@ import { FyloAuthError } from '../security/auth.js'
 import { Cipher } from '../security/cipher.js'
 import { FilesystemEngine } from '../storage/engine.js'
 import { emitFyloEvent } from '../observability/events.js'
+import { LocalQueue } from '../queue/local.js'
 import { validateDocId } from '../core/doc-id.js'
 import { validateAgainstHead } from '../schema/validation.js'
 import { materializeDoc, materializeEnvelope } from '../schema/migrate.js'
@@ -41,6 +42,7 @@ import '../core/extensions.js'
  * @typedef {import('../types/vendor.js').TTID} TTIDValue
  * @typedef {import('../storage/types.js').CollectionInspectResult} CollectionInspectResult
  * @typedef {import('../storage/types.js').CollectionRebuildResult} CollectionRebuildResult
+ * @typedef {import('../queue/local.js').LocalQueue} LocalQueueInstance
  * @typedef {import('../types/fylo.js').GetDocResult<Record<string, any>>} GetDocResult
  * @typedef {import('../types/fylo.js').FindDocsResult<Record<string, any>>} FindDocsResult
  * @typedef {import('../types/fylo.js').JoinDocsResult<Record<string, any>, Record<string, any>>} JoinDocsResult
@@ -81,18 +83,24 @@ export default class Fylo {
     rlsEnabled
     /** @type {FyloEventHandler | undefined} */
     onEvent
+    /** @type {LocalQueueInstance | undefined} */
+    queue
     /**
      * @param {FyloOptions} [options]
      */
     constructor(options = {}) {
         this.rlsEnabled = options.rls === true
         this.onEvent = options.onEvent
+        this.queue = options.queue
+            ? new LocalQueue({ root: options.root ?? Fylo.defaultRoot() })
+            : undefined
         this.engine = new FilesystemEngine(options.root ?? Fylo.defaultRoot(), {
             sync: options.sync,
             syncMode: options.syncMode,
             worm: options.worm,
             index: options.index,
-            onEvent: options.onEvent
+            onEvent: options.onEvent,
+            queue: this.queue
         })
     }
     /** @returns {string} */

@@ -28,14 +28,10 @@ Instead, each collection looks like this:
     docs/
       4U/
         4UUB32VGUDW.json
-    index/
-      name/
-        f/
-          alice/
-            4UUB32VGUDW
-        r/
-          ecila/
-            4UUB32VGUDW
+    local-fs/
+      manifest.json
+      keys.snapshot
+      keys.wal
     events/
       <collection>.ndjson
 ```
@@ -50,7 +46,7 @@ When WORM mode is enabled, FYLO also keeps lineage metadata:
       <version-id>.meta.json
     heads/
       <lineage-id>.json
-    index/
+    local-fs/
     events/
       <collection>.ndjson
 ```
@@ -478,9 +474,9 @@ For timestamp filters such as `$created` and `$updated`, FYLO derives the values
 
 This is why FYLO behaves more like an application document store than a data warehouse.
 
-### S3 prefix indexing
+### Index backends
 
-The local filesystem index uses the same key shape as FYLO's Bun S3 index backend. In S3 mode, each collection maps to its own bucket and FYLO writes zero-byte objects such as:
+FYLO indexes object-style keys such as:
 
 ```text
 name/f/alice/4UUB32VGUDW
@@ -489,13 +485,21 @@ age/n/c03e000000000000/4UUB32VGUDW
 age/nr/3fc1ffffffffffff/4UUB32VGUDW
 ```
 
-Configure it with:
+By default, FYLO uses the `local-fs` backend. It stores those S3-like keys in compact local catalog files instead of creating one filesystem object per index entry:
+
+```text
+<root>/<collection>/.fylo/local-fs/manifest.json
+<root>/<collection>/.fylo/local-fs/keys.snapshot
+<root>/<collection>/.fylo/local-fs/keys.wal
+```
+
+Use the Bun S3 Client backend with:
 
 ```ts
 const fylo = new Fylo({
     root: '/mnt/fylo',
     index: {
-        backend: 's3-prefix',
+        backend: 's3-client',
         s3: {
             region: 'us-east-1'
         }
@@ -507,7 +511,7 @@ Collection names map directly to S3 bucket names. With the example above, collec
 
 The prefix-index key format is intentionally independent from schema version labels such as `_v: "v2"`. Schema versions describe document shape and upgrader order; index keys describe lookup layout. Changing a schema version should not force every S3 index object to move.
 
-S3 prefix-index credentials can be passed through `index.s3`, or resolved from environment variables. Explicit options win over environment values. FYLO checks AWS-compatible names first, then FYLO-prefixed aliases:
+S3 Client credentials can be passed through `index.s3`, or resolved from environment variables. Explicit options win over environment values. FYLO checks AWS-compatible names first, then FYLO-prefixed aliases:
 
 ```text
 AWS_ACCESS_KEY_ID / FYLO_S3_ACCESS_KEY_ID
@@ -531,12 +535,103 @@ for await (const doc of fylo.findDocs('users', {
 }
 ```
 
+## Local queue
+
+FYLO can mirror collection event-journal entries into a durable local queue when you opt in with `queue: true`.
+
+```ts
+import Fylo, { consume, publish } from '@d31ma/fylo'
+
+const fylo = new Fylo({
+    root: '/mnt/fylo',
+    queue: true
+})
+
+class UserConsumer {
+    async welcome(message, context) {
+        await sendWelcomeEmail(message.payload.doc.email)
+        context.ack()
+    }
+}
+
+consume('users.insert', {
+    group: 'email-service',
+    autoAck: false,
+    maxRetries: 5
+})(UserConsumer.prototype, 'welcome')
+
+await fylo.queue.drainRegistered(new UserConsumer())
+```
+
+You can also publish a method's return value into a topic:
+
+```ts
+class UserService {
+    constructor(queue) {
+        this.queue = queue
+    }
+
+    async createUser(input) {
+        return { id: 'u1', email: input.email }
+    }
+}
+
+publish('users.created')(UserService.prototype, 'createUser')
+
+const service = new UserService(fylo.queue)
+const user = await service.createUser({ email: 'ada@example.com' })
+```
+
+For function-style code, wrap the function directly and pass a queue:
+
+```ts
+const createUser = publish('users.created', {
+    queue: fylo.queue,
+    map: (result) => ({ id: result.id, email: result.email })
+})(async (input) => {
+    return { id: 'u1', email: input.email }
+})
+```
+
+When JavaScript decorator syntax is available in your runtime/toolchain, the same registration can be written as:
+
+```ts
+class UserConsumer {
+    @consume('users.insert', { group: 'email-service', autoAck: false })
+    async welcome(message, context) {
+        await sendWelcomeEmail(message.payload.doc.email)
+        context.ack()
+    }
+}
+```
+
+And publisher methods can use:
+
+```ts
+class UserService {
+    @publish('users.created')
+    async createUser(input) {
+        return { id: 'u1', email: input.email }
+    }
+}
+```
+
+Queue files live under:
+
+```text
+<root>/.fylo/queue/topics/<topic>.ndjson
+<root>/.fylo/queue/consumers/<group>/<topic>.json
+<root>/.fylo/queue/dlq/<topic>.ndjson
+```
+
+The local queue provides at-least-once delivery, consumer-group checkpoints, advisory leases, retry tracking, and dead-letter files. Handlers should be idempotent because a message can be delivered more than once after a crash or failed attempt.
+
 ## What FYLO no longer does
 
 FYLO no longer centers:
 
 - Redis-backed queued writes
-- worker-based write draining
+- external worker-based write draining
 - legacy S3 document-storage engines
 - built-in migration commands between old and new engines
 
@@ -550,7 +645,8 @@ adopting FYLO in scenarios where they matter.
 - **Filesystem-only.** There is one engine, and it writes to a local
   filesystem path. Replication to S3, GCS, or any remote target is the
   consumer's responsibility — see "Syncing to external storage". FYLO
-  does not retry, queue, or reconcile remote writes.
+  does not automatically retry, queue, or reconcile remote sync hooks
+  unless your application explicitly routes work through the local queue.
 - **Advisory locking, not fencing.** Cross-process write coordination
   uses lockfiles with a TTL (default 30s). Holders that exceed the TTL
   can have their lock reclaimed by another process — long operations

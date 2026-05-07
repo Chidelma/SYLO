@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { BunS3PrefixIndexStore } from '../../src/storage/prefix-index.js'
+import { BunS3ClientIndexStore } from '../../src/storage/prefix-index.js'
 
 const originalS3Client = Bun.S3Client
 const originalBucketPrefix = process.env.FYLO_S3_BUCKET_PREFIX
@@ -10,7 +10,7 @@ afterEach(() => {
     else process.env.FYLO_S3_BUCKET_PREFIX = originalBucketPrefix
 })
 
-describe('Bun S3 prefix index', () => {
+describe('Bun S3 client index', () => {
     test('maps collection names directly to bucket names', () => {
         /** @type {Array<Record<string, any>>} */
         const createdClients = []
@@ -21,7 +21,7 @@ describe('Bun S3 prefix index', () => {
             }
         }
 
-        const store = new BunS3PrefixIndexStore({ region: 'us-east-1' })
+        const store = new BunS3ClientIndexStore({ region: 'us-east-1' })
         store.client('users')
 
         expect(createdClients).toHaveLength(1)
@@ -40,7 +40,7 @@ describe('Bun S3 prefix index', () => {
             }
         }
 
-        const store = new BunS3PrefixIndexStore()
+        const store = new BunS3ClientIndexStore()
         store.client('orders')
 
         expect(createdClients).toHaveLength(1)
