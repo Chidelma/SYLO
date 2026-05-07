@@ -4,17 +4,6 @@ on:
     push:
         branches: [main]
     workflow_dispatch:
-        inputs:
-            publish_to_npm:
-                description: Publish an already-beta package version to the public npm registry
-                required: false
-                type: boolean
-                default: false
-            npm_dist_tag:
-                description: npm dist-tag to use when promoting to npm
-                required: false
-                type: string
-                default: latest
 
 permissions:
     contents: read
@@ -244,10 +233,6 @@ jobs:
               needs.version.outputs.tag_exists == 'false' &&
               needs.version.outputs.github_version_exists == 'false' &&
               (
-                github.event_name == 'push' ||
-                (github.event_name == 'workflow_dispatch' && inputs.publish_to_npm != true)
-              ) &&
-              (
                 needs.blackbox-config.outputs.enabled == 'false' ||
                 needs.package-blackbox.result == 'success'
               )
@@ -287,61 +272,27 @@ jobs:
               env:
                   NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-    publish-npm:
-        name: Publish to npm registry
-        runs-on: ubuntu-latest
-        needs: [test, blackbox-config, package-blackbox, version]
-        if: >-
-            ${{
-              always() &&
-              github.event_name == 'workflow_dispatch' &&
-              inputs.publish_to_npm == true &&
-              needs.test.result == 'success' &&
-              needs.blackbox-config.result == 'success' &&
-              needs.version.result == 'success' &&
-              needs.version.outputs.github_version_exists == 'true' &&
-              needs.version.outputs.npm_version_exists == 'false' &&
-              (
-                needs.blackbox-config.outputs.enabled == 'false' ||
-                needs.package-blackbox.result == 'success'
-              )
-            }}
-        timeout-minutes: 15
+    promote-npm:
+        name: Promote to npm registry
+        needs: [version, publish]
+        if: needs.publish.result == 'success'
         permissions:
             contents: read
-        environment: packages-prod
-
-        steps:
-            - name: Checkout
-              uses: actions/checkout@v6
-
-            - name: Setup Bun
-              uses: oven-sh/setup-bun@v2
-              with:
-                  bun-version: latest
-
-            - name: Setup Node
-              uses: actions/setup-node@v6
-              with:
-                  node-version: '24'
-                  registry-url: 'https://registry.npmjs.org'
-                  scope: '@d31ma'
-
-            - name: Install dependencies
-              run: bun install --frozen-lockfile
-
-            - name: Build package
-              run: bun run build
-
-            - name: Publish to npm
-              run: rm -f .npmrc && npm publish --access public --tag "${{ inputs.npm_dist_tag }}" --registry=https://registry.npmjs.org
-              env:
-                  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+            packages: read
+        uses: d31ma/FOUNDRY/.github/workflows/promote-npm.yml@main
+        with:
+            package_name: ${{ needs.version.outputs.package_name }}
+            version: ${{ needs.version.outputs.version }}
+            npm_dist_tag: latest
+            source_repository: ${{ github.repository }}
+        secrets:
+            NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+            PACKAGES_READ_TOKEN: ${{ secrets.PACKAGES_READ_TOKEN }}
 
     github-release:
         name: Create GitHub release
         runs-on: ubuntu-latest
-        needs: [version, publish]
+        needs: [version, publish, promote-npm]
         if: needs.version.outputs.tag_exists == 'false'
         timeout-minutes: 10
         permissions:
