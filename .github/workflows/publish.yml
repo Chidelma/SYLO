@@ -260,6 +260,7 @@ jobs:
         if: needs.publish.result == 'success'
         permissions:
             contents: read
+            id-token: write
             packages: read
         uses: d31ma/FOUNDRY/.github/workflows/promote-npm.yml@main
         with:
@@ -268,7 +269,6 @@ jobs:
             npm_dist_tag: latest
             source_repository: ${{ github.repository }}
         secrets:
-            NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
             PACKAGES_READ_TOKEN: ${{ secrets.PACKAGES_READ_TOKEN }}
 
     github-release:
